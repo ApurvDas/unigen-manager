@@ -1,0 +1,30 @@
+
+Profiles on interface Wi-Fi:
+
+Group policy profiles (read only)
+---------------------------------
+    <None>
+
+User profiles
+-------------
+    All User Profile     : HOME-5G
+    All User Profile     : phone_hotspot
+    All User Profile     : Cafe_wifi
+    All User Profile     : Guest_net 2
+    All User Profile     : Guest_net
+
+Profiles on interface Wi-Fi 2:
+
+Group policy profiles (read only)
+---------------------------------
+    <None>
+
+User profiles
+-------------
+    All User Profile     : HOME-5G
+    All User Profile     : Maple House
+    All User Profile     : oldrouter
+    All User Profile     : Guest_net 2
+    All User Profile     : phone_hotspot
+    All User Profile     : Cafe_wifi
+    All User Profile     : Guest_net

@@ -1,0 +1,115 @@
+ 
+Interface name : Wi-Fi 2 
+There are 8 networks currently visible. 
+
+SSID 1 : Maple House
+    Network type            : Infrastructure
+    Authentication          : WPA2-Personal
+    Encryption              : CCMP 
+    BSSID 1                 : 02:00:00:00:00:02
+         Signal             : 100%  
+         Radio type         : 802.11n
+         Channel            : 6 
+         Basic rates (Mbps) : 1 2 5.5 11
+         Other rates (Mbps) : 6 9 12 18 24 36 48 54
+    BSSID 2                 : 02:00:00:00:00:03
+         Signal             : 26%  
+         Radio type         : 802.11ax
+         Channel            : 1 
+         Basic rates (Mbps) : 1 2 5.5 11
+         Other rates (Mbps) : 6 9 12 18 24 36 48 54
+    BSSID 3                 : 02:00:00:00:00:04
+         Signal             : 24%  
+         Radio type         : 802.11ax
+         Channel            : 36 
+         Basic rates (Mbps) : 6 12 24
+         Other rates (Mbps) : 9 18 36 48 54
+
+SSID 2 : [Smart_Fridge]a1b2
+    Network type            : Infrastructure
+    Authentication          : WPA2-Personal
+    Encryption              : CCMP 
+    BSSID 1                 : 02:00:00:00:00:05
+         Signal             : 52%  
+         Radio type         : 802.11n
+         Channel            : 11 
+         Basic rates (Mbps) : 1 2 5.5 11
+         Other rates (Mbps) : 6 9 12 18 24 36 48 54
+
+SSID 3 : Workshop12
+    Network type            : Infrastructure
+    Authentication          : WPA2-Personal
+    Encryption              : CCMP 
+    BSSID 1                 : 02:00:00:00:00:06
+         Signal             : 10%  
+         Radio type         : 802.11ax
+         Channel            : 11 
+         Basic rates (Mbps) : 1 2 5.5 11
+         Other rates (Mbps) : 6 9 12 18 24 36 48 54
+
+SSID 4 : HOME-5G
+    Network type            : Infrastructure
+    Authentication          : WPA2-Personal
+    Encryption              : CCMP 
+    BSSID 1                 : 02:00:00:00:00:01
+         Signal             : 100%  
+         Radio type         : 802.11ac
+         Channel            : 36 
+         Basic rates (Mbps) : 6 12 24
+         Other rates (Mbps) : 9 18 36 48 54
+
+SSID 5 : CEDAR-12
+    Network type            : Infrastructure
+    Authentication          : WPA2-Personal
+    Encryption              : CCMP 
+    BSSID 1                 : 02:00:00:00:00:07
+         Signal             : 10%  
+         Radio type         : 802.11ax
+         Channel            : 11 
+         Basic rates (Mbps) : 1 2 5.5 11
+         Other rates (Mbps) : 6 9 12 18 24 36 48 54
+
+SSID 6 : AirFiber-Cedar12
+    Network type            : Infrastructure
+    Authentication          : WPA2-Personal
+    Encryption              : CCMP 
+    BSSID 1                 : 02:00:00:00:00:08
+         Signal             : 8%  
+         Radio type         : 802.11ax
+         Channel            : 157 
+         Basic rates (Mbps) : 6 12 24
+         Other rates (Mbps) : 9 18 36 48 54
+    BSSID 2                 : 02:00:00:00:00:09
+         Signal             : 32%  
+         Radio type         : 802.11ax
+         Channel            : 1 
+         Basic rates (Mbps) : 1 2 5.5 11
+         Other rates (Mbps) : 6 9 12 18 24 36 48 54
+
+SSID 7 : AirFiber-Maple House
+    Network type            : Infrastructure
+    Authentication          : WPA2-Personal
+    Encryption              : CCMP 
+    BSSID 1                 : 02:00:00:00:00:0a
+         Signal             : 16%  
+         Radio type         : 802.11ax
+         Channel            : 157 
+         Basic rates (Mbps) : 6 12 24
+         Other rates (Mbps) : 9 18 36 48 54
+    BSSID 2                 : 02:00:00:00:00:0b
+         Signal             : 46%  
+         Radio type         : 802.11ax
+         Channel            : 11 
+         Basic rates (Mbps) : 1 2 5.5 11
+         Other rates (Mbps) : 6 9 12 18 24 36 48 54
+
+SSID 8 : 
+    Network type            : Infrastructure
+    Authentication          : Open
+    Encryption              : None 
+    BSSID 1                 : 02:00:00:00:00:0c
+         Signal             : 6%  
+         Radio type         : 802.11ax
+         Channel            : 11 
+         Basic rates (Mbps) : 1 2 5.5 11
+         Other rates (Mbps) : 6 9 12 18 24 36 48 54
