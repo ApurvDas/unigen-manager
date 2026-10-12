@@ -23,6 +23,12 @@ def test_non_english_output_raises():
         wifi.parse_interfaces(german)
 
 
+def test_localized_labels_raise():
+    french = "\n    Nom                    : Wi-Fi\n    Description            : AIC8800D80 USB WiFi\n    \u00c9tat                   : connect\u00e9\n"
+    with pytest.raises(wifi.ParseError, match="Is Windows set to English"):
+        wifi.parse_interfaces(french)
+
+
 def test_networks_bands_and_hidden():
     nets = {n["ssid"]: n for n in wifi.parse_networks(fixture("networks.txt"))}
     assert len(nets) == 8

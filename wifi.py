@@ -48,6 +48,8 @@ def parse_interfaces(text):
             cur[key] = conv(v)
     if any("description" not in i or "state" not in i for i in out):
         raise ParseError(NOT_ENGLISH)
+    if not out and text.strip() and "There is no wireless interface" not in text:
+        raise ParseError(NOT_ENGLISH)
     return out
 
 
