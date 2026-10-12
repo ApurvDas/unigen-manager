@@ -154,3 +154,26 @@ def test_delete_ignores_adapter_without_profile(monkeypatch):
         return ""
     monkeypatch.setattr(wifi, "_run", fake)
     wifi.delete_profile("oldrouter", ["Wi-Fi", "Wi-Fi 2"])  # no exception
+
+
+def test_hex_key_uses_network_key():
+    def key_type(pw):
+        root = ET.fromstring(wifi.profile_xml("Lab", "wpa2", pw, "Lab"))
+        return root.find("w:MSM/w:security/w:sharedKey/w:keyType", NS).text
+    assert key_type("A" * 64) == "networkKey"
+    assert key_type("12345678") == "passPhrase"
+
+
+def test_connect_error_after_add_deletes_profile(monkeypatch):
+    calls = []
+    def fake(args, **kw):
+        calls.append(args)
+        if args[2] == "connect":
+            raise CmdError("The network is not available.")
+        if args[2] == "delete":
+            raise CmdError("delete failed too")  # must be swallowed
+        return ""
+    monkeypatch.setattr(wifi, "_run", fake)
+    with pytest.raises(CmdError, match="not available"):
+        wifi.connect("Wi-Fi 2", "Maple House", auth="WPA2-Personal", password="12345678", sleep=lambda s: None)
+    assert ["netsh", "wlan", "delete", "profile", "name=Maple House", "interface=Wi-Fi 2"] in calls

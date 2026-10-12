@@ -165,9 +165,10 @@ def profile_xml(ssid, kind, password, name):
         security = ("<authEncryption><authentication>open</authentication><encryption>none</encryption>"
                     "<useOneX>false</useOneX></authEncryption>")
     else:
+        key_type = "networkKey" if re.fullmatch(r"[0-9A-Fa-f]{64}", password) else "passPhrase"
         security = ("<authEncryption><authentication>WPA2PSK</authentication><encryption>AES</encryption>"
                     "<useOneX>false</useOneX></authEncryption>"
-                    "<sharedKey><keyType>passPhrase</keyType><protected>false</protected>"
+                    f"<sharedKey><keyType>{key_type}</keyType><protected>false</protected>"
                     f"<keyMaterial>{escape(password)}</keyMaterial></sharedKey>")
     return ('<?xml version="1.0"?>\n'
             '<WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1">'
@@ -233,18 +234,20 @@ def connect(iface, ssid, *, auth=None, password=None, saved=False, timeout=15.0,
             path.write_text(profile_xml(ssid, kind, password, name), encoding="utf-8")
             _run([NETSH, "wlan", "add", "profile", f"filename={path}", f"interface={iface}", "user=all"])
         created = True
-    _run([NETSH, "wlan", "connect", f"name={name}", f"interface={iface}"])
-    deadline = clock() + timeout
-    while clock() < deadline:
-        st = _state(iface)
-        if st.get("state") == "connected" and st.get("ssid") == ssid:
-            return st
-        sleep(1)
+    try:
+        _run([NETSH, "wlan", "connect", f"name={name}", f"interface={iface}"])
+        deadline = clock() + timeout
+        while clock() < deadline:
+            st = _state(iface)
+            if st.get("state") == "connected" and st.get("ssid") == ssid:
+                return st
+            sleep(1)
+    except winrun.CmdError:
+        if created:
+            delete_profile(name, [iface])
+        raise
     if created:
-        try:
-            _run([NETSH, "wlan", "delete", "profile", f"name={name}", f"interface={iface}"])
-        except winrun.CmdError:
-            pass
+        delete_profile(name, [iface])
     raise WifiError(f"Couldn't connect to {ssid}. Check the password.")
 
 
