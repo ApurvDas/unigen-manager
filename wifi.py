@@ -1,5 +1,11 @@
 """Wi-Fi: parse netsh output, identify adapters, and act on networks and saved profiles."""
+import pathlib
 import re
+import tempfile
+import time
+from xml.sax.saxutils import escape
+
+import winrun
 
 
 class ParseError(Exception):
@@ -125,3 +131,143 @@ _STANDARDS = [("802.11be", "Wi-Fi 7"), ("802.11ax", "Wi-Fi 6"), ("802.11ac", "Wi
 
 def wifi_standard(radio_types):
     return next((name for std, name in _STANDARDS if std in radio_types), None)
+
+
+_run = winrun.run  # tests replace this
+NETSH = "netsh"
+ADAPTER_NAMES = {"unigen": "Unigen dongle", "builtin": "Built-in MediaTek"}
+
+
+def adapter_key(description):
+    if "AIC8800" in description:
+        return "unigen"
+    if "MT7921" in description:
+        return "builtin"
+    return description
+
+
+def security_kind(auth):
+    return {"Open": "open", "WPA2-Personal": "wpa2"}.get(auth)
+
+
+def check_password(pw):
+    if re.fullmatch(r"[0-9A-Fa-f]{64}", pw or "") or (pw and 8 <= len(pw) <= 63 and all(32 <= ord(c) <= 126 for c in pw)):
+        return
+    raise WifiError("The password must be 8 to 63 characters.")
+
+
+def profile_name(ssid):
+    return ssid.replace('"', "'")  # netsh can't take a quote inside name=
+
+
+def profile_xml(ssid, kind, password, name):
+    if kind == "open":
+        security = ("<authEncryption><authentication>open</authentication><encryption>none</encryption>"
+                    "<useOneX>false</useOneX></authEncryption>")
+    else:
+        security = ("<authEncryption><authentication>WPA2PSK</authentication><encryption>AES</encryption>"
+                    "<useOneX>false</useOneX></authEncryption>"
+                    "<sharedKey><keyType>passPhrase</keyType><protected>false</protected>"
+                    f"<keyMaterial>{escape(password)}</keyMaterial></sharedKey>")
+    return ('<?xml version="1.0"?>\n'
+            '<WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1">'
+            f"<name>{escape(name)}</name>"
+            f"<SSIDConfig><SSID><hex>{ssid.encode('utf-8').hex().upper()}</hex><name>{escape(ssid)}</name></SSID></SSIDConfig>"
+            "<connectionType>ESS</connectionType><connectionMode>auto</connectionMode>"
+            f"<MSM><security>{security}</security></MSM></WLANProfile>")
+
+
+def interfaces():
+    return parse_interfaces(_run([NETSH, "wlan", "show", "interfaces"]))
+
+
+def networks(iface):
+    return parse_networks(_run([NETSH, "wlan", "show", "networks", "mode=bssid", f"interface={iface}"]))
+
+
+def profiles():
+    return parse_profiles(_run([NETSH, "wlan", "show", "profiles"]))
+
+
+def drivers():
+    return parse_drivers(_run([NETSH, "wlan", "show", "drivers"]))
+
+
+def trigger_scan(guid):
+    """Ask the adapter for a fresh scan (netsh only shows Windows' cached list)."""
+    import ctypes, uuid
+    from ctypes import wintypes
+    wlan = ctypes.WinDLL("wlanapi")
+    handle, version = wintypes.HANDLE(), wintypes.DWORD()
+    if wlan.WlanOpenHandle(2, None, ctypes.byref(version), ctypes.byref(handle)):
+        raise WifiError("Couldn't start a Wi-Fi scan.")
+    try:
+        g = (ctypes.c_ubyte * 16).from_buffer_copy(uuid.UUID(guid).bytes_le)
+        rc = wlan.WlanScan(handle, ctypes.byref(g), None, None, None)
+        if rc:
+            raise WifiError(f"Couldn't start a Wi-Fi scan (error {rc}).")
+    finally:
+        wlan.WlanCloseHandle(handle, None)
+
+
+def scan(iface, guid, *, wait=4.0, sleep=time.sleep):
+    trigger_scan(guid)
+    sleep(wait)  # results arrive asynchronously; then show whatever netsh has
+    return networks(iface)
+
+
+def _state(iface):
+    return next((i for i in interfaces() if i["name"] == iface), {})
+
+
+def connect(iface, ssid, *, auth=None, password=None, saved=False, timeout=15.0, clock=time.monotonic, sleep=time.sleep):
+    name, created = profile_name(ssid), False
+    if not saved:
+        kind = security_kind(auth)
+        if kind is None:
+            raise WifiError(f"{ssid} uses {auth}, which this app can't set up yet. Use Windows settings.")
+        if kind != "open":
+            check_password(password)
+        with tempfile.TemporaryDirectory() as d:  # the password file never outlives this block
+            path = pathlib.Path(d, "profile.xml")
+            path.write_text(profile_xml(ssid, kind, password, name), encoding="utf-8")
+            _run([NETSH, "wlan", "add", "profile", f"filename={path}", f"interface={iface}", "user=all"])
+        created = True
+    _run([NETSH, "wlan", "connect", f"name={name}", f"interface={iface}"])
+    deadline = clock() + timeout
+    while clock() < deadline:
+        st = _state(iface)
+        if st.get("state") == "connected" and st.get("ssid") == ssid:
+            return st
+        sleep(1)
+    if created:
+        try:
+            _run([NETSH, "wlan", "delete", "profile", f"name={name}", f"interface={iface}"])
+        except winrun.CmdError:
+            pass
+    raise WifiError(f"Couldn't connect to {ssid}. Check the password.")
+
+
+def disconnect(iface):
+    _run([NETSH, "wlan", "disconnect", f"interface={iface}"])
+
+
+def password(iface, ssid):
+    return parse_key(_run([NETSH, "wlan", "show", "profile", f"name={ssid}", f"interface={iface}", "key=clear"]))
+
+
+def delete_profile(ssid, ifaces):
+    for iface in ifaces:
+        try:
+            _run([NETSH, "wlan", "delete", "profile", f"name={ssid}", f"interface={iface}"])
+        except winrun.CmdError:
+            pass  # not saved on this adapter
+
+
+def copy_profile(ssid, src_iface, dst_iface):
+    with tempfile.TemporaryDirectory() as d:  # the exported file holds the clear key
+        _run([NETSH, "wlan", "export", "profile", f"name={ssid}", f"interface={src_iface}", f"folder={d}", "key=clear"])
+        files = list(pathlib.Path(d).glob("*.xml"))
+        if len(files) != 1:
+            raise WifiError(f"Couldn't export {ssid} from the {src_iface} adapter.")
+        _run([NETSH, "wlan", "add", "profile", f"filename={files[0]}", f"interface={dst_iface}", "user=all"])
