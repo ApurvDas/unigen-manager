@@ -1,0 +1,37 @@
+
+Interface name: Wi-Fi
+
+    Driver                    : MediaTek Wi-Fi 6 MT7921 Wireless LAN Card
+    Vendor                    : MediaTek, Inc.
+    Provider                  : MediaTek, Inc.
+    Date                      : 12-10-2023
+    Version                   : 3.0.1.1314
+    INF file                  : oem19.inf
+    Type                      : Native Wi-Fi Driver
+    Radio types supported     : 802.11b 802.11a 802.11g 802.11n 802.11ac 802.11ax
+    FIPS 140-2 mode supported : Yes
+    802.11w Management Frame Protection supported : Yes
+    Hosted network supported  : No
+    Authentication and cipher supported in infrastructure mode:
+                                Open            None
+                                WPA3-Personal   CCMP
+                                WPA2-Personal   CCMP
+    IHV service present       : Yes
+    IHV extensibility DLL path: C:\Windows\system32\mtkihvx.dll
+
+Interface name: Wi-Fi 2
+
+    Driver                    : AIC8800D80 USB WiFi
+    Vendor                    : Aic Corp
+    Provider                  : AIC
+    Date                      : 13-11-2024
+    Version                   : 6.40.60.312
+    INF file                  : oem65.inf
+    Type                      : Native Wi-Fi Driver
+    Radio types supported     : 802.11b 802.11b 802.11g 802.11a 802.11n 802.11ac 802.11ax
+    Hosted network supported  : Yes
+    Authentication and cipher supported in infrastructure mode:
+                                Open            None
+                                WPA2-Personal   TKIP
+                                WPA2-Personal   CCMP
+    Wireless Display Supported: Yes (Graphics Driver: Yes, Wi-Fi Driver: Yes)

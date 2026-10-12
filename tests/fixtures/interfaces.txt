@@ -1,0 +1,30 @@
+
+There are 2 interfaces on the system: 
+
+    Name                   : Wi-Fi
+    Description            : MediaTek Wi-Fi 6 MT7921 Wireless LAN Card
+    GUID                   : 11111111-2222-4333-8444-555555555551
+    Physical address       : 02:00:00:00:00:12
+    State                  : connected
+    SSID                   : HOME-5G
+    BSSID                  : 02:00:00:00:00:01
+    Network type           : Infrastructure
+    Radio type             : 802.11ac
+    Authentication         : WPA2-Personal
+    Cipher                 : CCMP
+    Connection mode        : Profile
+    Channel                : 36
+    Receive rate (Mbps)    : 866.7
+    Transmit rate (Mbps)   : 866.7
+    Signal                 : 80% 
+    Profile                : HOME-5G 
+
+    Name                   : Wi-Fi 2
+    Description            : AIC8800D80 USB WiFi
+    GUID                   : 11111111-2222-4333-8444-555555555552
+    Physical address       : 02:00:00:00:00:11
+    State                  : disconnected
+    Radio status           : Hardware On
+                             Software On
+
+    Hosted network status  : Not available
