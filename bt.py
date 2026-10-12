@@ -7,7 +7,7 @@ import winrun
 from wifi import ADAPTER_NAMES
 
 _ps = winrun.ps  # tests replace this
-SERVICE_TOGGLE = True  # Task 1 spike result. False = Connect/Disconnect always open Windows Bluetooth settings.
+SERVICE_TOGGLE = True  # Provisional until the Task 1 spike runs. False = Connect/Disconnect always open Windows Bluetooth settings.
 _SCRIPT = Path(__file__).with_name("bt.ps1")
 LMP = {6: "4.0", 7: "4.1", 8: "4.2", 9: "5.0", 10: "5.1", 11: "5.2", 12: "5.3", 13: "5.4", 14: "6.0"}
 AUDIO_SERVICES = ["0000110B-0000-1000-8000-00805F9B34FB", "0000111E-0000-1000-8000-00805F9B34FB"]  # A2DP sink, Hands-free
@@ -65,20 +65,26 @@ def switch(target, *, wait=10.0, clock=time.monotonic, sleep=time.sleep):
     others = [r for r in rs if r["ok"] and r["key"] != target]
     if tgt["ok"] and not others:
         return target
-    for r in others:  # Windows runs one Bluetooth radio at a time
-        _call("disable", id=r["id"])
-    _call("enable", id=tgt["id"])
-    deadline = clock() + wait
-    while clock() < deadline:
-        if any(r["key"] == target and r["ok"] for r in radios()):
-            return target
-        sleep(1)
-    try:  # never leave the user without Bluetooth
+    try:
+        for r in others:  # Windows runs one Bluetooth radio at a time
+            _call("disable", id=r["id"])
+        _call("enable", id=tgt["id"])
+        deadline = clock() + wait
+        while clock() < deadline:
+            if any(r["key"] == target and r["ok"] for r in radios()):
+                return target
+            sleep(1)
+    except winrun.CmdError:
+        pass
+    try:  # never leave the user without Bluetooth: best-effort restore, each step on its own
         _call("disable", id=tgt["id"])
     except winrun.CmdError:
         pass
     for r in others:
-        _call("enable", id=r["id"])
+        try:
+            _call("enable", id=r["id"])
+        except winrun.CmdError:
+            pass
     back = f" Switched back to the {_label(others[0]['key'])}." if others else ""
     raise BtError(f"The {_label(target)} radio didn't start.{back}")
 
@@ -116,6 +122,15 @@ class _RADIO_PARAMS(ctypes.Structure):
     _fields_ = [("dwSize", wintypes.DWORD)]
 
 
+def _service_changed(rc):
+    """True if the service state was set, False if the device lacks the service (1060, e.g. no hands-free)."""
+    if rc == 1060:
+        return False
+    if rc:
+        raise BtError(f"Windows refused (error {rc}).")
+    return True
+
+
 def _set_audio(address_hex, flags):
     """Set the audio services of a paired device: [0, 1] makes Windows reconnect it, [0] disconnects it."""
     lib, k32 = ctypes.WinDLL("bthprops.cpl"), ctypes.WinDLL("kernel32")
@@ -129,12 +144,14 @@ def _set_audio(address_hex, flags):
         info = BLUETOOTH_DEVICE_INFO(dwSize=ctypes.sizeof(BLUETOOTH_DEVICE_INFO), Address=int(address_hex, 16))
         if lib.BluetoothGetDeviceInfo(radio, ctypes.byref(info)):
             raise BtError("Windows doesn't know that device.")
+        changed = False
         for flag in flags:
             for g in AUDIO_SERVICES:
                 guid = (ctypes.c_ubyte * 16).from_buffer_copy(uuid.UUID(g).bytes_le)
                 rc = lib.BluetoothSetServiceState(radio, ctypes.byref(info), ctypes.byref(guid), flag)
-                if rc and rc != 1060:  # 1060 = the device doesn't offer this service (e.g. no hands-free)
-                    raise BtError(f"Windows refused (error {rc}).")
+                changed |= _service_changed(rc)
+        if not changed:
+            raise BtError("That device has no audio connection to switch.")
     finally:
         k32.CloseHandle(radio)
 
@@ -144,7 +161,7 @@ def _toggle(address_hex, name, flags, verb, open_settings):
         try:
             _set_audio(address_hex, flags)
             return
-        except (BtError, OSError, ValueError):
+        except (BtError, OSError, ValueError, ctypes.ArgumentError, AttributeError):
             pass
     open_settings("ms-settings:bluetooth")
     raise BtError(f"Windows didn't let the app {verb} {name}. Bluetooth settings are open so you can do it there.")

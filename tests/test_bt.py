@@ -62,6 +62,29 @@ def test_switch_rolls_back_when_target_never_starts(monkeypatch):
                     ("disable", "USB\\VID_13D3&PID_3563"), ("enable", "USB\\VID_368B&PID_8D81")]
 
 
+def test_switch_rolls_back_when_enable_raises(monkeypatch):
+    fake = FakePs([RADIOS_OK_UNIGEN])
+    real = fake.__call__
+
+    def flaky(script, params, **kw):
+        if params["action"] == "enable" and "13D3" in params["id"]:
+            fake.calls.append(params)
+            raise CmdError("enable failed")
+        return real(script, params, **kw)
+
+    monkeypatch.setattr(bt, "_ps", flaky)
+    with pytest.raises(bt.BtError, match="Switched back to the Unigen dongle"):
+        bt.switch("builtin", sleep=lambda s: None)
+    acts = [(c["action"], c["id"][:21]) for c in fake.calls if c["action"] != "radios"]
+    assert acts[-1] == ("enable", "USB\\VID_368B&PID_8D81")
+
+
+def test_service_changed():
+    assert bt._service_changed(0) is True and bt._service_changed(1060) is False
+    with pytest.raises(bt.BtError, match="refused"):
+        bt._service_changed(87)
+
+
 def test_switch_to_missing_radio(monkeypatch):
     monkeypatch.setattr(bt, "_ps", FakePs([RADIOS_OK_UNIGEN[:1]]))
     with pytest.raises(bt.BtError, match="isn't connected to this PC"):
