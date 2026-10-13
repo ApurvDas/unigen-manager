@@ -4,6 +4,7 @@ import functools, json, logging, os, threading, time
 from pathlib import Path
 
 import bt, speed, tray, wifi, winrun
+from version import VERSION
 
 DATA_DIR = Path(os.environ.get("LOCALAPPDATA", ".")) / "UnigenManager"
 log = logging.getLogger("unigen")
@@ -81,7 +82,7 @@ class Api:
             radios = {r["key"]: r for r in bt.radios()}
         except _KNOWN:  # Bluetooth trouble must not stop the Wi-Fi page loading
             radios = {}
-        return {"admin": self._admin, "adapters": [
+        return {"version": VERSION, "admin": self._admin, "adapters": [
             {"key": k, "name": self._name(k, i["description"]),
              "wifi": wifi.wifi_standard(drv.get(i["name"], {}).get("radio_types", [])),
              "bt": radios.get(k, {}).get("version")} for k, i in ifs.items()]}

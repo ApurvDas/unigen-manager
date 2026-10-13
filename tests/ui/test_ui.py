@@ -223,3 +223,8 @@ def test_start_runs_a_real_scan(open_page):
     pg = open_page("window.MOCK_LOG = [];")
     pg.wait_for_function("window.MOCK_LOG.includes('scan')")
     assert pg.evaluate("window.MOCK_LOG.indexOf('networks') < window.MOCK_LOG.indexOf('scan')")  # cached list first
+
+
+def test_rail_shows_app_version(open_page):
+    pg = open_page()
+    pg.wait_for_function("document.querySelector('#ver').textContent.includes('v0.0.0-mock')")

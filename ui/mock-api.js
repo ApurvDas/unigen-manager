@@ -89,7 +89,7 @@ window.mockApi = (() => {
     return { networks: nets, scanned_at: Date.now() / 1000 };
   };
 
-  def("app_info", 0, () => ({ admin: window.MOCK_ADMIN !== false, adapters: plugged().map(a => ({ key: a.key, name: a.name, wifi: "Wi-Fi 6", bt: a.bt })) }));
+  def("app_info", 0, () => ({ version: "0.0.0-mock", admin: window.MOCK_ADMIN !== false, adapters: plugged().map(a => ({ key: a.key, name: a.name, wifi: "Wi-Fi 6", bt: a.bt })) }));
   def("adapters", 0, () => plugged().map(a => {
     const on = a.state === "connected";
     return { key: a.key, name: a.name, state: a.state, ssid: on ? a.ssid : null, rate: on ? a.rate : null, channel: a.channel, band: a.band,

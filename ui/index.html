@@ -25,6 +25,7 @@
     flex-direction: column;
     gap: 28px;
   }
+  .rail .ver { margin-top: auto; padding: 0 6px; color: var(--muted); font-size: 12px; }
   .rail h2 {
     font: 600 12px/1 var(--display);
     color: var(--muted);
@@ -271,6 +272,7 @@
     <button data-go="bt"><span id="btLabel">Bluetooth</span> <kbd>Ctrl 2</kbd></button>
     <button data-go="speed">Speed <kbd>Ctrl 3</kbd></button>
   </nav>
+  <span class="ver" id="ver"></span>
 </aside>
 
 <main>
@@ -1030,6 +1032,7 @@ setTimeout(() => { if (!INFO && !MOCK && !window.pywebview) setMsg($("#wifiMsg")
   try { INFO = await call("app_info"); }
   catch (e) { return setMsg($("#wifiMsg"), e.message, true); }
   if ($("#wifiMsg").textContent.startsWith("Waiting for the app")) setMsg($("#wifiMsg"), "");
+  setText($("#ver"), `Unigen Manager v${INFO.version}`);
   if (!INFO.adapters.length) return setMsg($("#wifiMsg"), "No Wi-Fi adapters found. Plug in the Unigen dongle.", true);
   renderRail();
   RESULTS = await call("speed_results").catch(() => ({}));
