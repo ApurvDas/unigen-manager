@@ -245,3 +245,159 @@ def test_second_concurrent_use_refused(world):
             world.use()
     finally:
         hw._lock.release()
+
+
+# ---- hw.Follower ----
+class Pc:
+    """Fake devices() for the watchdog: dongle plugged or not, each adapter's Wi-Fi/Bluetooth on or off."""
+
+    def __init__(self, monkeypatch, tmp_path, choice="unigen", plugged=True, unigen_on=True):
+        self.path, self.plugged, self.enabled = tmp_path / "settings.json", plugged, []
+        self.state = {"unigen": unigen_on, "builtin": not unigen_on}
+        if choice:
+            hw.save_choice(self.path, choice)
+        monkeypatch.setattr(hw, "devices", self.devices)
+        monkeypatch.setattr(hw, "enable", self.enable)
+        self.used, self.notes, self.fail = [], [], None
+
+    def enable(self, dev_id):
+        self.enabled.append(dev_id)
+        self.state["builtin"] = True
+
+    def devices(self):
+        ids = {"unigen": (UNI_WIFI, UNI_BT), "builtin": (MT_WIFI, MT_BT)}
+        return {k: {"present": True, "wifi": dev(w, self.state[k]), "bt": dev(b, self.state[k])}
+                for k, (w, b) in ids.items() if k != "unigen" or self.plugged}
+
+    def use(self, target, **kw):
+        self.used.append(target)
+        if self.fail:
+            raise hw.HwError(self.fail)
+        self.state = {k: k == target for k in self.state}
+        return target
+
+    def follower(self, admin=True):
+        return hw.Follower(self.path, lambda t, changed: self.notes.append((t, changed)), admin=admin, use=self.use)
+
+
+def test_follow_unplug_enables_builtin_once(monkeypatch, tmp_path):
+    pc = Pc(monkeypatch, tmp_path)
+    f = pc.follower()
+    f.step()  # dongle in use and present: nothing to do
+    pc.plugged = False
+    f.step()
+    f.step()
+    assert pc.enabled == [MT_WIFI, MT_BT]
+    assert pc.notes == [("The dongle was unplugged. Using the built-in adapter.", True)]
+    assert hw.load_choice(pc.path) == "unigen"  # the choice stays
+
+
+def test_follow_replug_switches_back_once(monkeypatch, tmp_path):
+    pc = Pc(monkeypatch, tmp_path)
+    f = pc.follower()
+    f.step()
+    pc.plugged = False
+    f.step()
+    pc.state["builtin"] = True  # what the unplug step enabled
+    pc.plugged = True
+    f.step()
+    f.step()
+    assert pc.used == ["unigen"]
+    assert pc.notes[-1] == ("Dongle plugged in. Using the dongle.", True)
+
+
+def test_follow_failed_replug_does_not_retry(monkeypatch, tmp_path):
+    pc = Pc(monkeypatch, tmp_path)
+    f = pc.follower()
+    f.step()
+    pc.plugged = False
+    f.step()
+    pc.state["builtin"] = True
+    pc.plugged, pc.fail = True, "Couldn't finish switching to the Unigen dongle. You're still on the Built-in MediaTek."
+    for _ in range(4):
+        f.step()
+    assert pc.used == ["unigen"]
+    assert pc.notes[-1] == (pc.fail, False) and len(pc.notes) == 2
+
+
+def test_follow_failed_replug_retries_after_next_unplug(monkeypatch, tmp_path):
+    pc = Pc(monkeypatch, tmp_path)
+    f = pc.follower()
+    f.step()
+    pc.plugged = False
+    f.step()
+    pc.state["builtin"] = True
+    pc.plugged, pc.fail = True, "no"
+    f.step()
+    pc.plugged = False
+    f.step()
+    pc.plugged = True
+    f.step()
+    assert pc.used == ["unigen", "unigen"]
+
+
+def test_follow_startup_enforces_choice(monkeypatch, tmp_path):
+    pc = Pc(monkeypatch, tmp_path, choice="builtin", unigen_on=True)  # Windows brought the dongle back after a restart
+    f = pc.follower()
+    f.step()
+    f.step()
+    assert pc.used == ["builtin"] and pc.notes == [("Using the Built-in MediaTek.", True)]
+
+
+def test_follow_startup_failure_notifies_once(monkeypatch, tmp_path):
+    pc = Pc(monkeypatch, tmp_path, choice="builtin", unigen_on=True)
+    pc.fail = "Couldn't turn on the Built-in MediaTek."
+    f = pc.follower()
+    f.step()
+    f.step()
+    assert pc.used == ["builtin"] and pc.notes == [(pc.fail, False)]
+
+
+def test_follow_startup_with_dongle_already_gone_and_builtin_on_is_quiet(monkeypatch, tmp_path):
+    pc = Pc(monkeypatch, tmp_path, plugged=False, unigen_on=False)
+    pc.follower().step()
+    assert pc.enabled == [] and pc.notes == [] and pc.used == []
+
+
+def test_follow_noop_without_admin(monkeypatch, tmp_path):
+    pc = Pc(monkeypatch, tmp_path, choice="builtin", unigen_on=True)
+    f = pc.follower(admin=False)
+    f.step()
+    pc.plugged = False
+    f.step()
+    assert pc.used == [] and pc.enabled == [] and pc.notes == []
+
+
+def test_follow_without_choice_does_nothing(monkeypatch, tmp_path):
+    pc = Pc(monkeypatch, tmp_path, choice=None)
+    f = pc.follower()
+    f.step()
+    pc.plugged = False
+    f.step()
+    assert pc.used == [] and pc.enabled == [] and pc.notes == []
+
+
+def test_follow_step_never_raises(monkeypatch, tmp_path):
+    pc = Pc(monkeypatch, tmp_path)
+    def boom(): raise winrun.CmdError("powershell.exe took longer than 90 s.")
+    monkeypatch.setattr(hw, "devices", boom)
+    pc.follower().step()
+
+
+def test_follow_unplug_retries_enable_until_it_works(monkeypatch, tmp_path):
+    pc = Pc(monkeypatch, tmp_path)
+    f = pc.follower()
+    f.step()
+    pc.plugged = False
+    real, tries = pc.enable, []
+    def flaky(i):
+        tries.append(i)
+        if len(tries) == 1:
+            raise winrun.CmdError("busy")
+        real(i)
+    monkeypatch.setattr(hw, "enable", flaky)
+    f.step()  # fails: logged, no notice yet
+    assert pc.notes == []
+    f.step()
+    f.step()
+    assert tries == [MT_WIFI, MT_WIFI, MT_BT] and len(pc.notes) == 1

@@ -164,3 +164,58 @@ def _undo(t):
             disable(t["wifi"]["id"])
         except winrun.CmdError:
             pass
+
+
+# ---- the watchdog ----
+class Follower:
+    """One pass every few seconds (step): keeps the saved choice true after a restart, and follows the dongle
+    being unplugged (turn the built-in adapter on) and plugged back in (switch to it again)."""
+
+    def __init__(self, path, notify, *, admin, use=use):
+        self._path, self._notify, self._admin, self._use = path, notify, admin, use
+        self._first, self._was_present, self._told = True, None, False
+
+    def step(self):
+        if not self._admin:
+            return
+        try:
+            self._step()
+        except Exception:
+            log.exception("watchdog pass failed")
+
+    def _switch(self, choice, ok_text):
+        try:
+            self._use(choice, path=self._path)
+        except HwError as e:
+            self._notify(str(e), False)
+        else:
+            self._notify(ok_text, True)
+
+    def _step(self):
+        choice = load_choice(self._path)
+        if choice is None:
+            return
+        devs = devices()
+        present = "unigen" in devs
+        first, was = self._first, self._was_present
+        self._first, self._was_present = False, present
+        if first and choice in devs:
+            other = next((d for k, d in devs.items() if k != choice), None)
+            if other and other["wifi"] and other["wifi"]["ok"]:
+                return self._switch(choice, f"Using the {_name(choice)}.")
+        if choice != "unigen":
+            return
+        if not present:
+            turned_on = False
+            for kind in ("wifi", "bt"):  # every pass while it's gone: never leave the PC without Wi-Fi
+                d = (devs.get("builtin") or {}).get(kind)
+                if d and d["disabled"]:
+                    enable(d["id"])
+                    turned_on = True
+            if (turned_on or was) and not self._told:
+                self._told = True
+                self._notify("The dongle was unplugged. Using the built-in adapter.", True)
+            return
+        self._told = False
+        if was is False:
+            self._switch("unigen", "Dongle plugged in. Using the dongle.")
