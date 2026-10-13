@@ -144,5 +144,19 @@ window.mockApi = (() => {
     return (RESULTS[key] = result(samples, a.rate, stamp()));
   });
   def("speed_results", 0, () => JSON.parse(JSON.stringify(RESULTS)));
+  // tray widget
+  def("use_adapter", 1400, key => {
+    const t = adapter(key), others = plugged().filter(a => a.key !== key);
+    const net = t.state === "connected" ? t.ssid : (others.find(a => a.state === "connected") || {}).ssid;
+    if (!net) throw new Error("Neither adapter is connected. Connect to a network first.");
+    PROFILES[key].add(net);
+    const n = NETS.find(x => x.ssid === net), five = !n || n.aps.some(x => x.b === 5);
+    Object.assign(t, { state: "connected", ssid: net, rate: five ? (key === "unigen" ? 433 : 866) : (key === "unigen" ? 144 : 287) });
+    others.forEach(a => { a.state = "disconnected"; });
+    return { key, ssid: net };
+  });
+  def("open_main", 0, () => null);
+  def("hide_widget", 0, () => null);
+  def("widget_fit", 0, () => null);
   return api;
 })();

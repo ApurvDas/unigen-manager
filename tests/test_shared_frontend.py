@@ -19,3 +19,7 @@ def test_shared_files_define_everything():
     js = (UI / "shared.js").read_text(encoding="utf-8")
     assert "--panel: #16202B" in css and "--uni: #9085e9" in css and ".btn.primary" in css
     assert all(h in js for h in HELPERS)
+def test_widget_uses_shared_files():
+    html = (UI / "widget.html").read_text(encoding="utf-8")
+    assert '<link rel="stylesheet" href="shared.css">' in html and '<script src="shared.js"></script>' in html
+    assert "--panel:" not in html and not any(h in html for h in HELPERS)
