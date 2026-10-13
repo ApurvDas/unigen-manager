@@ -8,6 +8,7 @@ from version import VERSION
 
 DATA_DIR = Path(os.environ.get("LOCALAPPDATA", ".")) / "UnigenManager"
 log = logging.getLogger("unigen")
+PAIR_WAIT = 60  # seconds a pairing prompt waits for the user
 _KNOWN = (wifi.WifiError, wifi.ParseError, bt.BtError, speed.SpeedError, winrun.CmdError)
 _SEC = {"WPA2-Personal": "WPA2", "WPA3-Personal": "WPA3", "Open": "Open", "WPA-Personal": "WPA", "WPA2-Enterprise": "WPA2-Ent"}
 
@@ -30,6 +31,7 @@ class Api:
         self._admin, self._results, self._window = admin, Path(results_path), None
         self._speed_lock = threading.Lock()
         self._widget, self._widget_shown, self._hid_at, self._widget_h = None, False, 0.0, 480
+        self._pair_evt, self._pair_answer = threading.Event(), (False, None)
         self._main_visible = True  # app.py sets False for a --tray start and on close
 
     # ---- helpers (underscore: pywebview does not expose these) ----
@@ -61,12 +63,6 @@ class Api:
                         "hidden": not ssid, "aps": aps})
         out.sort(key=lambda n: (n["state"] != "Connected", -max([a["s"] for a in n["aps"]] or [0])))
         return {"networks": out, "scanned_at": time.time()}
-
-    def _device(self, dev_id):
-        d = next((d for d in bt.devices(paired=True) if d["id"] == dev_id), None)
-        if d is None:
-            raise bt.BtError("That device isn't paired any more.")
-        return d
 
     def _push_sample(self, phase, value):
         script = "window.onSpeedSample && window.onSpeedSample(" + json.dumps({"phase": phase, "v": value}) + ")"
@@ -151,12 +147,30 @@ class Api:
             raise wifi.WifiError(f"Couldn't delete {ssid}.")
 
     # ---- Bluetooth ----
+    def _eval_main(self, script):
+        if self._window is not None:
+            self._window.evaluate_js(script)
+
+    def _row(self, dev_id):
+        return next((d for d in bt.devices() if dev_id in d["ids"]), None)
+
+    def _device(self, dev_id):
+        d = self._row(dev_id)
+        if d is None:
+            raise bt.BtError("That device isn't paired any more.")
+        return d
+
     @_envelope
     def bt_radio(self):
         rs = bt.radios()
-        return {"active": next((r["key"] for r in rs if r["ok"]), None), "can_switch": self._admin,
+        return {"active": next((r["key"] for r in rs if r["ok"]), None), "can_switch": self._admin, "power": bt.power(),
                 "radios": [{"key": r["key"], "name": self._name(r["key"], r["name"]), "ok": r["ok"],
                             "disabled": r["disabled"], "version": r["version"]} for r in rs]}
+
+    @_envelope
+    def bt_power(self, on):
+        bt.set_power(bool(on))
+        return {"power": bt.power()}
 
     @_envelope
     def bt_switch(self, key):
@@ -166,19 +180,51 @@ class Api:
 
     @_envelope
     def bt_paired(self):
-        return bt.devices(paired=True)
+        return bt.devices()
+
+    def _push_nearby(self, rows, done):
+        self._eval_main("window.onBtNearby && window.onBtNearby(" + json.dumps({"devices": rows, "done": done}) + ")")
 
     @_envelope
-    def bt_nearby(self):
-        return bt.devices(paired=False)
+    def bt_search_start(self):
+        bt.search_start(self._push_nearby)
+
+    @_envelope
+    def bt_search_stop(self):
+        bt.search_stop()
+
+    def _ask(self, kind, pin):
+        """Runs on a pairing thread: show the prompt in the page, then wait for bt_pair_answer (not for 'display')."""
+        self._pair_evt.clear()
+        self._pair_answer = (False, None)
+        self._eval_main("window.onPairPrompt && window.onPairPrompt(" + json.dumps({"kind": kind, "pin": pin}) + ")")
+        if kind == "display":
+            return True, None
+        if not self._pair_evt.wait(PAIR_WAIT):
+            return False, None
+        return self._pair_answer
+
+    @_envelope
+    def bt_pair_answer(self, accept, pin=None):
+        self._pair_answer = (bool(accept), pin if isinstance(pin, str) else None)
+        self._pair_evt.set()
 
     @_envelope
     def bt_pair(self, dev_id):
-        bt.pair(dev_id)
+        bt.pair(dev_id, self._ask)
+        d = self._row(dev_id)
+        if d and d["kind"] in ("Headphones", "Speaker", "Audio") and not d["connected"]:
+            try:  # ready to play: Windows doesn't always connect audio after pairing
+                bt.connect(d["address"], d["name"], open_settings=None)
+                d["connected"] = True
+            except bt.BtError:
+                pass  # bt logged it; the row's Connect button is still there
+        return d
 
     @_envelope
     def bt_remove(self, dev_id):
-        bt.remove(dev_id)
+        d = self._row(dev_id)
+        bt.remove(d["ids"] if d else [dev_id])
 
     @_envelope
     def bt_connect(self, dev_id):

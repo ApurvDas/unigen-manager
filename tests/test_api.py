@@ -21,6 +21,7 @@ def hw(monkeypatch):
     monkeypatch.setattr(bt, "radios", lambda: [
         {"key": "unigen", "id": "U", "name": "Generic Bluetooth Adapter", "ok": True, "disabled": False, "version": "5.4"},
         {"key": "builtin", "id": "M", "name": "MediaTek Bluetooth Adapter", "ok": False, "disabled": True, "version": "5.2"}])
+    monkeypatch.setattr(bt, "power", lambda: "on")
 
 
 def test_envelopes(hw, monkeypatch, caplog):
@@ -120,7 +121,7 @@ def test_bt_switch_needs_admin(hw, monkeypatch):
 
 
 def test_bt_connect_looks_up_address(hw, monkeypatch):
-    monkeypatch.setattr(bt, "devices", lambda paired: [{"id": "D1", "name": "JBL Go 3", "connected": False, "kind": "Speaker", "address": "112233445566"}])
+    monkeypatch.setattr(bt, "devices", lambda: [{"id": "D1", "ids": ["D1"], "name": "JBL Go 3", "connected": False, "kind": "Speaker", "address": "112233445566"}])
     seen = []
     monkeypatch.setattr(bt, "connect", lambda address, name: seen.append((address, name)))
     assert api.Api().bt_connect("D1")["ok"] is True and seen == [("112233445566", "JBL Go 3")]
@@ -277,3 +278,85 @@ def test_connected_network_without_details_uses_adapter_status(hw, monkeypatch):
     monkeypatch.setattr(wifi, "networks", lambda iface: wifi.parse_networks(bare))
     nets = api.Api().networks("builtin")["data"]["networks"]
     assert nets[0]["state"] == "Connected" and nets[0]["aps"] == [{"b": 5, "ch": 36, "s": 80}]
+
+
+ROWS = [{"id": "Bluetooth#c", "ids": ["Bluetooth#c", "BluetoothLE#l"], "name": "Galaxy Buds2 Pro", "kind": "Headphones",
+         "connected": False, "address": "020000000011"}]
+
+
+class Win:
+    def __init__(self, on_script=None): self.scripts, self.on_script = [], on_script
+    def evaluate_js(self, s):
+        self.scripts.append(s)
+        if self.on_script: self.on_script(s)
+
+
+def test_bt_pair_prompts_page_and_uses_answer(monkeypatch):
+    a, got = api.Api(), []
+    a._window = Win(lambda s: a.bt_pair_answer(True, "0000") if "onPairPrompt" in s else None)
+    monkeypatch.setattr(bt, "pair", lambda dev_id, ask: got.append(ask("provide", "")))
+    monkeypatch.setattr(bt, "devices", lambda: [dict(r) for r in ROWS])
+    monkeypatch.setattr(bt, "connect", lambda *a, **k: None)
+    r = a.bt_pair("BluetoothLE#l")
+    assert got == [(True, "0000")] and '"kind": "provide"' in a._window.scripts[0]
+    assert r == {"ok": True, "data": dict(ROWS[0], connected=True)}  # audio device connected right away
+
+
+def test_bt_pair_display_pin_does_not_wait(monkeypatch):
+    a, got = api.Api(), []
+    a._window = Win()
+    monkeypatch.setattr(api, "PAIR_WAIT", 5)
+    monkeypatch.setattr(bt, "pair", lambda dev_id, ask: got.append(ask("display", "482913")))
+    monkeypatch.setattr(bt, "devices", lambda: [])
+    assert a.bt_pair("Bluetooth#k") == {"ok": True, "data": None} and got == [(True, None)]
+
+
+def test_pair_prompt_times_out_and_declines(monkeypatch):
+    a, got = api.Api(), []
+    a._window = Win()
+    monkeypatch.setattr(api, "PAIR_WAIT", 0.01)
+    monkeypatch.setattr(bt, "pair", lambda dev_id, ask: got.append(ask("confirm", "482913")))
+    monkeypatch.setattr(bt, "devices", lambda: [])
+    a.bt_pair("Bluetooth#p")
+    assert got == [(False, None)]
+
+
+def test_bt_pair_audio_connect_failure_is_not_an_error(monkeypatch):
+    a = api.Api()
+    monkeypatch.setattr(bt, "pair", lambda dev_id, ask: None)
+    monkeypatch.setattr(bt, "devices", lambda: [dict(r) for r in ROWS])
+    def nope(*a, **k): raise bt.BtError("refused")
+    monkeypatch.setattr(bt, "connect", nope)
+    assert a.bt_pair("Bluetooth#c")["data"]["connected"] is False
+
+
+def test_bt_remove_unpairs_every_twin(monkeypatch):
+    removed = []
+    monkeypatch.setattr(bt, "devices", lambda: [dict(r) for r in ROWS])
+    monkeypatch.setattr(bt, "remove", removed.append)
+    api.Api().bt_remove("BluetoothLE#l")
+    assert removed == [["Bluetooth#c", "BluetoothLE#l"]]
+
+
+def test_bt_connect_uses_classic_address_of_twin(monkeypatch):
+    seen = []
+    monkeypatch.setattr(bt, "devices", lambda: [dict(r) for r in ROWS])
+    monkeypatch.setattr(bt, "connect", lambda addr, name: seen.append((addr, name)))
+    api.Api().bt_connect("BluetoothLE#l")
+    assert seen == [("020000000011", "Galaxy Buds2 Pro")]
+
+
+def test_bt_search_pushes_rows_to_main_window(monkeypatch):
+    a = api.Api()
+    a._window = Win()
+    monkeypatch.setattr(bt, "search_start", lambda on_change: on_change(ROWS, True))
+    assert a.bt_search_start() == {"ok": True, "data": None}
+    assert a._window.scripts[0].startswith("window.onBtNearby && window.onBtNearby(") and '"done": true' in a._window.scripts[0]
+
+
+def test_bt_radio_power_and_switch(hw, monkeypatch):
+    monkeypatch.setattr(bt, "power", lambda: "off")
+    assert api.Api().bt_radio()["data"]["power"] == "off"
+    calls = []
+    monkeypatch.setattr(bt, "set_power", calls.append)
+    assert api.Api().bt_power(1) == {"ok": True, "data": {"power": "off"}} and calls == [True]

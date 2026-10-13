@@ -1,7 +1,9 @@
 // Stand-in for api.py when the page is opened as index.html?mock (browser preview and UI tests).
 // Same method names and data shapes as the Python Api; tests/test_api.py checks that the names match.
 // Test hooks (set before the page loads): MOCK_FAST (no delays), MOCK_FAIL = { method: "message" },
-// MOCK_UNPLUG = "unigen" | "builtin", MOCK_ADMIN = false, MOCK_HOSTILE (adds a network, saved profile and paired device named like an HTML tag).
+// MOCK_UNPLUG = "unigen" | "builtin", MOCK_ADMIN = false, MOCK_HOSTILE (adds a network, saved profile and paired device named like an HTML tag),
+// MOCK_SEARCH_HOLD (the Bluetooth search never finishes), MOCK_BT_OFF (Bluetooth starts off).
+// Mock nearby devices carry ceremony null | "confirm" | "display" | "provide"; the PIN shown is 482913 and the right provide PIN is 0000.
 window.mockApi = (() => {
   const wait = ms => new Promise(r => setTimeout(r, window.MOCK_FAST ? 0 : ms));
   const api = {};
@@ -41,6 +43,7 @@ window.mockApi = (() => {
     { key: "unigen", name: NAMES.unigen, ok: true, disabled: false, version: "5.4" },
     { key: "builtin", name: NAMES.builtin, ok: false, disabled: true, version: "5.2" },
   ];
+  let POWER = window.MOCK_BT_OFF ? "off" : "on", searchTimers = [], answer = null;
   const PAIRED = [
     { id: "BT-beats", name: "Den Beats Pill", connected: true, kind: "Speaker", address: "A1B2C3D4E5F1" },
     { id: "BT-nord", name: "OnePlus Nord Buds 3r", connected: false, kind: "Headphones", address: "A1B2C3D4E5F2" },
@@ -50,10 +53,14 @@ window.mockApi = (() => {
     { id: "BT-dualsense", name: "DualSense Wireless Controller", connected: false, kind: "Controller", address: "A1B2C3D4E5F6" },
   ];
   const NEARBY = [
-    { id: "BT-buds2", name: "Galaxy Buds2 Pro", connected: false, kind: "Headphones", address: "B1B2C3D4E5F1" },
-    { id: "BT-boat", name: "boAt Stone 350", connected: false, kind: "Speaker", address: "B1B2C3D4E5F2" },
-    { id: "BT-mi", name: "Mi Portable Speaker", connected: false, kind: "Speaker", address: "B1B2C3D4E5F3" },
+    { id: "BT-buds2", name: "Galaxy Buds2 Pro", kind: "Headphones", address: "B1B2C3D4E5F1", ceremony: null },
+    { id: "BT-boat", name: "boAt Stone 350", kind: "Speaker", address: "B1B2C3D4E5F2", ceremony: null },
+    { id: "BT-mi", name: "Mi Portable Speaker", kind: "Speaker", address: "B1B2C3D4E5F3", ceremony: null },
+    { id: "BT-pixel", name: "Pixel 8", kind: "Phone", address: "B1B2C3D4E5F4", ceremony: "confirm" },
+    { id: "BT-k380", name: "Keys-To-Go K3", kind: "Keyboard", address: "B1B2C3D4E5F5", ceremony: "display" },
+    { id: "BT-car", name: "Car Kit 2", kind: "Audio", address: "B1B2C3D4E5F6", ceremony: "provide" },
   ];
+  if (window.MOCK_HOSTILE) NEARBY.push({ id: "BT-evil2", name: "<img src=x onerror=alert(2)>", kind: "Device", address: "B1B2C3D4E5F7", ceremony: "confirm" });
 
   if (window.MOCK_HOSTILE) {
     PROFILES.unigen.add("<img src=x onerror=alert(1)>");
@@ -121,18 +128,41 @@ window.mockApi = (() => {
   });
   def("copy_profile", 1200, (ssid, src, dst) => { adapter(src); adapter(dst); PROFILES[dst].add(ssid); });
   def("delete_profile", 300, ssid => { Object.values(PROFILES).forEach(p => p.delete(ssid)); });
-  def("bt_radio", 100, () => ({ active: (RADIOS.find(r => r.ok) || {}).key ?? null, can_switch: window.MOCK_ADMIN !== false, radios: RADIOS.map(r => ({ ...r })) }));
+  const row = d => ({ id: d.id, ids: [d.id], name: d.name, kind: d.kind, connected: !!d.connected, address: d.address });
+  const push = (devices, done) => window.onBtNearby && window.onBtNearby({ devices: devices.map(row), done });
+  def("bt_radio", 100, () => ({ active: (RADIOS.find(r => r.ok) || {}).key ?? null, can_switch: window.MOCK_ADMIN !== false,
+    power: POWER, radios: RADIOS.map(r => ({ ...r })) }));
+  def("bt_power", 600, on => { POWER = on ? "on" : "off"; return { power: POWER }; });
   def("bt_switch", 2500, key => {
     if (window.MOCK_ADMIN === false) throw new Error("Bluetooth radio switching needs administrator rights. Restart the app and choose Yes.");
     RADIOS.forEach(r => { r.ok = r.key === key; r.disabled = !r.ok; });
     return { active: key };
   });
-  def("bt_paired", 200, () => PAIRED.map(d => ({ ...d })));
-  def("bt_nearby", 3000, () => NEARBY.filter(d => !PAIRED.some(p => p.id === d.id)).map(d => ({ ...d })));
-  def("bt_pair", 1400, id => {
+  def("bt_paired", 200, () => PAIRED.map(d => ({ ...d, ids: [d.id] })));
+  def("bt_search_start", 100, () => {
+    if (POWER === "off") throw new Error("Bluetooth is off. Turn it on first.");
+    searchTimers.forEach(clearTimeout); searchTimers = [];
+    const todo = NEARBY.filter(d => !PAIRED.some(p => p.id === d.id)), step = window.MOCK_FAST ? 0 : 400;
+    todo.forEach((d, i) => searchTimers.push(setTimeout(() => push(todo.slice(0, i + 1), false), step * (i + 1))));
+    if (!window.MOCK_SEARCH_HOLD) searchTimers.push(setTimeout(() => push(todo, true), step * (todo.length + 1)));
+  });
+  def("bt_search_stop", 0, () => { searchTimers.forEach(clearTimeout); searchTimers = []; });
+  def("bt_pair_answer", 0, (accept, pin) => { if (answer) answer({ accept, pin }); });
+  def("bt_pair", 1400, async id => {
     const d = NEARBY.find(x => x.id === id);
-    if (!d) throw new Error("The device didn't answer in time. Put it in pairing mode and try again.");
-    PAIRED.push({ ...d, connected: false });
+    if (!d) throw new Error("The device didn't answer. Bring it closer and make sure it's in pairing mode.");
+    if (d.ceremony) {
+      const reply = new Promise(r => { answer = r; });
+      window.onPairPrompt && window.onPairPrompt({ kind: d.ceremony, pin: d.ceremony === "provide" ? "" : "482913" });
+      if (d.ceremony !== "display") {
+        const { accept, pin } = await reply; answer = null;
+        if (!accept) throw new Error("Pairing cancelled.");
+        if (d.ceremony === "provide" && pin !== "0000") throw new Error("Wrong PIN. Try again.");
+      } else { answer = null; await wait(300); }
+    }
+    const p = { ...row(d), connected: ["Headphones", "Speaker", "Audio"].includes(d.kind) };
+    PAIRED.push(p);
+    return p;
   });
   def("bt_remove", 500, id => { const i = PAIRED.findIndex(d => d.id === id); if (i >= 0) PAIRED.splice(i, 1); });
   def("bt_connect", 1400, id => { const d = PAIRED.find(x => x.id === id); if (!d) throw new Error("That device isn't paired any more."); d.connected = true; });
