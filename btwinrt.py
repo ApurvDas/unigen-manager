@@ -1,8 +1,13 @@
 """Bluetooth through Windows' device APIs (WinRT): paired devices, live search, pairing with PIN prompts,
 unpairing and the radio's on/off switch. bt.py is the only caller. The pure helpers at the top test without hardware."""
-import logging
+import asyncio, logging, threading
 
-log = logging.getLogger("unigen")
+from winrt.windows.devices.enumeration import (DeviceInformation, DeviceInformationKind, DevicePairingKinds,
+                                               DevicePairingProtectionLevel)
+from winrt.windows.devices.radios import Radio, RadioAccessStatus, RadioKind, RadioState
+from winrt.windows.foundation import IPropertyValue, PropertyType
+
+log =logging.getLogger("unigen")
 
 
 class BtError(Exception):
@@ -94,3 +99,216 @@ def answer(kind, pin, ask):
         typed = (typed or "").strip()
         return (True, typed) if typed else (False, None)
     return True, None
+
+
+# ---- Windows calls ----
+_CLASSIC, _LE = "{e0cbf06c-cd8b-4647-bb8a-263b43f0f974}", "{bb7bb05e-5972-42b5-94fc-76eaa7084d49}"
+_P = "System.Devices.Aep."
+PROPS = [_P + n for n in ("IsPresent", "IsConnected", "DeviceAddress", "Bluetooth.Cod.Major", "Bluetooth.Cod.Minor",
+                          "Bluetooth.Le.Appearance")]
+_AEP = DeviceInformationKind.ASSOCIATION_ENDPOINT
+_GET = {PropertyType.BOOLEAN: "get_boolean", PropertyType.STRING: "get_string", PropertyType.UINT8: "get_uint8",
+        PropertyType.UINT16: "get_uint16", PropertyType.UINT32: "get_uint32", PropertyType.INT16: "get_int16",
+        PropertyType.INT32: "get_int32"}
+_KINDS = {DevicePairingKinds.CONFIRM_PIN_MATCH: "confirm", DevicePairingKinds.DISPLAY_PIN: "display",
+          DevicePairingKinds.PROVIDE_PIN: "provide"}
+_ALL_KINDS = (DevicePairingKinds.CONFIRM_ONLY | DevicePairingKinds.CONFIRM_PIN_MATCH | DevicePairingKinds.DISPLAY_PIN
+              | DevicePairingKinds.PROVIDE_PIN)
+_pair_lock, _search_lock, _search = threading.Lock(), threading.Lock(), None
+
+
+def aqs(paired):
+    """Bluetooth and Bluetooth LE association endpoints, paired or not."""
+    return (f'(System.Devices.Aep.ProtocolId:="{_CLASSIC}" OR System.Devices.Aep.ProtocolId:="{_LE}") AND '
+            f'System.Devices.Aep.IsPaired:=System.StructuredQueryType.Boolean#{"True" if paired else "False"}')
+
+
+def _value(obj):
+    if obj is None:
+        return None
+    p = obj.as_(IPropertyValue)
+    get = _GET.get(p.type)
+    return getattr(p, get)() if get else None
+
+
+def record(di):
+    """A DeviceInformation as a plain dict; everything after this point tests without Bluetooth."""
+    props = di.properties
+    v = lambda n: _value(props.lookup(_P + n)) if props.has_key(_P + n) else None
+    return {"id": di.id, "name": (di.name or "").strip(), "le": di.id.startswith("BluetoothLE#"),
+            "present": bool(v("IsPresent")), "connected": bool(v("IsConnected")),
+            "address": (v("DeviceAddress") or "").replace(":", "").upper(),
+            "major": v("Bluetooth.Cod.Major"), "minor": v("Bluetooth.Cod.Minor"), "appearance": v("Bluetooth.Le.Appearance")}
+
+
+def paired():
+    async def go():
+        return [record(d) for d in await DeviceInformation.find_all_async_with_kind_aqs_filter_and_additional_properties(
+            aqs(True), PROPS, _AEP)]
+    try:
+        return merge(asyncio.run(go()))
+    except OSError as e:
+        log.warning("paired list failed: %s", e)
+        raise BtError("Couldn't read the paired devices. Is Bluetooth on?")
+
+
+def unpair(dev_id):
+    async def go():
+        di = await DeviceInformation.create_from_id_async(dev_id)
+        return (await di.pairing.unpair_async()).status.name
+    try:
+        status = asyncio.run(go())
+    except OSError:
+        status = "FAILED"
+    if status not in ("UNPAIRED", "ALREADY_UNPAIRED"):
+        raise BtError(f"Couldn't remove the device ({status.replace('_', ' ').lower()}).")
+
+
+async def _radio():
+    if await Radio.request_access_async() != RadioAccessStatus.ALLOWED:
+        raise BtError("Windows didn't let the app control Bluetooth.")
+    return next((r for r in await Radio.get_radios_async() if r.kind == RadioKind.BLUETOOTH), None)
+
+
+def power():
+    try:
+        r = asyncio.run(_radio())
+    except (OSError, BtError):
+        return "unknown"
+    return {RadioState.ON: "on", RadioState.OFF: "off"}.get(r.state, "unknown") if r else "unknown"
+
+
+def set_power(on):
+    word = "on" if on else "off"
+    async def go():
+        r = await _radio()
+        if r is None:
+            raise BtError("No Bluetooth radio found. Plug in the dongle or switch radios.")
+        return await r.set_state_async(RadioState.ON if on else RadioState.OFF)
+    try:
+        ok = asyncio.run(go()) == RadioAccessStatus.ALLOWED
+    except OSError:
+        ok = False
+    if not ok:
+        raise BtError(f"Windows didn't let the app turn Bluetooth {word}.")
+
+
+class Search:
+    """Live search: Windows looks for unpaired devices in range; on_change(rows, done) gets the whole current list."""
+    def __init__(self, on_change, seconds, watcher=None):
+        self._on_change, self._dis, self._sent, self._done = on_change, {}, None, False
+        self._lock = threading.Lock()
+        self._w = watcher or DeviceInformation.create_watcher_with_kind_aqs_filter_and_additional_properties(
+            aqs(False), PROPS, _AEP)
+        self._w.add_added(self._added)
+        self._w.add_updated(self._updated)   # Windows only fires Added when Updated and Removed have handlers
+        self._w.add_removed(self._removed)
+        self._w.add_stopped(lambda s, e: self.stop())
+        self._timer = threading.Timer(seconds, self.stop)
+        self._timer.daemon = True
+
+    def start(self):
+        self._w.start()
+        self._timer.start()
+
+    def _added(self, sender, di):
+        with self._lock:
+            self._dis[di.id] = di
+        self._emit()
+
+    def _updated(self, sender, upd):
+        with self._lock:
+            di = self._dis.get(upd.id)
+            if di is None:
+                return
+            di.update(upd)
+        self._emit()
+
+    def _removed(self, sender, upd):
+        with self._lock:
+            self._dis.pop(upd.id, None)
+        self._emit()
+
+    def _emit(self, done=False):
+        with self._lock:
+            if self._done and not done:
+                return
+            rows = nearby_rows([record(d) for d in self._dis.values()])
+            if rows == self._sent and not done:
+                return
+            self._sent = rows
+        self._on_change(rows, done)
+
+    def stop(self):
+        with self._lock:
+            if self._done:
+                return
+            self._done = True
+        self._timer.cancel()
+        try:
+            self._w.stop()
+        except OSError:
+            pass  # already stopped by Windows
+        self._emit(done=True)
+
+
+def search_start(on_change, seconds=30):
+    global _search
+    with _search_lock:
+        if _search:
+            _search.stop()
+        _search = Search(on_change, seconds)
+        _search.start()
+
+
+def search_stop():
+    with _search_lock:
+        if _search:
+            _search.stop()
+
+
+def _on_request(ask):
+    """PairingRequested handler. The deferral keeps Windows waiting while the page asks the user on another thread."""
+    def handler(sender, args):
+        kind, pin, deferral = _KINDS.get(args.pairing_kind), args.pin, args.get_deferral()
+        def finish():
+            try:
+                ok, typed = answer(kind, pin, ask)
+                if ok:
+                    args.accept_with_pin(typed) if typed else args.accept()
+            except Exception:
+                log.exception("pairing prompt failed")
+            finally:
+                deferral.complete()
+        threading.Thread(target=finish, daemon=True).start()
+    return handler
+
+
+async def _pair(dev_id, ask):
+    di = await DeviceInformation.create_from_id_async(dev_id)
+    if di.pairing.is_paired:
+        return "ALREADY_PAIRED"
+    custom = di.pairing.custom
+    token = custom.add_pairing_requested(_on_request(ask))
+    try:
+        result = await custom.pair_with_protection_level_async(_ALL_KINDS, DevicePairingProtectionLevel.DEFAULT)
+    finally:
+        custom.remove_pairing_requested(token)
+    return result.status.name
+
+
+def pair(dev_id, ask):
+    """ask(kind, pin) -> (accepted, typed) is called for PIN ceremonies ('confirm', 'display', 'provide')."""
+    if not _pair_lock.acquire(blocking=False):
+        raise BtError("Already pairing a device.")
+    try:
+        search_stop()  # searching while pairing makes some devices fail
+        try:
+            status = asyncio.run(_pair(dev_id, ask))
+        except OSError as e:
+            log.warning("pairing failed: %s", e)
+            status = "FAILED"
+    finally:
+        _pair_lock.release()
+    if status not in ("PAIRED", "ALREADY_PAIRED"):
+        raise BtError(pair_message(status))

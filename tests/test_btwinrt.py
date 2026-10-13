@@ -73,3 +73,98 @@ def test_answer_for_each_ceremony():
     assert w.answer("provide", "", lambda k, p: (True, "  ")) == (False, None)  # blank PIN declines
     assert w.answer("provide", "", lambda k, p: (False, "0000")) == (False, None)
     assert asked == [("confirm", "482913"), ("display", "482913")]
+
+
+import threading
+
+
+class FakeWatcher:
+    def __init__(self):
+        self.cb, self.started, self.stopped = {}, False, 0
+    def add_added(self, f): self.cb["added"] = f
+    def add_updated(self, f): self.cb["updated"] = f
+    def add_removed(self, f): self.cb["removed"] = f
+    def add_stopped(self, f): self.cb["stopped"] = f
+    def start(self): self.started = True
+    def stop(self): self.stopped += 1
+
+
+class Upd:
+    def __init__(self, id): self.id = id
+
+
+class Rec(dict):
+    """A fake DeviceInformation that is already a record (record() is patched to return it)."""
+    @property
+    def id(self): return self["id"]
+
+
+def make_search(monkeypatch, seconds=60):
+    monkeypatch.setattr(w, "record", lambda di: dict(di))
+    seen, fw = [], FakeWatcher()
+    s = w.Search(lambda rows, done: seen.append(([r["name"] for r in rows], done)), seconds, watcher=fw)
+    s.start()
+    return s, fw, seen
+
+
+def test_search_pushes_rows_as_devices_come_and_go(monkeypatch):
+    s, fw, seen = make_search(monkeypatch)
+    assert fw.started
+    fw.cb["added"](None, Rec(rec("Bluetooth#1", "Pixel 8", major=2, minor=3)))
+    fw.cb["added"](None, Rec(rec("BluetoothLE#2", "", le=True)))               # nameless: no change, no push
+    fw.cb["added"](None, Rec(rec("Bluetooth#3", "Galaxy Buds2 Pro", major=4, minor=6)))
+    fw.cb["removed"](None, Upd("Bluetooth#1"))
+    s.stop(); s.stop()                                                          # second stop is a no-op
+    assert seen == [(["Pixel 8"], False), (["Galaxy Buds2 Pro", "Pixel 8"], False), (["Galaxy Buds2 Pro"], False),
+                    (["Galaxy Buds2 Pro"], True)]
+    assert fw.stopped == 1
+
+
+def test_search_stopped_by_windows_ends_search(monkeypatch):
+    s, fw, seen = make_search(monkeypatch)
+    fw.cb["stopped"](None, None)  # radio turned off or dongle unplugged
+    assert seen == [([], True)]
+
+
+def test_search_times_out(monkeypatch):
+    s, fw, seen = make_search(monkeypatch, seconds=0.01)
+    for _ in range(100):
+        if seen: break
+        threading.Event().wait(0.01)
+    assert seen == [([], True)] and fw.stopped == 1
+
+
+def test_pair_maps_status_and_stops_search(monkeypatch):
+    stops = []
+    monkeypatch.setattr(w, "search_stop", lambda: stops.append(1))
+    async def fake(dev_id, ask): return "PAIRED"
+    monkeypatch.setattr(w, "_pair", fake)
+    w.pair("Bluetooth#1", None)
+    async def refused(dev_id, ask): return "AUTHENTICATION_FAILURE"
+    monkeypatch.setattr(w, "_pair", refused)
+    with pytest.raises(w.BtError, match="The device refused"):
+        w.pair("Bluetooth#1", None)
+    assert stops == [1, 1]
+
+
+def test_pair_turns_windows_errors_into_a_sentence(monkeypatch):
+    monkeypatch.setattr(w, "search_stop", lambda: None)
+    async def gone(dev_id, ask): raise OSError("element not found")
+    monkeypatch.setattr(w, "_pair", gone)
+    with pytest.raises(w.BtError, match="didn't answer"):
+        w.pair("Bluetooth#1", None)
+
+
+def test_second_pairing_is_refused(monkeypatch):
+    w._pair_lock.acquire()
+    try:
+        with pytest.raises(w.BtError, match="Already pairing a device."):
+            w.pair("Bluetooth#2", None)
+    finally:
+        w._pair_lock.release()
+
+
+def test_power_is_unknown_when_windows_refuses(monkeypatch):
+    async def denied(): raise w.BtError("Windows didn't let the app control Bluetooth.")
+    monkeypatch.setattr(w, "_radio", denied)
+    assert w.power() == "unknown"

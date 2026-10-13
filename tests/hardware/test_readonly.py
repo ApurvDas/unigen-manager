@@ -70,3 +70,10 @@ def test_saved_password_readable_without_printing_it():
 
 def test_launcher_present():
     assert Path(os.environ["WINDIR"], "pyw.exe").exists()
+
+
+def test_winrt_bluetooth_reads():
+    import btwinrt
+    assert btwinrt.power() in ("on", "off")
+    rows = btwinrt.paired()
+    assert all({"id", "ids", "name", "kind", "connected", "address"} <= set(r) for r in rows)
