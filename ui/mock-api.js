@@ -1,7 +1,7 @@
 // Stand-in for api.py when the page is opened as index.html?mock (browser preview and UI tests).
 // Same method names and data shapes as the Python Api; tests/test_api.py checks that the names match.
 // Test hooks (set before the page loads): MOCK_FAST (no delays), MOCK_FAIL = { method: "message" },
-// MOCK_UNPLUG = "unigen" | "builtin", MOCK_ADMIN = false, MOCK_HOSTILE (adds a network named like an HTML tag).
+// MOCK_UNPLUG = "unigen" | "builtin", MOCK_ADMIN = false, MOCK_HOSTILE (adds a network, saved profile and paired device named like an HTML tag).
 window.mockApi = (() => {
   const wait = ms => new Promise(r => setTimeout(r, window.MOCK_FAST ? 0 : ms));
   const api = {};
@@ -53,6 +53,11 @@ window.mockApi = (() => {
     { id: "BT-boat", name: "boAt Stone 350", connected: false, kind: "Speaker", address: "B1B2C3D4E5F2" },
     { id: "BT-mi", name: "Mi Portable Speaker", connected: false, kind: "Speaker", address: "B1B2C3D4E5F3" },
   ];
+
+  if (window.MOCK_HOSTILE) {
+    PROFILES.unigen.add("<img src=x onerror=alert(1)>");
+    PAIRED.push({ id: "BT-evil", name: "<img src=x onerror=alert(1)>", connected: false, kind: "Audio", address: "A1B2C3D4E5F7" });
+  }
 
   // speed: 28 download + 12 upload samples, ramping up at the start of each phase (like speed.py)
   const sample = (i, dl, ul) => {
@@ -155,6 +160,7 @@ window.mockApi = (() => {
     others.forEach(a => { a.state = "disconnected"; });
     return { key, ssid: net };
   });
+  def("is_visible", 0, which => true);
   def("open_main", 0, () => null);
   def("hide_widget", 0, () => null);
   def("widget_fit", 0, () => null);
