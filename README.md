@@ -1,45 +1,108 @@
+<div align="center">
+
+<img src="docs/logo.svg" width="88" alt="Unigen Manager logo">
+
 # Unigen Manager
 
-A Windows app for managing a Unigen USB Wi-Fi 6 + Bluetooth dongle (AIC8800D80) and a laptop's built-in Wi-Fi card (MediaTek MT7921) side by side. It has a dark-mode window for Wi-Fi, Bluetooth and speed tests, plus an always-on widget in the taskbar's notification area (the **^** flyout).
+**Manage the Unigen USB Wi-Fi 6 + Bluetooth dongle and a laptop's built-in Wi-Fi card side by side, from one dark-mode window and an always-on tray widget.**
 
-![Wi-Fi](docs/screenshots/wifi.png)
+![Windows 10 | 11](https://img.shields.io/badge/Windows-10%20%7C%2011-0E151D?style=flat-square&logo=windows&logoColor=4FB3C8)
+![Python 3.10](https://img.shields.io/badge/Python-3.10-0E151D?style=flat-square&logo=python&logoColor=4FB3C8)
+![pywebview](https://img.shields.io/badge/UI-pywebview%20%2B%20WebView2-0E151D?style=flat-square)
+![anime.js](https://img.shields.io/badge/motion-anime.js%204-0E151D?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-137%20passing-5CC08A?style=flat-square)
 
-| Bluetooth | Speed | Tray widget |
-|---|---|---|
-| ![Bluetooth](docs/screenshots/bluetooth.png) | ![Speed](docs/screenshots/speed.png) | ![Widget](docs/screenshots/widget.png) |
+[Quick start](#quick-start) · [Features](#features) · [Setup](#setup) · [Usage](#usage) · [Development](#development) · [Security](#security)
+
+<img src="docs/screenshots/wifi.png" alt="The Wi-Fi screen: both adapters in the side menu, a 2.4 and 5 GHz channel map, and the list of nearby networks" width="900">
+
+</div>
+
+## Quick start
+
+```powershell
+git clone https://github.com/ApurvDas/unigen-manager.git
+cd unigen-manager
+py -3.10 -m pip install -r requirements.txt
+py -3.10 UnigenManager.pyw
+```
+
+Choose **Yes** at the Windows prompt. That's it: the window opens, and a cyan icon appears in the taskbar's **^** flyout.
 
 ## Features
 
-- **Two adapters, one window:** see both Wi-Fi cards with their network, link speed, signal and standards (Wi-Fi 6, Bluetooth 5.4 / 5.2), read from the hardware.
-- **Wi-Fi:**
-  - Nearby networks, with a channel map for 2.4 and 5 GHz.
-  - Connect and disconnect, and add new WPA2 or open networks with a password.
-  - Rescan on demand.
-  - **Saved networks:** show a password, copy a network to the other adapter, and hold-to-delete.
-- **Bluetooth:**
-  - Paired and nearby devices: pair, remove, connect and disconnect audio devices.
-  - Switch between the dongle's and the built-in Bluetooth radio, with automatic switch-back if the new radio doesn't start.
-- **Speed:** a live throughput chart for each adapter, both adapters compared side by side, and signal strength over the last 2 minutes.
-- **Tray widget:**
-  - Live status, and a "Wi-Fi uses" switch that moves the connection to one adapter.
-  - Quick connect to saved networks, the Bluetooth radio switch, and a mini speed test.
-  - Optional **Start with Windows**.
-- **Motion:** anime.js animations that respect Windows' "Show animations" setting.
+<table>
+<tr>
+<td width="50%" valign="top">
+
+### 📶 Wi-Fi
+- See nearby networks with signal, band and channel.
+- A channel map for 2.4 and 5 GHz shows which channels are crowded.
+- Connect, disconnect, or add a new WPA2 or open network with its password.
+- **Saved networks:** show a password, copy a network to the other adapter, or hold to delete.
+
+</td>
+<td width="50%" valign="top">
+
+### 🎧 Bluetooth
+- Paired and nearby devices: pair, remove, connect and disconnect audio devices.
+- Switch between the dongle's radio (Bluetooth 5.4) and the built-in one (5.2).
+- If the new radio doesn't start within 10 seconds, the app switches back on its own.
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+### ⚡ Speed
+- A live throughput curve for each adapter, with download and upload shown separately.
+- Both adapters compared side by side: download, upload, link rate and ping.
+- Signal strength of each adapter over the last 2 minutes.
+
+</td>
+<td valign="top">
+
+### 🧭 Always-on tray widget
+- Live status of both adapters, and a **Wi-Fi uses** switch that moves the connection to one adapter.
+- Quick connect to saved networks, the Bluetooth radio switch, and a mini speed test.
+- Optional **Start with Windows**.
+
+</td>
+</tr>
+</table>
+
+Each adapter shows its own standards, read from the hardware: **Wi-Fi 6**, **Bluetooth 5.4** for the Unigen dongle and **5.2** for the MediaTek card. The motion is built with anime.js and turns into simple fades when Windows' **Show animations** setting is off.
+
+<div align="center">
+
+| Bluetooth | Speed | Tray widget |
+|:---:|:---:|:---:|
+| <img src="docs/screenshots/bluetooth.png" alt="Bluetooth screen" width="300"> | <img src="docs/screenshots/speed.png" alt="Speed screen with charts" width="300"> | <img src="docs/screenshots/widget.png" alt="Tray widget above the taskbar" width="300"> |
+
+</div>
 
 ## Requirements
 
-- Windows 10 or 11, **set to English** (the app reads `netsh` output)
-- **Python 3.10** from [python.org](https://www.python.org/downloads/release/python-31011/), with the `py` launcher (installed by default)
-- Microsoft Edge WebView2 Runtime (already present on up-to-date Windows 10/11)
-- Administrator rights for Bluetooth radio switching and Start with Windows (the app asks when it starts)
-
-## Download
-
-Download the code with either:
-- **Git:** `git clone https://github.com/ApurvDas/unigen-manager.git`
-- **ZIP:** on GitHub, choose **Code ▸ Download ZIP**, then extract it, for example to `C:\Users\<you>\UnigenManager`.
+| | |
+|---|---|
+| **Windows** | 10 or 11, **set to English** (the app reads `netsh` output) |
+| **Python** | [3.10](https://www.python.org/downloads/release/python-31011/), with the `py` launcher (installed by default) |
+| **WebView2** | Microsoft Edge WebView2 Runtime, already present on up-to-date Windows |
+| **Rights** | Administrator, for Bluetooth radio switching and Start with Windows (the app asks when it starts) |
+| **Hardware** | Built for the Unigen AIC8800D80 dongle and MediaTek MT7921 card. Other Wi-Fi adapters show up under their Windows names |
 
 ## Setup
+
+<details open>
+<summary><b>1. Download</b></summary>
+
+- **Git:** `git clone https://github.com/ApurvDas/unigen-manager.git`
+- **ZIP:** **Code ▸ Download ZIP** on this page, then extract it, for example to `C:\Users\<you>\UnigenManager`.
+
+</details>
+
+<details open>
+<summary><b>2. Install</b></summary>
 
 Open a terminal in the project folder:
 
@@ -47,9 +110,12 @@ Open a terminal in the project folder:
 py -3.10 -m pip install -r requirements.txt
 ```
 
-That installs pywebview, pystray and Pillow.
+That installs pywebview, pystray and Pillow. anime.js already ships in `ui/vendor/`.
 
-### Run
+</details>
+
+<details open>
+<summary><b>3. Run</b></summary>
 
 ```powershell
 py -3.10 UnigenManager.pyw
@@ -63,9 +129,22 @@ Create a desktop shortcut (optional):
 py -3.10 app.py --install-shortcut
 ```
 
-**Start with Windows:** right-click the tray icon and tick **Start with Windows**. This registers a scheduled task that starts the tray at sign-in, with no prompt. It keeps running on battery.
+</details>
 
-**Command-line options:**
+## Usage
+
+| Action | How |
+|---|---|
+| Switch screens | Side menu, or <kbd>Ctrl</kbd>+<kbd>1</kbd> Wi-Fi · <kbd>Ctrl</kbd>+<kbd>2</kbd> Bluetooth · <kbd>Ctrl</kbd>+<kbd>3</kbd> Speed |
+| Connect | Double-click a network, or select it and press <kbd>Enter</kbd> |
+| Delete a saved network, or remove a device | Press and hold the button for 1.5 s; let go early to cancel |
+| Open the widget | Click **^** on the taskbar, then the cyan icon. Click anywhere else or press <kbd>Esc</kbd> to close |
+| Start with Windows | Right-click the tray icon and tick **Start with Windows** (a scheduled task; keeps running on battery) |
+| Quit | Right-click the tray icon and choose **Quit**. Closing the main window only hides it |
+
+Opening the app again while it's running brings the existing window forward, so only one copy runs at a time.
+
+**Command-line options**
 
 | Flag | Effect |
 |---|---|
@@ -74,13 +153,11 @@ py -3.10 app.py --install-shortcut
 | `--debug` | Open WebView developer tools |
 | `--install-shortcut` | Create the desktop shortcut and exit |
 
-**What happens on close:** closing the main window hides it, and the tray icon keeps running. Use the tray menu's **Quit** to exit. Opening the app again while it's running brings the existing window forward. Only one copy runs at a time.
+App data such as the last speed results and `app.log` lives in `%LOCALAPPDATA%\UnigenManager\`.
 
-App data such as the last speed test results and `app.log` is stored in `%LOCALAPPDATA%\UnigenManager\`.
+## Development
 
-## Preview the UI without the app
-
-Both pages include a mock API with sample data:
+**Preview the UI in a browser.** Both pages include a mock API with sample data:
 
 ```powershell
 py -3.10 -m http.server 8765 --directory ui
@@ -88,47 +165,73 @@ py -3.10 -m http.server 8765 --directory ui
 
 Then open:
 - `http://127.0.0.1:8765/index.html?mock` for the main window
-- `http://127.0.0.1:8765/widget.html?mock` for the tray widget (click **^**, then the cyan icon)
+- `http://127.0.0.1:8765/widget.html?mock` for the widget, above a fake taskbar
 
-## Development and tests
+**Run the tests**
 
 ```powershell
 py -3.10 -m pip install -r requirements-dev.txt
-py -3.10 -m pytest                  # unit, contract and UI tests (UI tests drive the installed Microsoft Edge)
-py -3.10 -m pytest -m hardware      # read-only checks against the real adapters (changes nothing)
+py -3.10 -m pytest                 # 137 unit, contract and UI tests (UI tests drive the installed Microsoft Edge)
+py -3.10 -m pytest -m hardware     # read-only checks against the real adapters (changes nothing)
 ```
 
-State-changing checks (connecting, pairing, radio switching, unplugging the dongle) are in [docs/superpowers/test-reports/manual-checklist.md](docs/superpowers/test-reports/manual-checklist.md).
+Checks that change system state (connecting, pairing, radio switching, unplugging the dongle) are in the [manual checklist](docs/superpowers/test-reports/manual-checklist.md).
 
-### Project layout
+### How it fits together
+
+```mermaid
+flowchart LR
+    subgraph Pages["WebView2 pages"]
+        index["index.html<br/>main window"]
+        widget["widget.html<br/>tray widget"]
+        shared["shared.js + anime.js"]
+    end
+    app["app.py<br/>elevation, windows,<br/>single instance"] --> api
+    app --> tray["tray.py<br/>pystray icon,<br/>Start with Windows"]
+    index --> shared
+    widget --> shared
+    shared -- "window.pywebview.api" --> api["api.py<br/>plain-language errors"]
+    api --> wifi["wifi.py<br/>netsh, wlanapi"]
+    api --> bt["bt.py + bt.ps1<br/>WinRT, bthprops"]
+    api --> speed["speed.py<br/>ping, sampled HTTP"]
+    wifi --> winrun["winrun.py<br/>argument lists only, no shell"]
+    bt --> winrun
+    speed --> winrun
+```
 
 | Path | What it does |
 |---|---|
 | `UnigenManager.pyw` | Double-click launcher |
-| `app.py` | Admin prompt, single instance, main window, widget window, tray |
-| `api.py` | Everything the pages call (`window.pywebview.api`); plain-language errors |
-| `wifi.py` | `netsh` parsing, connect/disconnect, saved profiles, Windows scan request |
-| `bt.py`, `bt.ps1` | Bluetooth radios, devices, pairing, audio connect (PowerShell WinRT + `bthprops.cpl`) |
-| `speed.py` | Ping and per-adapter sampled download/upload |
-| `tray.py` | Notification-area icon, widget placement, Start with Windows, single instance |
-| `winrun.py` | The only place that starts processes (argument lists only, no shell) |
-| `ui/` | `index.html` (main window), `widget.html` (tray widget), `shared.css`/`shared.js`, `mock-api.js`, anime.js |
-| `tests/` | pytest suites, Playwright UI tests and read-only hardware tests |
-| `docs/superpowers/` | Design spec, implementation plan and test checklist |
+| `app.py` | Administrator prompt, single instance, main and widget windows, tray |
+| `api.py` | Everything the pages call, with plain-language errors |
+| `wifi.py` | `netsh` parsing, connect and disconnect, saved profiles, Windows scan request |
+| `bt.py`, `bt.ps1` | Bluetooth radios, devices, pairing, audio connect |
+| `speed.py` | Ping and per-adapter sampled download and upload |
+| `tray.py` | Tray icon, widget placement, Start with Windows, single instance |
+| `winrun.py` | The only place that starts processes |
+| `ui/` | `index.html`, `widget.html`, `shared.css`, `shared.js`, `mock-api.js`, vendored anime.js |
+| `tests/` | pytest suites, Playwright UI tests, read-only hardware tests, captured `netsh` fixtures |
+| `docs/superpowers/` | Design spec, implementation plan and the manual checklist |
 
-## Security notes
+## Security
 
-- Network and device names come from the air, so they're always shown as text and passed to Windows tools as separate arguments, never as command text.
-- Wi-Fi passwords are never logged. They only touch the disk inside temporary folders that are deleted right away.
-- **Start with Windows runs the app with administrator rights at sign-in, without a prompt.** The app's files live in your user folder. Anything that can change those files could therefore gain administrator rights at your next sign-in. Leave **Start with Windows** off if that trade-off isn't right for you.
+- **Untrusted names:** anyone nearby can name a network or device, so names are always shown as text and handed to Windows tools as separate arguments, never as command text.
+- **Passwords** are never logged. They only touch the disk inside temporary folders that are deleted straight away.
+- **Start with Windows** runs the app with administrator rights at sign-in, without a prompt. The app's files live in your user folder, so anything that can change those files could gain administrator rights at your next sign-in. Leave the option off if that trade-off isn't right for you.
 
 ## Known limitations
 
-- Windows must be in English. On other languages, the app shows "Is Windows set to English?" instead of wrong data.
-- Network names with non-English characters may display incorrectly and can't be connected from the app.
-- New WPA3 and Enterprise networks have to be added in Windows settings. Connecting to them once they're saved works.
-- **Bluetooth Connect/Disconnect for audio devices:**
+- Windows must be in English. On other languages, the app shows *"Is Windows set to English?"* instead of wrong data.
+- Network names with non-English characters may display incorrectly, and you can't connect to them from the app.
+- New WPA3 and Enterprise networks must be added in Windows settings. Once saved, they connect normally.
+- **Bluetooth audio Connect and Disconnect:**
   - The app toggles the device's audio services.
   - If Windows refuses, the app opens Windows Bluetooth settings instead.
   - This is still to be confirmed on real hardware (checklist row 24).
 - An adapter plugged in after the app starts appears after the app restarts.
+
+## Built with
+
+[pywebview](https://pywebview.flowrl.com/) · [pystray](https://github.com/moses-palmer/pystray) · [Pillow](https://python-pillow.org/) · [anime.js](https://animejs.com/) (MIT) · [Playwright](https://playwright.dev/python/) and [pytest](https://pytest.org/) for tests
+
+The network names, addresses and device names in the tests and screenshots are made up.
