@@ -21,13 +21,28 @@ def make_icon(path):
     big.save(path, sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
 
 
+def version_file(path):
+    """Windows file properties (Details tab): product name and version."""
+    nums = tuple(map(int, VERSION.split("."))) + (0,)
+    strings = {"CompanyName": "Unigen Manager", "FileDescription": "Unigen Manager", "ProductName": "Unigen Manager",
+               "FileVersion": VERSION, "ProductVersion": VERSION, "OriginalFilename": "UnigenManager.exe",
+               "LegalCopyright": "Unofficial, not affiliated with Unigen"}
+    path.write_text(f"""VSVersionInfo(
+  ffi=FixedFileInfo(filevers={nums}, prodvers={nums}),
+  kids=[StringFileInfo([StringTable('040904B0', [{", ".join(f"StringStruct({k!r}, {v!r})" for k, v in strings.items())}])]),
+        VarFileInfo([VarStruct('Translation', [1033, 1200])])])
+""", encoding="utf-8")
+
+
 def main():
     BUILD.mkdir(exist_ok=True)
     icon = BUILD / "unigen.ico"
     make_icon(icon)
+    info = BUILD / "version.txt"
+    version_file(info)
     subprocess.run([
         sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean",
-        "--onefile", "--windowed", "--name", "UnigenManager", "--icon", str(icon),
+        "--onefile", "--windowed", "--name", "UnigenManager", "--icon", str(icon), "--version-file", str(info),
         "--add-data", f"{ROOT / 'ui'};ui",          # the pages, shared.js/css, mock and vendored anime.js
         "--add-data", f"{ROOT / 'bt.ps1'};.",       # bt.py reads it next to itself
         "--hidden-import", "pystray._win32",       # pystray picks its backend at runtime

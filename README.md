@@ -10,7 +10,7 @@
 ![Python 3.10](https://img.shields.io/badge/Python-3.10-0E151D?style=flat-square&logo=python&logoColor=4FB3C8)
 ![pywebview](https://img.shields.io/badge/UI-pywebview%20%2B%20WebView2-0E151D?style=flat-square)
 ![anime.js](https://img.shields.io/badge/motion-anime.js%204-0E151D?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-141%20passing-5CC08A?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-142%20passing-5CC08A?style=flat-square)
 
 <a href="https://github.com/ApurvDas/unigen-manager/releases/latest/download/UnigenManager.exe"><img src="https://img.shields.io/badge/Download-UnigenManager.exe%20%C2%B7%2033%20MB-4FB3C8?style=for-the-badge&logo=windows&logoColor=white" alt="Download UnigenManager.exe" height="44"></a>
 
@@ -184,7 +184,7 @@ Then open:
 
 ```powershell
 py -3.10 -m pip install -r requirements-dev.txt
-py -3.10 -m pytest                 # 141 unit, contract and UI tests (UI tests drive the installed Microsoft Edge)
+py -3.10 -m pytest                 # 142 unit, contract and UI tests (UI tests drive the installed Microsoft Edge)
 py -3.10 -m pytest -m hardware     # read-only checks against the real adapters (changes nothing)
 ```
 

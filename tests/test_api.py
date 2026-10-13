@@ -1,7 +1,8 @@
 import json, pathlib, re, threading
 import pytest
+
 from tests.conftest import fixture, ROOT
-import api, bt, speed, wifi
+import api, bt, speed, version, wifi
 
 
 def raising(exc):
@@ -35,7 +36,7 @@ def test_envelopes(hw, monkeypatch, caplog):
 
 def test_app_info_versions(hw):
     info = api.Api(admin=True).app_info()["data"]
-    assert info["admin"] is True
+    assert info["admin"] is True and info["version"] == version.VERSION
     assert {a["key"]: (a["name"], a["wifi"], a["bt"]) for a in info["adapters"]} == {
         "unigen": ("Unigen dongle", "Wi-Fi 6", "5.4"), "builtin": ("Built-in MediaTek", "Wi-Fi 6", "5.2")}
 
