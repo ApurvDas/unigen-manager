@@ -10,7 +10,7 @@
 ![Python 3.10](https://img.shields.io/badge/Python-3.10-0E151D?style=flat-square&logo=python&logoColor=4FB3C8)
 ![pywebview](https://img.shields.io/badge/UI-pywebview%20%2B%20WebView2-0E151D?style=flat-square)
 ![anime.js](https://img.shields.io/badge/motion-anime.js%204-0E151D?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-176%20passing-5CC08A?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-219%20passing-5CC08A?style=flat-square)
 
 <a href="https://github.com/ApurvDas/unigen-manager/releases/latest/download/UnigenManager.exe"><img src="https://img.shields.io/badge/Download-UnigenManager.exe%20%C2%B7%2033%20MB-4FB3C8?style=for-the-badge&logo=windows&logoColor=white" alt="Download UnigenManager.exe" height="44"></a>
 
@@ -58,8 +58,7 @@ Older versions and checksums are on the [releases page](https://github.com/Apurv
 - **Pairing with PIN prompts:** confirm a code, type the code the device shows, or enter the device's PIN, right in the app.
 - Bluetooth **on/off switch**, here and in the tray widget.
 - Remove devices, and connect or disconnect audio devices.
-- Switch between the dongle's radio (Bluetooth 5.4) and the built-in one (5.2).
-- If the new radio doesn't start within 10 seconds, the app switches back on its own.
+- Bluetooth follows the **Using** switch below, so it always runs on the adapter you picked (dongle 5.4, built-in 5.2).
 
 </td>
 </tr>
@@ -75,9 +74,22 @@ Older versions and checksums are on the [releases page](https://github.com/Apurv
 <td valign="top">
 
 ### 🧭 Always-on tray widget
-- Live status of both adapters, and a **Wi-Fi uses** switch that moves the connection to one adapter.
-- Quick connect to saved networks, the Bluetooth radio switch, and a mini speed test.
+- Live status of both adapters, and the same **Using** switch as the main window.
+- Quick connect to saved networks, the Bluetooth on/off switch, and a mini speed test.
 - Optional **Start with Windows**.
+
+</td>
+</tr>
+<tr>
+<td colspan="2" valign="top">
+
+### 🔀 One switch: Using Dongle | Built-in
+- **One control moves Wi-Fi and Bluetooth together.** The adapter you leave is turned off in Device Manager, so Windows can't fall back to it, even after a restart.
+- It joins the same network on the new adapter (copying the saved profile if needed) and shows each step while it runs.
+- **Your choice is remembered** across restarts.
+- **It follows the dongle:** unplug it and the built-in adapter turns back on; plug it in again and the app switches back to it. A tray notification tells you.
+- If any step fails, the old adapter is turned back on and the message says where you stand.
+- Needs administrator rights. Without them the switch is disabled and the app changes nothing.
 
 </td>
 </tr>
@@ -100,7 +112,7 @@ Each adapter shows its own standards, read from the hardware: **Wi-Fi 6**, **Blu
 | **Windows** | 10 or 11, **set to English** (the app reads `netsh` output) |
 | **Python** | Not needed for `UnigenManager.exe`. To run from source: [3.10](https://www.python.org/downloads/release/python-31011/), with the `py` launcher (installed by default) |
 | **WebView2** | Microsoft Edge WebView2 Runtime, already present on up-to-date Windows |
-| **Rights** | Administrator, for Bluetooth radio switching and Start with Windows (the app asks when it starts) |
+| **Rights** | Administrator, for the Using switch (turning adapters on and off) and Start with Windows (the app asks when it starts) |
 | **Hardware** | Built for the Unigen AIC8800D80 dongle and MediaTek MT7921 card. Other Wi-Fi adapters show up under their Windows names |
 
 ## Run from source
@@ -135,7 +147,7 @@ That installs pywebview, pystray, Pillow and the WinRT packages used for Bluetoo
 py -3.10 UnigenManager.pyw
 ```
 
-Choose **Yes** at the Windows prompt. If you choose **No**, the app still runs, but Bluetooth radio switching is turned off.
+Choose **Yes** at the Windows prompt. If you choose **No**, the app still runs, but the Using switch is turned off and nothing is switched on its own.
 
 Create a desktop shortcut (optional):
 
@@ -187,11 +199,11 @@ Then open:
 
 ```powershell
 py -3.10 -m pip install -r requirements-dev.txt
-py -3.10 -m pytest                 # 176 unit, contract and UI tests (UI tests drive the installed Microsoft Edge)
+py -3.10 -m pytest                 # 219 unit, contract and UI tests (UI tests drive the installed Microsoft Edge)
 py -3.10 -m pytest -m hardware     # read-only checks against the real adapters (changes nothing)
 ```
 
-Checks that change system state (connecting, pairing, radio switching, unplugging the dongle) are in the [manual checklist](docs/superpowers/test-reports/manual-checklist.md).
+Checks that change system state (connecting, pairing, the Using switch, unplugging the dongle) are in the [manual checklist](docs/superpowers/test-reports/manual-checklist.md).
 
 ### Build the .exe
 
@@ -220,7 +232,9 @@ flowchart LR
     shared -- "window.pywebview.api" --> api["api.py<br/>plain-language errors"]
     api --> wifi["wifi.py<br/>netsh, wlanapi"]
     api --> bt["bt.py + btwinrt.py + bt.ps1<br/>WinRT, KS audio, bthprops"]
+    api --> hw["hw.py + hw.ps1<br/>Using switch, watchdog"]
     api --> speed["speed.py<br/>ping, sampled HTTP"]
+    hw --> winrun
     wifi --> winrun["winrun.py<br/>argument lists only, no shell"]
     bt --> winrun
     speed --> winrun
@@ -232,6 +246,7 @@ flowchart LR
 | `app.py` | Administrator prompt, single instance, main and widget windows, tray |
 | `api.py` | Everything the pages call, with plain-language errors |
 | `wifi.py` | `netsh` parsing, connect and disconnect, saved profiles, Windows scan request |
+| `hw.py`, `hw.ps1` | The Using switch: device list, Wi-Fi and Bluetooth switched together with rollback, saved choice, unplug/replug watchdog |
 | `bt.py`, `bt.ps1` | Bluetooth radio switching and audio connect |
 | `btwinrt.py` | Bluetooth through Windows' WinRT device APIs: paired list, live search, pairing with PIN prompts, unpair, radio power |
 | `speed.py` | Ping and per-adapter sampled download and upload |

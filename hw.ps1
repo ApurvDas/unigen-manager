@@ -2,7 +2,7 @@
 # $p.action: devices | enable | disable. Output: one JSON document.
 
 function Devices {
-  $out = @(foreach ($d in Get-PnpDevice -PresentOnly -Class Net,Bluetooth -ErrorAction SilentlyContinue | Where-Object { $_.InstanceId -match '^(USB|PCI)\' }) {
+  $out = @(foreach ($d in Get-PnpDevice -PresentOnly -Class Net,Bluetooth -ErrorAction SilentlyContinue | Where-Object { $_.InstanceId -match '^(USB|PCI)\\' }) {
     [pscustomobject]@{ id = $d.InstanceId; name = $d.FriendlyName; status = "$($d.Status)"; problem = "$($d.Problem)" }
   })
   ConvertTo-Json -InputObject $out -Compress

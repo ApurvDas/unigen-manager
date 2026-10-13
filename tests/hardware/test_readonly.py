@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-import api, bt, speed, wifi
+import api, bt, hw, speed, wifi
 
 pytestmark = pytest.mark.hardware
 
@@ -77,3 +77,12 @@ def test_winrt_bluetooth_reads():
     assert btwinrt.power() in ("on", "off")
     rows = btwinrt.paired()
     assert all({"id", "ids", "name", "kind", "connected", "address"} <= set(r) for r in rows)
+
+
+def test_hw_devices_finds_both_adapters():
+    devs = hw.devices()
+    if "unigen" not in devs:
+        pytest.skip("the dongle isn't plugged in")
+    assert {"unigen", "builtin"} <= set(devs)
+    for k in ("unigen", "builtin"):
+        assert devs[k]["wifi"] is not None and devs[k]["bt"] is not None, (k, devs[k])

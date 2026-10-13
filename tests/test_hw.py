@@ -401,3 +401,10 @@ def test_follow_unplug_retries_enable_until_it_works(monkeypatch, tmp_path):
     f.step()
     f.step()
     assert tries == [MT_WIFI, MT_WIFI, MT_BT] and len(pc.notes) == 1
+
+
+def test_ps1_instance_id_pattern_is_a_valid_regex():
+    # a lone trailing backslash is "Illegal \ at end of pattern" in .NET and broke devices() on real hardware
+    import re
+    pat = re.search(r"-match '([^']*)'", hw._SCRIPT.read_text(encoding="utf-8")).group(1)
+    assert re.compile(pat).match(r"USB\VID_1&PID_2") and re.compile(pat).match(r"PCI\VEN_1")
