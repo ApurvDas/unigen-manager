@@ -1,0 +1,45 @@
+/* Shared by index.html (main window) and widget.html (tray widget): tokens, base, buttons, messages. */
+:root {
+  --panel: #16202B;
+  --raised: #1F2C3A;
+  --line: #2A3A4B;
+  --ink: #E6EDF3;
+  --muted: #8DA0B3;
+  --b24: #E3A33B;
+  --b5: #4FB3C8;
+  --ok: #5CC08A;
+  --err: #F07167;
+  /* adapter identity in charts; validated on --raised (dataviz validator, dark: CVD dE 16.0, normal 19.7) */
+  --uni: #9085e9;
+  --bi: #d55181;
+
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --display: "Bahnschrift", "Segoe UI", sans-serif;
+  --body: "Segoe UI", system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--b5); outline-offset: 2px; }
+.num { font-family: var(--display); font-variant-numeric: tabular-nums; }
+
+.btn {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: var(--raised);
+  border-radius: 6px;
+  padding: 8px 16px;
+  cursor: pointer;
+}
+.btn.primary { background: var(--ink); color: var(--panel); border-color: var(--ink); font-weight: 600; }
+.btn:disabled { opacity: 0.5; cursor: default; }
+.btn.small { padding: 5px 11px; font-size: 13px; }
+.btn .label, .link .label { display: inline-block; }
+
+.msg { color: var(--muted); }
+.msg.err { color: var(--err); }
+
+@media (hover: hover) and (pointer: fine) {
+  .btn:not(:disabled):hover { border-color: var(--muted); }
+}
