@@ -158,7 +158,7 @@ window.mockApi = (() => {
         const { accept, pin } = await reply; answer = null;
         if (!accept) throw new Error("Pairing cancelled.");
         if (d.ceremony === "provide" && pin !== "0000") throw new Error("Wrong PIN. Try again.");
-      } else { answer = null; await wait(300); }
+      } else { answer = null; await new Promise(r => setTimeout(r, 300)); } // real delay even under MOCK_FAST: the prompt must stay up long enough to see
     }
     const p = { ...row(d), connected: ["Headphones", "Speaker", "Audio"].includes(d.kind) };
     PAIRED.push(p);
