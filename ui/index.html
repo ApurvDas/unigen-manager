@@ -60,8 +60,9 @@
   .adapter .meta b { color: var(--ink); font-weight: 400; display: inline-block; }
   .adapter .meta .rate { display: inline-block; }
   .adapter .caps { grid-column: 2; color: var(--muted); font-size: 12px; margin-top: 2px; }
-  .adapter .badge { margin-left: 8px; font: 600 11px/1 var(--display); padding: 3px 6px; border-radius: 4px; vertical-align: 2px;
-    color: var(--muted); border: 1px solid var(--line); }
+  /* its own line under the name: "Built-in MediaTek" plus a tag doesn't fit the rail on one line */
+  .adapter .badge { grid-column: 2; justify-self: start; margin: 3px 0 5px; white-space: nowrap; font: 600 11px/1 var(--display);
+    padding: 3px 6px; border-radius: 4px; color: var(--muted); border: 1px solid var(--line); }
   .adapter .badge.use { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
   .adapter.off { cursor: default; }
   .adapter.off .name, .adapter.off .meta, .adapter.off .caps { opacity: .6; }
@@ -577,7 +578,7 @@ const inUse = () => INFO.adapters.find(a => a.using) || INFO.adapters[0] || {};
 function renderRail() {
   $(".adapters").innerHTML = `<span class="ind ad-ind" aria-hidden="true"></span>` + INFO.adapters.map(a => `
     <button class="adapter${a.off ? " off" : ""}" aria-pressed="${!!a.using}"${a.off ? ' aria-disabled="true"' : ""} data-adapter="${esc(a.key)}" data-bt="${esc(a.bt || "")}">
-      <span class="dot"></span><span class="name">${esc(a.name)}${a.using ? '<span class="badge use">In use</span>' : a.off ? '<span class="badge">Off</span>' : ""}</span>
+      <span class="dot"></span><span class="name">${esc(a.name)}</span>${a.using ? '<span class="badge use">In use</span>' : ""}
       <span class="meta"><b>${a.off ? "Off" : "Checking…"}</b><br><span class="rate"></span></span>
       <span class="caps">${esc([a.wifi, a.bt && `Bluetooth ${a.bt}`].filter(Boolean).join(", "))}</span>
     </button>`).join("");
