@@ -4,99 +4,60 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Unigen Manager widget</title>
+<link rel="stylesheet" href="shared.css">
 <style>
-  :root {
-    --panel: #16202B;
-    --raised: #1F2C3A;
-    --line: #2A3A4B;
-    --ink: #E6EDF3;
-    --muted: #8DA0B3;
-    --b24: #E3A33B;
-    --b5: #4FB3C8;
-    --ok: #5CC08A;
-    --err: #F07167;
-    --uni: #9085e9;
-    --bi: #d55181;
-
-    --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
-    --display: "Bahnschrift", "Segoe UI", sans-serif;
-    --body: "Segoe UI", system-ui, sans-serif;
-  }
-
-  * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
-  body { background: transparent; color: var(--ink); font: 14px/1.45 var(--body); overflow: hidden; }
-  button { font: inherit; color: inherit; }
-  :focus-visible { outline: 2px solid var(--b5); outline-offset: 2px; }
-  .num { font-family: var(--display); font-variant-numeric: tabular-nums; }
+  body { background: var(--raised); color: var(--ink); font: 14px/1.45 var(--body); overflow: hidden; }
 
-  /* ---------- the widget (fills the frameless window inside the app) ---------- */
-  .widget {
-    width: 340px;
-    background: var(--raised);
-    border: 1px solid var(--line);
-    border-radius: 10px;
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
-    overflow: hidden;
-  }
+  /* the widget: fills its frameless window inside the app; floats above a fake taskbar in the ?mock preview */
+  .widget { width: 100%; background: var(--raised); }
   .widget[hidden] { display: none; }
   header { display: flex; align-items: center; gap: 10px; padding: 12px 12px 10px 14px; }
   header h1 { font: 600 15px/1 var(--display); margin: 0; flex: 1; }
   .logo { width: 18px; height: 18px; flex: none; }
-  .icon-btn {
-    width: 28px; height: 28px; display: grid; place-items: center;
-    background: none; border: 0; border-radius: 6px; color: var(--muted); cursor: pointer;
-  }
+  .icon-btn { width: 28px; height: 28px; display: grid; place-items: center; background: none; border: 0; border-radius: 6px; color: var(--muted); cursor: pointer; }
   .sec { padding: 12px 14px; border-top: 1px solid var(--line); }
   .sec h2 { font: 600 13px/1 var(--display); color: var(--muted); margin: 0 0 8px; }
-  .msg { color: var(--muted); font-size: 12.5px; margin: 6px 0 0; min-height: 0; }
-  .msg:empty { display: none; }
-  .msg.err { color: var(--err); }
+  .widget .msg { font-size: 12.5px; margin: 6px 0 0; }
+  .widget .msg:empty { display: none; }
+  .widget .btn { padding: 5px 11px; font-size: 13px; white-space: nowrap; }
+  .widget .btn:not(.primary) { background: var(--panel); }
 
-  /* Wi-Fi uses: one sliding highlight between the two adapters */
+  /* Wi-Fi uses: one sliding highlight between the adapters */
   .uses { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
   .uses .lbl { color: var(--muted); font-size: 13px; }
   .seg { position: relative; display: flex; gap: 2px; background: var(--panel); border-radius: 7px; padding: 3px; }
-  .seg button {
-    position: relative; z-index: 1; background: none; border: 0; cursor: pointer;
-    padding: 4px 12px; border-radius: 5px; color: var(--muted); font: 500 13px var(--display);
-  }
+  .seg button { position: relative; z-index: 1; background: none; border: 0; cursor: pointer; padding: 4px 12px; border-radius: 5px; color: var(--muted); font: 500 13px var(--display); }
   .seg button[aria-checked="true"] { color: var(--ink); }
   .seg button:disabled { cursor: default; }
-  .ind { position: absolute; top: 3px; bottom: 3px; left: 0; background: var(--raised); border-radius: 5px; pointer-events: none; }
+  .seg .ind { position: absolute; top: 3px; bottom: 3px; left: 0; background: var(--raised); border-radius: 5px; pointer-events: none; }
 
   .ad { display: grid; grid-template-columns: 10px 1fr auto; column-gap: 10px; row-gap: 2px; align-items: center; padding: 6px 0; }
   .ad + .ad { border-top: 1px solid var(--line); }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
   .dot.on { background: var(--ok); }
   .ad .name { font: 600 14px/1.3 var(--display); }
-  .ad .ssid { text-align: right; color: var(--ink); font-size: 13px; display: inline-block; }
+  .ad .ssid { text-align: right; font-size: 13px; display: inline-block; }
   .ad .ssid.off { color: var(--muted); }
   .ad .sub { grid-column: 2 / 4; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12.5px; }
   .ad .sub .rate { margin-left: auto; display: inline-block; }
   .ad .sub .pct { display: inline-block; min-width: 30px; }
-
-  /* 4-bar signal glyph: filled bars = level */
   .bars { display: inline-flex; align-items: flex-end; gap: 2px; height: 12px; }
   .bars i { width: 3px; border-radius: 1px; background: var(--line); }
   .bars i:nth-child(1) { height: 4px; } .bars i:nth-child(2) { height: 7px; }
   .bars i:nth-child(3) { height: 10px; } .bars i:nth-child(4) { height: 12px; }
   .bars i.lit { background: var(--ink); opacity: 0.8; }
 
-  /* saved networks in range */
-  .net { display: grid; grid-template-columns: 1fr 38px 92px; gap: 8px; align-items: center; padding: 5px 0; min-height: 36px; }
+  .net { display: grid; grid-template-columns: 1fr 38px 104px; gap: 8px; align-items: center; padding: 5px 0; min-height: 36px; }
   .net .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .net .pct { color: var(--muted); font-size: 12.5px; text-align: right; }
   .net .act { justify-self: end; }
-  .state.ok { color: var(--ok); font-size: 12.5px; }
-  .empty { color: var(--muted); font-size: 13px; padding: 4px 0; }
+  .empty { color: var(--muted); font-size: 13px; padding: 4px 0; margin: 0; }
 
-  /* bluetooth */
   .bt { display: flex; align-items: center; gap: 10px; }
   .bt .ver { font: 600 14px var(--display); white-space: nowrap; display: inline-block; }
   .bt .dev { flex: 1; color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; }
 
-  /* speed */
   .speed { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; }
   .speed .nums { display: flex; align-items: baseline; gap: 8px; white-space: nowrap; }
   .speed .nums b { font: 400 20px/1 var(--display); display: inline-block; }
@@ -105,43 +66,26 @@
   #spark .line { fill: none; stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
   #spark .area { fill-opacity: 0.1; }
 
-  /* buttons (same as the main app) */
-  .btn {
-    position: relative; overflow: hidden;
-    border: 1px solid var(--line); background: var(--panel); border-radius: 6px;
-    padding: 5px 11px; font-size: 13px; cursor: pointer; white-space: nowrap;
-  }
-  .btn.primary { background: var(--ink); color: var(--panel); border-color: var(--ink); font-weight: 600; }
-  .btn:disabled { opacity: 0.5; cursor: default; }
-  .btn .label { display: inline-block; }
-
   @media (hover: hover) and (pointer: fine) {
-    .btn:not(:disabled):hover { border-color: var(--muted); }
     .icon-btn:hover, .seg button:not(:disabled):hover { color: var(--ink); }
   }
 
-  /* ---------- browser preview only: a Windows 10 taskbar to click ---------- */
+  /* ---------- ?mock preview only: a Windows 10 taskbar to click ---------- */
   body.preview { background: #0E151D; }
-  .taskbar {
-    position: fixed; left: 0; right: 0; bottom: 0; height: 40px;
-    background: #101820; border-top: 1px solid #1B2632;
-    display: flex; align-items: center; justify-content: flex-end; gap: 2px; padding-right: 8px;
+  .preview .widget {
+    position: fixed; right: 12px; bottom: 52px; width: 340px;
+    border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45); overflow: hidden;
   }
-  .taskbar[hidden], .overflow[hidden] { display: none; }
+  .taskbar { position: fixed; left: 0; right: 0; bottom: 0; height: 40px; background: #101820; border-top: 1px solid #1B2632;
+    display: flex; align-items: center; justify-content: flex-end; gap: 2px; padding-right: 8px; }
+  .taskbar[hidden], .overflow[hidden], .hint[hidden] { display: none; }
   .tb { height: 40px; min-width: 32px; padding: 0 8px; display: grid; place-items: center; background: none; border: 0; color: #C9D3DC; cursor: pointer; }
   .tb.clock { font-size: 12px; line-height: 1.25; text-align: center; cursor: default; }
-  .overflow {
-    position: fixed; bottom: 48px; right: 150px;
-    display: grid; grid-template-columns: repeat(3, 34px); gap: 2px; padding: 6px;
-    background: #1A242F; border: 1px solid #2A3644; border-radius: 4px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
-  }
+  .overflow { position: fixed; bottom: 48px; right: 150px; display: grid; grid-template-columns: repeat(3, 34px); gap: 2px; padding: 6px;
+    background: #1A242F; border: 1px solid #2A3644; border-radius: 4px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4); }
   .overflow button { height: 34px; display: grid; place-items: center; background: none; border: 0; border-radius: 3px; cursor: pointer; color: #9FB0BF; }
-  .preview .widget { position: fixed; right: 12px; bottom: 52px; }
-  .hint { position: fixed; left: 16px; top: 14px; color: var(--muted); font-size: 13px; }
-
-  @media (hover: hover) and (pointer: fine) {
-    .tb:hover, .overflow button:hover { background: rgba(255, 255, 255, 0.08); }
-  }
+  .hint { position: fixed; left: 16px; top: 14px; color: var(--muted); font-size: 13px; margin: 0; }
+  @media (hover: hover) and (pointer: fine) { .tb:hover, .overflow button:hover { background: rgba(255, 255, 255, 0.08); } }
 </style>
 </head>
 <body>
@@ -158,42 +102,27 @@
       <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M8 1.5h4.5V6M12.5 1.5 7.5 6.5M6 12.5H1.5V8M1.5 12.5l5-5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </button>
   </header>
-
   <div class="sec">
-    <div class="uses">
-      <span class="lbl" id="usesLbl">Wi-Fi uses</span>
-      <div class="seg" role="radiogroup" aria-labelledby="usesLbl">
-        <span class="ind" aria-hidden="true"></span>
-        <button role="radio" aria-checked="true" data-k="unigen">Unigen</button>
-        <button role="radio" aria-checked="false" data-k="builtin">Built-in</button>
-      </div>
-    </div>
+    <div class="uses"><span class="lbl" id="usesLbl">Wi-Fi uses</span><div class="seg" role="radiogroup" aria-labelledby="usesLbl"></div></div>
     <div id="ads"></div>
     <p class="msg" id="wifiMsg"></p>
   </div>
-
   <div class="sec">
     <h2>Saved networks in range</h2>
     <div id="nets"></div>
     <p class="msg" id="netMsg"></p>
   </div>
-
   <div class="sec">
     <div class="bt">
-      <span class="ver" id="btVer">Bluetooth 5.4</span>
-      <span class="dev" id="btDev">Den Beats Pill</span>
-      <button class="btn" id="btSwitch"><span class="label">Use built-in</span></button>
+      <span class="ver" id="btVer">Bluetooth</span>
+      <span class="dev" id="btDev"></span>
+      <button class="btn" id="btSwitch"><span class="label">Switch</span></button>
     </div>
     <p class="msg" id="btMsg"></p>
   </div>
-
   <div class="sec">
     <div class="speed">
-      <div class="nums">
-        <span class="arrow">↓</span><b id="dn">50</b>
-        <span class="arrow">↑</span><b id="upv">12</b>
-        <span class="unit">Mbps</span>
-      </div>
+      <div class="nums"><span class="arrow">↓</span><b id="dn">–</b><span class="arrow">↑</span><b id="upv">–</b><span class="unit">Mbps</span></div>
       <svg id="spark" aria-label="Speed during the last test"></svg>
       <button class="btn primary" id="run"><span class="label">Run test</span></button>
     </div>
@@ -201,226 +130,149 @@
   </div>
 </div>
 
-<!-- browser preview only: a Windows 10 taskbar. Inside the app the widget fills its own window. -->
+<!-- ?mock preview only: a Windows 10 taskbar. Inside the app the widget fills its own window. -->
 <p class="hint" id="hint" hidden>Preview: click <b>^</b> on the taskbar, then the Unigen icon.</p>
 <div class="overflow" id="overflow" hidden>
   <button aria-label="OneDrive"><svg width="16" height="16" viewBox="0 0 16 16"><path d="M4 12h8.5a2.5 2.5 0 0 0 0-5 4 4 0 0 0-7.6-1A3 3 0 0 0 4 12z" fill="none" stroke="currentColor" stroke-width="1.2"/></svg></button>
   <button aria-label="Security"><svg width="16" height="16" viewBox="0 0 16 16"><path d="M8 1.8 3 3.8v4c0 3 2.2 5.2 5 6.4 2.8-1.2 5-3.4 5-6.4v-4z" fill="none" stroke="currentColor" stroke-width="1.2"/></svg></button>
-  <button id="trayIcon" aria-label="Unigen Manager" title="Unigen dongle: HOME-5G, 97%">
+  <button id="trayIcon" aria-label="Unigen Manager">
     <svg width="16" height="16" viewBox="0 0 18 18"><path d="M2.5 7.5a9 9 0 0 1 13 0" fill="none" stroke="#4FB3C8" stroke-width="1.8" stroke-linecap="round"/><path d="M5 10.2a5.4 5.4 0 0 1 8 0" fill="none" stroke="#4FB3C8" stroke-width="1.8" stroke-linecap="round"/><circle cx="9" cy="13.4" r="1.7" fill="#4FB3C8"/></svg>
   </button>
 </div>
 <div class="taskbar" id="taskbar" hidden>
-  <button class="tb" id="chevron" aria-label="Show hidden icons" aria-expanded="false">
-    <svg width="12" height="12" viewBox="0 0 12 12"><path d="M2.5 7.5 6 4l3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
-  </button>
+  <button class="tb" id="chevron" aria-label="Show hidden icons" aria-expanded="false"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M2.5 7.5 6 4l3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></button>
   <span class="tb"><svg width="16" height="16" viewBox="0 0 16 16"><path d="M1.5 6a9 9 0 0 1 13 0M4 8.7a5.4 5.4 0 0 1 8 0" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="11.6" r="1.3" fill="currentColor"/></svg></span>
   <span class="tb"><svg width="16" height="16" viewBox="0 0 16 16"><path d="M2 6h3l4-3v10l-4-3H2z" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M11.5 5.5a3.5 3.5 0 0 1 0 5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg></span>
   <span class="tb clock" id="clock"></span>
 </div>
 
 <script src="vendor/anime.umd.min.js"></script>
+<script src="mock-api.js"></script>
+<script src="shared.js"></script>
 <script>
-const $ = (s, el = document) => el.querySelector(s);
-const $$ = (s, el = document) => [...el.querySelectorAll(s)];
-const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const wait = ms => new Promise(r => setTimeout(r, ms));
-
-// Mockup data (same PC as the main prototype). The backend task replaces this with Api calls.
-const ADS = {
-  unigen: { name: "Unigen dongle", bt: "5.4", on: true, ssid: "HOME-5G", signal: 97, rate: 433 },
-  builtin: { name: "Built-in MediaTek", bt: "5.2", on: false, ssid: null, signal: null, rate: null },
-};
-const SAVED_IN_RANGE = {  // saved networks the adapter can currently see, strongest first
-  unigen: [{ ssid: "HOME-5G", s: 96, b: 5 }, { ssid: "Maple House", s: 92, b: 2.4 }],
-  builtin: [{ ssid: "HOME-5G", s: 84, b: 5 }],
-};
-const BASE = { unigen: [50, 12], builtin: [53, 31] };
-let uses = "unigen", btRadio = "unigen";
-const COLOR = k => ({ unigen: "var(--uni)", builtin: "var(--bi)" })[k];
-
-// ================= motion components (anime.js, same as the main app) =================
-const ease = anime.cubicBezier(0.23, 1, 0.32, 1); // same curve as CSS --ease-out
-const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches; // reduced motion: fades only
-
-// press: any clickable dips while the pointer is down, eases back on release
-const PRESSABLE = ".btn, .seg button, .icon-btn";
-let pressed = null;
-document.addEventListener("pointerdown", e => {
-  const el = e.target.closest(PRESSABLE);
-  if (!el || el.disabled || reduce) return;
-  pressed = el;
-  anime.animate(el, { scale: 0.97, duration: 120, ease });
-});
-["pointerup", "pointercancel"].forEach(t => document.addEventListener(t, () => {
-  if (pressed) anime.animate(pressed, { scale: 1, duration: 200, ease });
-  pressed = null;
-}));
-
-// slide: the highlight travels to the chosen adapter
-function slide(ind, to, instant) {
-  const at = { x: to.offsetLeft, width: to.offsetWidth };
-  if (instant || reduce) anime.set(ind, at);
-  else anime.animate(ind, { ...at, duration: 200, ease });
-}
-// swap: a label changes with a short blur, so it reads as one control changing
-function swap(btn, text) {
-  const l = $(".label", btn);
-  if (l.textContent === text) return;
-  if (reduce) { l.textContent = text; return; }
-  anime.animate(l, { opacity: 0.6, filter: "blur(2px)", duration: 100, ease, onComplete: () => {
-    l.textContent = text;
-    anime.animate(l, { opacity: 1, filter: "blur(0px)", duration: 140, ease });
-  } });
-}
-// busy: disable, swap the label, await the work, settle on `after` if it worked or the old label if not
-async function busy(btn, label, work, { after } = {}) {
-  const was = $(".label", btn).textContent;
-  let ok = false;
-  btn.disabled = true; swap(btn, label);
-  try { const r = await work; ok = true; return r; }
-  finally { btn.disabled = false; swap(btn, ok ? (after ?? was) : was); }
-}
-// arrive: a changed value settles in so the eye catches what changed
-function arrive(el) {
-  anime.animate(el, reduce ? { opacity: [0, 1], duration: 150, ease } : { opacity: [0, 1], y: [3, 0], duration: 200, ease });
-}
-function setText(el, text) {
-  if (el.textContent === String(text)) return;
-  el.textContent = text; arrive(el);
-}
-// a flyout stays compact: confirmations fade away after 4 s, errors stay until the next action
-function setMsg(el, text, isErr) {
-  clearTimeout(el._t);
-  el.textContent = text;
-  el.classList.toggle("err", !!isErr);
-  anime.waapi.animate(el, { opacity: [0, 1], duration: 150, ease });
-  if (!isErr) el._t = setTimeout(() => anime.waapi.animate(el, { opacity: 0, duration: 200, ease, onComplete: () => { el.textContent = ""; el.style.opacity = ""; } }), 4000);
-}
-function pop(dot, on) {
-  if (dot.classList.contains("on") === on) return;
-  dot.classList.toggle("on", on);
-  if (!reduce) anime.animate(dot, { scale: [1.8, 1], duration: 250, ease });
-}
+// Tray widget. Inside the app it fills its own frameless window (Python shows it and calls onWidgetShown);
+// opened as widget.html?mock it floats above a fake taskbar for preview and tests.
+let INFO = null, ADS = [], uses = null, BT = null, RESULTS = {}, live = null, shown = false;
+const NAME = k => (INFO && INFO.adapters.find(a => a.key === k) || {}).name || k;
+const SHORT = k => ({ unigen: "Unigen", builtin: "Built-in" })[k] || NAME(k);
+const COLOR = k => ({ unigen: "var(--uni)", builtin: "var(--bi)" })[k] || "var(--muted)";
+const note = (el, text, isErr) => setMsg(el, text, isErr, { clearAfter: isErr ? 0 : 4000 }); // a flyout stays compact
+const fail = el => e => note(el, e.message, true);
 
 // ================= Wi-Fi: which adapter carries traffic =================
 const level = s => s == null ? 0 : s >= 80 ? 4 : s >= 60 ? 3 : s >= 40 ? 2 : 1;
 const bars = s => `<span class="bars" aria-hidden="true">${[1, 2, 3, 4].map(i => `<i class="${i <= level(s) ? "lit" : ""}"></i>`).join("")}</span>`;
-function drawAds() {
-  $("#ads").innerHTML = Object.entries(ADS).map(([k, a]) => `
-    <div class="ad" data-k="${k}">
-      <span class="dot${a.on ? " on" : ""}"></span>
-      <span class="name">${esc(a.name)}</span>
-      <span class="ssid${a.on ? "" : " off"}">${a.on ? esc(a.ssid) : "Not connected"}</span>
-      <span class="sub"><span class="pct num">${a.on ? a.signal + "%" : "–"}</span>${bars(a.on ? a.signal : null)}<span class="rate">${a.on ? a.rate + " Mbps" : "No link"}</span></span>
+function renderAdapters() {
+  $(".seg").innerHTML = `<span class="ind" data-axis="x" aria-hidden="true"></span>` + INFO.adapters.map(a =>
+    `<button role="radio" aria-checked="false" data-k="${esc(a.key)}">${esc(SHORT(a.key))}</button>`).join("");
+  $("#ads").innerHTML = INFO.adapters.map(a => `
+    <div class="ad" data-k="${esc(a.key)}">
+      <span class="dot"></span><span class="name">${esc(a.name)}</span>
+      <span class="ssid off">Checking…</span>
+      <span class="sub"><span class="pct num">–</span>${bars(null)}<span class="rate">No link</span></span>
     </div>`).join("");
+  $$(".seg button").forEach(b => b.addEventListener("click", () => useAdapter(b)));
 }
-// in-place update: only values that changed animate
-function updateAds() {
-  for (const [k, a] of Object.entries(ADS)) {
-    const row = $(`.ad[data-k="${k}"]`);
-    pop($(".dot", row), a.on);
+function markUses(instant) {
+  $$(".seg button").forEach(b => b.setAttribute("aria-checked", b.dataset.k === uses));
+  const b = $$(".seg button").find(x => x.dataset.k === uses);
+  if (b) slide($(".seg .ind"), b, instant);
+}
+// in place: only values that changed animate
+function updateAdapters() {
+  for (const row of $$(".ad")) {
+    const d = ADS.find(x => x.key === row.dataset.k), on = !!d && d.state === "connected";
+    pop($(".dot", row), on);
     const ssid = $(".ssid", row);
-    ssid.classList.toggle("off", !a.on);
-    setText(ssid, a.on ? a.ssid : "Not connected");
-    setText($(".pct", row), a.on ? a.signal + "%" : "–");
-    setText($(".rate", row), a.on ? a.rate + " Mbps" : "No link");
-    $(".bars", row).outerHTML = bars(a.on ? a.signal : null);
+    ssid.classList.toggle("off", !on);
+    setText(ssid, !d ? "Unplugged" : on ? d.ssid : "Not connected");
+    setText($(".pct", row), on ? `${d.signal}%` : "–");
+    setText($(".rate", row), on ? `${d.rate} Mbps` : "No link");
+    $(".bars", row).outerHTML = bars(on ? d.signal : null);
   }
 }
-// mock of the backend switch: the chosen adapter joins the other's network, then the other disconnects
-async function mockUse(k) {
-  const other = k === "unigen" ? "builtin" : "unigen", net = ADS[other].ssid || ADS[k].ssid || "HOME-5G";
-  await wait(1400);
-  const s = (SAVED_IN_RANGE[k].find(n => n.ssid === net) || { s: 80, b: 5 });
-  Object.assign(ADS[k], { on: true, ssid: net, signal: s.s, rate: s.b === 5 ? (k === "unigen" ? 433 : 866) : (k === "unigen" ? 144 : 287) });
-  Object.assign(ADS[other], { on: false, ssid: null, signal: null, rate: null });
+async function poll() {
+  ADS = await call("adapters");
+  if (!uses || !ADS.some(a => a.key === uses)) uses = (ADS.find(a => a.state === "connected") || ADS[0] || {}).key || null;
+  updateAdapters(); markUses(true);
 }
-$$(".seg button").forEach(b => b.addEventListener("click", async () => {
+async function useAdapter(b) {
   const k = b.dataset.k;
-  if (k === uses) return;
+  if (k === uses || b.disabled) return;
+  const was = uses;
   $$(".seg button").forEach(x => { x.setAttribute("aria-checked", x === b); x.disabled = true; });
   slide($(".seg .ind"), b);
-  setMsg($("#wifiMsg"), `Switching Wi-Fi to the ${ADS[k].name}…`);
+  note($("#wifiMsg"), `Switching Wi-Fi to the ${NAME(k)}…`);
   try {
-    await mockUse(k);
+    await call("use_adapter", k);
     uses = k;
-    updateAds(); drawNets(); drawSpark(lastRun[k], k, true); showNums();
-    setMsg($("#wifiMsg"), `Wi-Fi now uses the ${ADS[k].name}.`);
+    await Promise.all([poll(), loadNets(), loadSpeed(true)]);
+    note($("#wifiMsg"), `Wi-Fi now uses the ${NAME(k)}.`);
   } catch (e) {
-    const back = $(`.seg button[data-k="${uses}"]`);
-    $$(".seg button").forEach(x => x.setAttribute("aria-checked", x === back));
-    slide($(".seg .ind"), back);
-    setMsg($("#wifiMsg"), e.message, true);
+    uses = was; markUses();
+    note($("#wifiMsg"), e.message, true);
   } finally {
     $$(".seg button").forEach(x => { x.disabled = false; });
   }
-}));
+}
 
 // ================= saved networks in range (on the adapter Wi-Fi uses) =================
-function drawNets() {
-  const a = ADS[uses], list = SAVED_IN_RANGE[uses].slice(0, 4);
-  $("#nets").innerHTML = list.length ? list.map(n => {
-    const here = a.on && a.ssid === n.ssid;
-    return `<div class="net" data-ssid="${esc(n.ssid)}">
+async function loadNets() {
+  if (!uses) return;
+  const list = (await call("networks", uses)).networks.filter(n => n.state && !n.hidden).slice(0, 4);
+  $("#nets").innerHTML = list.length ? list.map(n => `<div class="net" data-ssid="${esc(n.ssid)}">
       <span class="title">${esc(n.ssid)}</span>
-      <span class="pct num">${n.s}%</span>
-      <span class="act">${here
+      <span class="pct num">${Math.max(0, ...n.aps.map(a => a.s))}%</span>
+      <span class="act">${n.state === "Connected"
         ? `<button class="btn" data-do="disconnect"><span class="label">Disconnect</span></button>`
         : `<button class="btn" data-do="connect"><span class="label">Connect</span></button>`}</span>
-    </div>`;
-  }).join("") : `<p class="empty">No saved networks in range.</p>`;
+    </div>`).join("") : `<p class="empty">No saved networks in range.</p>`;
 }
 $("#nets").addEventListener("click", async e => {
   const b = e.target.closest("button[data-do]"); if (!b || b.disabled) return;
-  const ssid = b.closest(".net").dataset.ssid, a = ADS[uses];
+  const ssid = b.closest(".net").dataset.ssid, connect = b.dataset.do === "connect";
   try {
-    if (b.dataset.do === "connect") {
-      await busy(b, "Connecting…", wait(1500));
-      const n = SAVED_IN_RANGE[uses].find(x => x.ssid === ssid);
-      Object.assign(a, { on: true, ssid, signal: n.s, rate: n.b === 5 ? (uses === "unigen" ? 433 : 866) : (uses === "unigen" ? 144 : 287) });
-      setMsg($("#netMsg"), `Connected to ${ssid}.`);
-    } else {
-      await busy(b, "Disconnecting…", wait(900));
-      Object.assign(a, { on: false, ssid: null, signal: null, rate: null });
-      setMsg($("#netMsg"), `Disconnected from ${ssid}.`);
-    }
-    updateAds(); drawNets();
-  } catch (err) { setMsg($("#netMsg"), err.message, true); }
+    await busy(b, connect ? "Connecting…" : "Disconnecting…", connect ? call("connect", uses, ssid, null) : call("disconnect", uses));
+    note($("#netMsg"), connect ? `Connected to ${ssid}.` : `Disconnected from ${ssid}.`);
+    await Promise.all([poll(), loadNets()]);
+  } catch (err) { note($("#netMsg"), err.message, true); }
 });
 
 // ================= Bluetooth radio =================
-function drawBt() {
-  const other = btRadio === "unigen" ? "builtin" : "unigen";
-  setText($("#btVer"), `Bluetooth ${ADS[btRadio].bt}`);
-  swap($("#btSwitch"), `Use ${other === "builtin" ? "built-in" : "Unigen"}`);
+async function loadBt() {
+  const [radio, paired] = await Promise.all([call("bt_radio"), call("bt_paired")]);
+  BT = radio;
+  const act = BT.radios.find(r => r.key === BT.active), other = BT.radios.find(r => r.key !== BT.active);
+  const dev = paired.find(d => d.connected);
+  setText($("#btVer"), act && act.version ? `Bluetooth ${act.version}` : "Bluetooth");
+  setText($("#btDev"), dev ? dev.name : "No device connected");
+  const b = $("#btSwitch");
+  b.hidden = !other;
+  if (other) swap(b, `Use ${other.key === "builtin" ? "built-in" : SHORT(other.key)}`);
+  b.disabled = !BT.can_switch;
+  b.title = BT.can_switch ? "" : "Bluetooth radio switching needs administrator rights.";
 }
 $("#btSwitch").addEventListener("click", async function () {
-  const to = btRadio === "unigen" ? "builtin" : "unigen";
+  const other = BT && BT.radios.find(r => r.key !== BT.active);
+  if (!other || this.disabled) return;
   try {
-    await busy(this, "Switching…", wait(2200));
-    btRadio = to; drawBt();
-    setText($("#btDev"), "Reconnecting…");
-    setMsg($("#btMsg"), `Bluetooth now uses the ${ADS[to].name} radio.`);
-    await wait(1200);
-    setText($("#btDev"), "Den Beats Pill");
-  } catch (err) { setMsg($("#btMsg"), err.message, true); }
+    await busy(this, "Switching…", call("bt_switch", other.key));
+    note($("#btMsg"), `Bluetooth now uses the ${other.name} radio.`);
+  } catch (e) { note($("#btMsg"), e.message, true); }
+  loadBt().catch(fail($("#btMsg")));
 });
 
 // ================= mini speed test: sparkline of the last test on the adapter Wi-Fi uses =================
-const sample = (i, dl, ul) => { const up = i >= 28, k = up ? i - 28 : i; return +((up ? ul : dl) * Math.min(1, (k + 1) / 5) * (0.85 + Math.random() * 0.3)).toFixed(1); };
-const avg = xs => Math.round(xs.slice(3).reduce((a, b) => a + b, 0) / Math.max(1, xs.length - 3));
-const lastRun = {};
-for (const k of ["unigen", "builtin"]) lastRun[k] = Array.from({ length: 40 }, (_, i) => sample(i, ...BASE[k]));
-const TP_N = 40, SPLIT = 28;
+const TP_N = 40;  // speed.py takes at most 28 download + 12 upload samples
 const pathOf = pts => pts.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join("");
-function drawSpark(samples, k, draw) {
+function drawSpark(samples, k, { draw, split } = {}) {
   const svg = $("#spark"), W = svg.clientWidth, H = 28; if (!W) return;
-  const max = Math.max(60, ...lastRun.unigen, ...lastRun.builtin, ...samples) * 1.05;
+  split = Math.min(split ?? samples.length, samples.length);
+  const max = Math.max(40, ...Object.values(RESULTS).flatMap(r => r.samples || []), ...samples) * 1.05;
   const x = i => 1 + i * (W - 2) / (TP_N - 1), y = v => 2 + (1 - v / max) * (H - 4);
   const pts = samples.map((v, i) => [x(i), y(v)]);
   // download and upload are separate measurements: one segment each, never joined
-  const segs = [pts.slice(0, SPLIT), pts.slice(SPLIT)].filter(p => p.length > 1);
+  const segs = [pts.slice(0, split), pts.slice(split)].filter(p => p.length > 1);
   svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
   svg.innerHTML = segs.map(p => `<path class="area" fill="${COLOR(k)}" d="${pathOf(p)}L${p[p.length - 1][0]},${H}L${p[0][0]},${H}Z"/>
     <path class="line" stroke="${COLOR(k)}" d="${pathOf(p)}"/>`).join("");
@@ -429,50 +281,66 @@ function drawSpark(samples, k, draw) {
     anime.animate($$(".area", svg), { opacity: [0, 1], duration: 250, delay: 250, ease });
   }
 }
-function showNums() {
-  const s = lastRun[uses];
-  setText($("#dn"), avg(s.slice(0, SPLIT)));
-  setText($("#upv"), avg(s.slice(SPLIT)));
+async function loadSpeed(draw) {
+  RESULTS = await call("speed_results");
+  const r = RESULTS[uses];
+  setText($("#dn"), r ? r.down : "–");
+  setText($("#upv"), r ? r.up : "–");
+  drawSpark(r ? r.samples : [], uses, { draw, split: r && r.split });
 }
+window.onSpeedSample = s => {  // pushed by Python (api.py _push_sample) while a test runs
+  if (!live) return;
+  if (s.phase === "up" && live.split == null) live.split = live.samples.length;
+  live.samples.push(s.v);
+  drawSpark(live.samples, live.key, { split: live.split ?? live.samples.length });
+};
 $("#run").addEventListener("click", async function () {
-  const k = uses, run = [];
-  if (!ADS[k].on) return setMsg($("#speedMsg"), "Connect to a network first.", true);
-  async function test() {
-    for (let i = 0; i < TP_N; i++) { run.push(sample(i, ...BASE[k])); drawSpark(run, k); await wait(60); } // the line draws as samples arrive
-  }
+  if (!uses || this.disabled) return;
+  live = { key: uses, samples: [], split: null };
   try {
-    await busy(this, "Testing…", test());
-    lastRun[k] = run; showNums();
-    setMsg($("#speedMsg"), `Measured on the ${ADS[k].name}.`);
-  } catch (err) { setMsg($("#speedMsg"), err.message, true); }
+    const r = await busy(this, "Testing…", call("speed_test", uses));
+    live = null;
+    RESULTS[uses] = r;
+    setText($("#dn"), r.down); setText($("#upv"), r.up);
+    drawSpark(r.samples, uses, { split: r.split });
+    note($("#speedMsg"), `Measured on the ${NAME(uses)}.`);
+  } catch (e) { live = null; note($("#speedMsg"), e.message, true); }
 });
 
-$("#openApp").addEventListener("click", () => setMsg($("#wifiMsg"), "Mockup only: this opens the main window in the app."));
+$("#openApp").addEventListener("click", () => call("open_main").catch(fail($("#wifiMsg"))));
 
-// ================= open / close (the tray icon toggles this) =================
+// ================= open / close =================
 const W = $("#w");
-let shown = true;
-function openWidget() {
-  if (shown) return;
-  shown = true; W.hidden = false;
-  slide($(".seg .ind"), $(`.seg button[data-k="${uses}"]`), true);
-  drawSpark(lastRun[uses], uses);
-  anime.animate(W, reduce ? { opacity: [0, 1], duration: 150, ease } : { opacity: [0, 1], y: [8, 0], duration: 180, ease });
-  $("#trayIcon").title = ADS[uses].on ? `${ADS[uses].name}: ${ADS[uses].ssid}, ${ADS[uses].signal}%` : `${ADS[uses].name}: not connected`;
+async function refresh(draw) {
+  await poll();
+  await Promise.all([loadNets(), loadBt(), loadSpeed(draw)]);
 }
-function closeWidget() {
+function animateOpen() {
+  anime.animate(W, reduce ? { opacity: [0, 1], duration: 150, ease } : { opacity: [0, 1], y: [8, 0], duration: 180, ease });
+}
+window.onWidgetShown = () => {  // Python calls this right after showing the window
+  shown = true; animateOpen(); markUses(true);
+  refresh(true).catch(fail($("#wifiMsg")));
+};
+function hideWidget() {
   if (!shown) return;
   shown = false;
-  anime.animate(W, { opacity: 0, ...(reduce ? {} : { y: 4 }), duration: 120, ease, onComplete: () => { if (!shown) W.hidden = true; } });
+  anime.animate(W, { opacity: 0, ...(reduce ? {} : { y: 4 }), duration: 120, ease, onComplete: () => {
+    if (MOCK) { if (!shown) W.hidden = true; } else call("hide_widget").catch(() => {});
+    W.style.opacity = ""; W.style.transform = "";
+  } });
 }
-addEventListener("keydown", e => { if (e.key === "Escape") closeWidget(); });
+addEventListener("keydown", e => { if (e.key === "Escape") hideWidget(); });
+if (!MOCK) {
+  addEventListener("blur", hideWidget);  // like Windows flyouts: losing focus closes it
+  new ResizeObserver(() => { if (shown) call("widget_fit", Math.ceil(W.getBoundingClientRect().height)).catch(() => {}); }).observe(W);
+}
+setInterval(() => { if (shown) { poll().catch(fail($("#wifiMsg"))); loadNets().catch(fail($("#netMsg"))); } }, 3000);
 
-// ================= browser preview: fake taskbar with the ^ overflow =================
-const PREVIEW = !window.pywebview;
-if (PREVIEW) {
+// ================= ?mock preview: fake taskbar with the ^ overflow =================
+if (MOCK) {
   document.body.classList.add("preview");
-  $("#taskbar").hidden = false; $("#hint").hidden = false;
-  shown = false; W.hidden = true;
+  $("#taskbar").hidden = false; $("#hint").hidden = false; W.hidden = true;
   const tick = () => { const d = new Date(); $("#clock").innerHTML = `${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}<br>${d.toLocaleDateString()}`; };
   tick(); setInterval(tick, 30000);
   $("#chevron").addEventListener("click", e => {
@@ -483,16 +351,21 @@ if (PREVIEW) {
   $("#trayIcon").addEventListener("click", e => {
     e.stopPropagation();
     $("#overflow").hidden = true; $("#chevron").setAttribute("aria-expanded", "false");
-    shown ? closeWidget() : openWidget();
+    if (shown) return hideWidget();
+    W.hidden = false; window.onWidgetShown();
   });
-  // like Windows flyouts: clicking anywhere else closes it
   document.addEventListener("click", e => {
-    if (!e.target.closest("#w, #overflow, #chevron")) { closeWidget(); $("#overflow").hidden = true; }
+    if (!e.target.closest("#w, #overflow, #chevron")) { hideWidget(); $("#overflow").hidden = true; }
   });
 }
 
-drawAds(); drawNets(); drawBt(); showNums();
-if (shown) { slide($(".seg .ind"), $(`.seg button[data-k="${uses}"]`), true); drawSpark(lastRun[uses], uses); }
+(async function start() {
+  try {
+    INFO = await call("app_info");
+    renderAdapters();
+    await refresh(false);
+  } catch (e) { note($("#wifiMsg"), e.message, true); }
+})();
 </script>
 </body>
 </html>

@@ -3,7 +3,7 @@ import functools, http.server, threading
 from pathlib import Path
 
 import pytest
-from playwright.sync_api import expect, sync_playwright
+from playwright.sync_api import expect
 
 pytestmark = pytest.mark.ui
 UI = Path(__file__).resolve().parents[2] / "ui"
@@ -21,13 +21,6 @@ def base_url():
     yield f"http://127.0.0.1:{httpd.server_port}/index.html?mock"
     httpd.shutdown()
 
-
-@pytest.fixture(scope="session")
-def browser():
-    with sync_playwright() as p:
-        b = p.chromium.launch(channel="msedge")
-        yield b
-        b.close()
 
 
 @pytest.fixture
