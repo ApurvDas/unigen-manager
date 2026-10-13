@@ -1,11 +1,11 @@
 """Tray: notification-area icon, widget placement above the taskbar, start-with-Windows, one running copy."""
-import ctypes, os, threading
+import ctypes, logging, os, threading
 from ctypes import wintypes
 from pathlib import Path
 
 import winrun
 
-_run = winrun.run  # tests replace this
+_run, _ps = winrun.run, winrun.ps  # tests replace these
 TASK = "Unigen Manager"
 MUTEX = "Local\\UnigenManager.Instance"
 SHOW_EVENT = "Local\\UnigenManager.Show"
@@ -36,8 +36,13 @@ def widget_position(area, width, height, scale=1.0, margin=12):
     return round(right / scale - width - margin), round(bottom / scale - height - margin)
 
 
-def launch_command(root, windir=os.environ.get("WINDIR", r"C:\Windows")):
-    return f'"{Path(windir, "pyw.exe")}" -3.10 "{Path(root, "UnigenManager.pyw")}" --tray'
+_REGISTER = """
+$a = New-ScheduledTaskAction -Execute $p.exe -Argument $p.args -WorkingDirectory $p.dir
+$t = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+$s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero)
+Register-ScheduledTask -TaskName $p.name -Action $a -Trigger $t -Settings $s -RunLevel Highest -Force | Out-Null
+"""
+_UNREGISTER = "Unregister-ScheduledTask -TaskName $p.name -Confirm:$false"
 
 
 def startup_enabled():
@@ -48,12 +53,13 @@ def startup_enabled():
         return False
 
 
-def set_startup(on, root):
-    """At sign-in, start the tray with admin rights (no prompt every time)."""
+def set_startup(on, root, windir=os.environ.get("WINDIR", r"C:\Windows")):
+    """At sign-in, start the tray with admin rights (no prompt), also on battery and with no time limit."""
     if on:
-        _run(["schtasks", "/Create", "/TN", TASK, "/TR", launch_command(root), "/SC", "ONLOGON", "/RL", "HIGHEST", "/F"])
+        _ps(_REGISTER, {"name": TASK, "exe": str(Path(windir, "pyw.exe")), "dir": str(root),
+                        "args": f'-3.10 "{Path(root, "UnigenManager.pyw")}" --tray'})
     else:
-        _run(["schtasks", "/Delete", "/TN", TASK, "/F"])
+        _ps(_UNREGISTER, {"name": TASK})
 
 
 _k32 = None
@@ -130,17 +136,25 @@ class Tray:
     def __init__(self, *, toggle_widget, open_main, quit_app, root, status):
         import pystray
         self._status, self._root, self._stop = status, root, threading.Event()
+        self._startup = startup_enabled()  # cached: the menu must not run schtasks on every click
         menu = pystray.Menu(
             pystray.MenuItem("Show widget", lambda: toggle_widget(), default=True, visible=False),
             pystray.MenuItem("Open Unigen Manager", lambda: open_main()),
-            pystray.MenuItem("Start with Windows", self._toggle_startup, checked=lambda item: startup_enabled()),
+            pystray.MenuItem("Start with Windows", self._toggle_startup, checked=lambda item: self._startup),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Quit", lambda: quit_app()),
         )
         self.icon = pystray.Icon("UnigenManager", icon_image(), "Unigen Manager", menu)
 
     def _toggle_startup(self):
-        set_startup(not startup_enabled(), self._root)
+        try:
+            set_startup(not self._startup, self._root)
+        except Exception as e:
+            logging.getLogger("unigen").warning("start with Windows toggle failed: %s: %s", type(e).__name__, e)
+            self.icon.notify(f"Couldn't change Start with Windows: {e}", "Unigen Manager")
+        finally:
+            self._startup = startup_enabled()
+            self.icon.update_menu()
 
     def start(self):
         self.icon.run_detached()
