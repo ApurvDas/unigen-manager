@@ -1,6 +1,7 @@
 import ctypes, json
 import pytest
 import bt
+import btwinrt
 from winrun import CmdError
 
 RADIOS_OK_UNIGEN = [
@@ -32,8 +33,8 @@ def flipped(unigen_ok, builtin_ok):
 
 def test_versions_and_kinds():
     assert bt.version(13) == "5.4" and bt.version(11) == "5.2" and bt.version(9) == "5.0" and bt.version(3) is None
-    assert bt.kind(4, 5) == "Speaker" and bt.kind(4, 6) == "Headphones" and bt.kind(4, 0) == "Audio"
-    assert bt.kind(5, 2) == "Controller" and bt.kind(2, 3) == "Phone" and bt.kind(0, 0) == "Device"
+    assert btwinrt.kind(4, 5) == "Speaker" and btwinrt.kind(4, 6) == "Headphones" and btwinrt.kind(4, 0) == "Audio"
+    assert btwinrt.kind(5, 2) == "Controller" and btwinrt.kind(2, 3) == "Phone" and btwinrt.kind(0, 0) == "Device"
 
 
 def test_radios_keys_and_state(monkeypatch):
@@ -91,61 +92,8 @@ def test_switch_to_missing_radio(monkeypatch):
         bt.switch("builtin")
 
 
-def test_devices_map_kind_and_keep_ids_as_params(monkeypatch):
-    devs = [{"id": "Bluetooth#Bluetooth02:00:00:00:00:10-11:22:33:44:55:66", "name": "JBL Go 3", "connected": False, "major": 4, "minor": 5, "address": "112233445566"}]
-    fake = FakePs([RADIOS_OK_UNIGEN], {"paired": devs})
-    monkeypatch.setattr(bt, "_ps", fake)
-    assert bt.devices(paired=True) == [{"id": devs[0]["id"], "name": "JBL Go 3", "connected": False, "kind": "Speaker", "address": "112233445566"}]
-    assert fake.calls[-1] == {"action": "paired"}
-
-
-@pytest.mark.parametrize("status, ok", [("Paired", True), ("AlreadyPaired", True), ("AuthenticationTimeout", False), ("Failed", False)])
-def test_pair_statuses(monkeypatch, status, ok):
-    fake = FakePs([RADIOS_OK_UNIGEN], {"pair": {"status": status}})
-    monkeypatch.setattr(bt, "_ps", fake)
-    if ok:
-        bt.pair('Bluetooth#x"; rm -rf')
-        assert fake.calls[-1] == {"action": "pair", "id": 'Bluetooth#x"; rm -rf'}
-    else:
-        with pytest.raises(bt.BtError):
-            bt.pair("Bluetooth#x")
-
-
-def test_remove(monkeypatch):
-    monkeypatch.setattr(bt, "_ps", FakePs([RADIOS_OK_UNIGEN], {"unpair": {"status": "Unpaired"}}))
-    bt.remove("Bluetooth#x")
-
-
 def test_device_info_struct_size():
     assert ctypes.sizeof(bt.BLUETOOTH_DEVICE_INFO) == 560
-
-
-def test_connect_falls_back_to_settings(monkeypatch):
-    opened = []
-    def boom(address, flags):
-        raise bt.BtError("rc 87")
-    monkeypatch.setattr(bt, "_set_audio", boom)
-    monkeypatch.setattr(bt, "SERVICE_TOGGLE", True)
-    with pytest.raises(bt.BtError, match="Bluetooth settings are open"):
-        bt.connect("112233445566", "JBL Go 3", open_settings=opened.append)
-    assert opened == ["ms-settings:bluetooth"]
-
-
-def test_connect_uses_service_toggle(monkeypatch):
-    seen = []
-    monkeypatch.setattr(bt, "_set_audio", lambda address, flags: seen.append((address, flags)))
-    monkeypatch.setattr(bt, "SERVICE_TOGGLE", True)
-    bt.connect("112233445566", "JBL Go 3", open_settings=lambda u: pytest.fail("should not open settings"))
-    bt.disconnect("112233445566", "JBL Go 3", open_settings=lambda u: pytest.fail("should not open settings"))
-    assert seen == [("112233445566", [0, 1]), ("112233445566", [0])]
-
-
-def test_connect_disabled_by_spike(monkeypatch):
-    opened = []
-    monkeypatch.setattr(bt, "SERVICE_TOGGLE", False)
-    with pytest.raises(bt.BtError, match="Bluetooth settings are open"):
-        bt.disconnect("112233445566", "JBL Go 3", open_settings=opened.append)
-    assert opened == ["ms-settings:bluetooth"]
 
 
 def test_failed_connect_turns_services_back_on():
@@ -172,12 +120,46 @@ def test_failed_disconnect_and_nothing_to_switch_do_not_enable_anything():
     bt._apply_services(lambda g, flag: 0, [0, 1])  # the happy path still passes
 
 
-def test_toggle_failure_is_logged(monkeypatch, caplog):
-    monkeypatch.setattr(bt, "_set_audio", lambda a, f: (_ for _ in ()).throw(bt.BtError("rc 87")))
-    monkeypatch.setattr(bt, "SERVICE_TOGGLE", True)
-    with pytest.raises(bt.BtError):
-        bt.connect("112233445566", "JBL Go 3", open_settings=lambda u: None)
-    assert "audio toggle failed: BtError: rc 87" in caplog.text
+def test_remove_unpairs_every_id(monkeypatch):
+    done = []
+    monkeypatch.setattr(bt.btwinrt, "unpair", done.append)
+    bt.remove(["Bluetooth#c", "BluetoothLE#l"])
+    assert done == ["Bluetooth#c", "BluetoothLE#l"]
+
+
+def test_ks_match_by_path_or_parent():
+    a2dp = r"\\?\bthenum#{0000110b-0000-1000-8000-00805f9b34fb}_vid&0001004c#8&1&0&020000000013_c00000000#{6994ad04}\src"
+    hfp = r"\\?\bthhfenum#bthhfpaudio#9&2&0&97#{6994ad04}\wave"
+    assert bt._ks_match(a2dp, "", "020000000013")
+    assert bt._ks_match(hfp, r"BTHENUM\{0000111e-0000-1000-8000-00805f9b34fb}_VID&0001004c\8&1&0&020000000013_C00000000", "020000000013")
+    assert not bt._ks_match(hfp, r"BTHENUM\{0000111e}\8&1&0&020000000099_C0", "020000000013")
+
+
+def test_connect_tries_ks_then_services_then_settings(monkeypatch, caplog):
+    order, opened = [], []
+    def ks(addr, on): order.append(("ks", on)); raise bt.BtError("no filter")
+    def svc(addr, flags): order.append(("svc", flags)); raise bt.BtError("refused")
+    monkeypatch.setattr(bt, "_ks_oneshot", ks)
+    monkeypatch.setattr(bt, "_set_audio", svc)
+    with pytest.raises(bt.BtError, match="Bluetooth settings are open"):
+        bt.connect("020000000013", "Test Speaker", open_settings=opened.append)
+    assert order == [("ks", True), ("svc", [0, 1])] and opened == ["ms-settings:bluetooth"]
+    assert "audio connect failed" in caplog.text
+
+
+def test_connect_stops_at_first_method_that_works(monkeypatch):
+    order = []
+    monkeypatch.setattr(bt, "_ks_oneshot", lambda addr, on: order.append(("ks", on)))
+    monkeypatch.setattr(bt, "_set_audio", lambda addr, flags: order.append("svc"))
+    bt.disconnect("020000000013", "Test Speaker", open_settings=None)
+    assert order == [("ks", False)]
+
+
+def test_connect_without_settings_fallback_just_raises(monkeypatch):
+    monkeypatch.setattr(bt, "_ks_oneshot", lambda a, on: (_ for _ in ()).throw(bt.BtError("x")))
+    monkeypatch.setattr(bt, "SERVICE_TOGGLE", False)
+    with pytest.raises(bt.BtError, match="Windows didn't let the app connect Test Speaker."):
+        bt.connect("020000000013", "Test Speaker", open_settings=None)
 
 
 def test_second_concurrent_switch_is_refused(monkeypatch):

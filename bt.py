@@ -3,25 +3,17 @@ import ctypes, json, logging, os, threading, time, uuid
 from ctypes import wintypes
 from pathlib import Path
 
+import btwinrt
 import winrun
+from btwinrt import BtError
 from wifi import ADAPTER_NAMES
 
 _ps = winrun.ps  # tests replace this
 _switch_lock = threading.Lock()
-SERVICE_TOGGLE = True  # Provisional until the Task 1 spike runs. False = Connect/Disconnect always open Windows Bluetooth settings.
+SERVICE_TOGGLE = True  # Way 2 of audio connect; the hardware check in Task 7 decides whether it stays.
 _SCRIPT = Path(__file__).with_name("bt.ps1")
 LMP = {6: "4.0", 7: "4.1", 8: "4.2", 9: "5.0", 10: "5.1", 11: "5.2", 12: "5.3", 13: "5.4", 14: "6.0"}
 AUDIO_SERVICES = ["0000110B-0000-1000-8000-00805F9B34FB", "0000111E-0000-1000-8000-00805F9B34FB"]  # A2DP sink, Hands-free
-_PAIR_ERRORS = {
-    "AuthenticationTimeout": "The device didn't answer in time. Put it in pairing mode and try again.",
-    "AuthenticationFailure": "Pairing failed. Check the code shown on the device.",
-    "RejectedByHandler": "Pairing was cancelled.",
-    "AccessDenied": "Windows didn't allow the pairing.",
-}
-
-
-class BtError(Exception):
-    pass
 
 
 def _call(action, **params):
@@ -30,14 +22,6 @@ def _call(action, **params):
 
 def version(lmp):
     return LMP.get(lmp)
-
-
-def kind(major, minor):
-    if major == 4:
-        return "Headphones" if minor in (1, 2, 6) else "Speaker" if minor in (5, 7) else "Audio"
-    if major == 5:
-        return "Controller" if minor in (1, 2) else "Input device"
-    return {1: "Computer", 2: "Phone", 7: "Wearable"}.get(major, "Device")
 
 
 def radio_key(instance_id, name):
@@ -99,24 +83,16 @@ def _switch(target, *, wait=10.0, clock=time.monotonic, sleep=time.sleep):
     raise BtError(f"The {_label(target)} radio didn't start.{back}")
 
 
-def devices(paired):
-    return [{"id": d["id"], "name": d["name"], "connected": bool(d["connected"]), "kind": kind(d["major"], d["minor"]),
-             "address": d["address"]} for d in _call("paired" if paired else "nearby")]
+devices, pair, power, set_power = btwinrt.paired, btwinrt.pair, btwinrt.power, btwinrt.set_power
+search_start, search_stop = btwinrt.search_start, btwinrt.search_stop
 
 
-def pair(device_id):
-    status = _call("pair", id=device_id)["status"]
-    if status not in ("Paired", "AlreadyPaired"):
-        raise BtError(_PAIR_ERRORS.get(status, f"Pairing failed ({status})."))
+def remove(ids):
+    for i in ids:  # a device's classic and LE records are both paired
+        btwinrt.unpair(i)
 
 
-def remove(device_id):
-    status = _call("unpair", id=device_id)["status"]
-    if status not in ("Unpaired", "AlreadyUnpaired"):
-        raise BtError(f"Couldn't remove the device ({status}).")
-
-
-# ---- audio connect via bthprops.cpl (decided by the Task 1 spike) ----
+# ---- audio connect, way 2: bthprops.cpl service toggle ----
 class _SYSTEMTIME(ctypes.Structure):
     _fields_ = [(n, wintypes.WORD) for n in
                 ("wYear", "wMonth", "wDayOfWeek", "wDay", "wHour", "wMinute", "wSecond", "wMilliseconds")]
@@ -184,20 +160,125 @@ def _apply_services(set_state, flags):
         raise
 
 
-def _toggle(address_hex, name, flags, verb, open_settings):
-    if SERVICE_TOGGLE:
+# ---- audio connect, way 1: the one-shot reconnect Windows Settings uses (KS property on the device's audio filters) ----
+_KSCATEGORY_AUDIO = "6994AD04-93EF-11D0-A3CC-00A0C9223196"
+_KSPROPSETID_BTAUDIO = "7FA06C40-B8F6-4C7E-8556-E8C33A12E54D"
+_IOCTL_KS_PROPERTY = 0x2F0003  # CTL_CODE(FILE_DEVICE_KS, 0, METHOD_NEITHER, FILE_ANY_ACCESS)
+
+
+class _GUID(ctypes.Structure):
+    _fields_ = [("b", ctypes.c_ubyte * 16)]
+
+
+def _guid(text):
+    return _GUID((ctypes.c_ubyte * 16).from_buffer_copy(uuid.UUID(text).bytes_le))
+
+
+class _IFACE(ctypes.Structure):
+    _fields_ = [("cbSize", wintypes.DWORD), ("guid", _GUID), ("flags", wintypes.DWORD), ("reserved", ctypes.c_void_p)]
+
+
+class _DEVINFO(ctypes.Structure):
+    _fields_ = [("cbSize", wintypes.DWORD), ("guid", _GUID), ("devinst", wintypes.DWORD), ("reserved", ctypes.c_void_p)]
+
+
+class _KSPROPERTY(ctypes.Structure):
+    _fields_ = [("set", _GUID), ("id", wintypes.ULONG), ("flags", wintypes.ULONG)]
+
+
+def _ks_match(path, parent_id, address_hex):
+    """A2DP filter paths carry the address; hands-free ones only through their parent device."""
+    a = address_hex.lower()
+    return a in path.lower() or a in (parent_id or "").lower()
+
+
+def _ks_filters(address_hex):
+    sa, cm = ctypes.WinDLL("setupapi", use_last_error=True), ctypes.WinDLL("cfgmgr32")
+    sa.SetupDiGetClassDevsW.restype = ctypes.c_void_p
+    sa.SetupDiGetClassDevsW.argtypes = [ctypes.POINTER(_GUID), wintypes.LPCWSTR, wintypes.HWND, wintypes.DWORD]
+    sa.SetupDiEnumDeviceInterfaces.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(_GUID), wintypes.DWORD,
+                                               ctypes.POINTER(_IFACE)]
+    sa.SetupDiGetDeviceInterfaceDetailW.argtypes = [ctypes.c_void_p, ctypes.POINTER(_IFACE), ctypes.c_void_p, wintypes.DWORD,
+                                                    ctypes.POINTER(wintypes.DWORD), ctypes.POINTER(_DEVINFO)]
+    sa.SetupDiDestroyDeviceInfoList.argtypes = [ctypes.c_void_p]
+    cat = _guid(_KSCATEGORY_AUDIO)
+    h = sa.SetupDiGetClassDevsW(ctypes.byref(cat), None, None, 0x2 | 0x10)  # DIGCF_PRESENT | DIGCF_DEVICEINTERFACE
+    out, i = [], 0
+    try:
+        while True:
+            iface = _IFACE(cbSize=ctypes.sizeof(_IFACE))
+            if not sa.SetupDiEnumDeviceInterfaces(h, None, ctypes.byref(cat), i, ctypes.byref(iface)):
+                break
+            i += 1
+            need, dev = wintypes.DWORD(), _DEVINFO(cbSize=ctypes.sizeof(_DEVINFO))
+            sa.SetupDiGetDeviceInterfaceDetailW(h, ctypes.byref(iface), None, 0, ctypes.byref(need), None)
+            buf = ctypes.create_string_buffer(need.value)
+            ctypes.cast(buf, ctypes.POINTER(wintypes.DWORD))[0] = 8 if ctypes.sizeof(ctypes.c_void_p) == 8 else 6
+            if not sa.SetupDiGetDeviceInterfaceDetailW(h, ctypes.byref(iface), buf, need, None, ctypes.byref(dev)):
+                continue
+            path = ctypes.wstring_at(ctypes.addressof(buf) + 4)
+            if "bth" not in path.lower():
+                continue
+            parent, pid = wintypes.DWORD(), ctypes.create_unicode_buffer(512)
+            if cm.CM_Get_Parent(ctypes.byref(parent), dev.devinst, 0) == 0:
+                cm.CM_Get_Device_IDW(parent, pid, 512, 0)
+            if _ks_match(path, pid.value, address_hex):
+                out.append(path)
+    finally:
+        sa.SetupDiDestroyDeviceInfoList(h)
+    return out
+
+
+def _ks_oneshot(address_hex, connect):
+    """KSPROPERTY_ONESHOT_RECONNECT (0) / _DISCONNECT (1) on every audio filter of the device."""
+    paths = _ks_filters(address_hex)
+    if not paths:
+        raise BtError("That device has no Bluetooth audio driver on this radio.")
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateFileW.restype = wintypes.HANDLE
+    k32.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD,
+                                wintypes.DWORD, wintypes.HANDLE]
+    prop = _KSPROPERTY(_guid(_KSPROPSETID_BTAUDIO), 0 if connect else 1, 1)  # KSPROPERTY_TYPE_GET
+    ok, err = False, 0
+    for p in paths:
+        h = k32.CreateFileW(p, 0xC0000000, 3, None, 3, 0, None)  # read/write, shared, OPEN_EXISTING
+        if h in (None, wintypes.HANDLE(-1).value):
+            err = ctypes.get_last_error()
+            continue
         try:
-            _set_audio(address_hex, flags)
+            ret = wintypes.DWORD()
+            if k32.DeviceIoControl(h, _IOCTL_KS_PROPERTY, ctypes.byref(prop), ctypes.sizeof(prop), None, 0,
+                                   ctypes.byref(ret), None):
+                ok = True
+            else:
+                err = ctypes.get_last_error()
+        finally:
+            k32.CloseHandle(h)
+    if not ok:
+        raise BtError(f"The audio driver refused (error {err}).")
+
+
+# ---- audio connect: way 1, then way 2 (service toggle), then Windows settings ----
+def _toggle(address_hex, name, connect, open_settings):
+    ways = [lambda: _ks_oneshot(address_hex, connect)]
+    if SERVICE_TOGGLE:
+        ways.append(lambda: _set_audio(address_hex, [0, 1] if connect else [0]))
+    for way in ways:
+        try:
+            way()
             return
         except (BtError, OSError, ValueError, ctypes.ArgumentError, AttributeError) as e:
-            logging.getLogger("unigen").warning("audio toggle failed: %s: %s", type(e).__name__, e)
+            logging.getLogger("unigen").warning("audio connect failed: %s: %s", type(e).__name__, e)
+    verb = "connect" if connect else "disconnect"
+    if open_settings is None:
+        raise BtError(f"Windows didn't let the app {verb} {name}.")
     open_settings("ms-settings:bluetooth")
     raise BtError(f"Windows didn't let the app {verb} {name}. Bluetooth settings are open so you can do it there.")
 
 
 def connect(address_hex, name, *, open_settings=os.startfile):
-    _toggle(address_hex, name, [0, 1], "connect", open_settings)
+    _toggle(address_hex, name, True, open_settings)
 
 
 def disconnect(address_hex, name, *, open_settings=os.startfile):
-    _toggle(address_hex, name, [0], "disconnect", open_settings)
+    _toggle(address_hex, name, False, open_settings)
