@@ -4,6 +4,7 @@ import asyncio, logging, threading
 
 from winrt.windows.devices.enumeration import (DeviceInformation, DeviceInformationKind, DevicePairingKinds,
                                                DevicePairingProtectionLevel)
+from winrt.windows.devices.bluetooth import BluetoothDevice, BluetoothLEDevice
 from winrt.windows.devices.radios import Radio, RadioAccessStatus, RadioKind, RadioState
 from winrt.windows.foundation import IPropertyValue, PropertyType
 
@@ -143,8 +144,12 @@ def record(di):
 
 def paired():
     async def go():
-        return [record(d) for d in await DeviceInformation.find_all_async_with_kind_aqs_filter_and_additional_properties(
-            aqs(True), PROPS, _AEP)]
+        # the device selectors, not aqs(True) with an explicit kind: that query waits ~30 s before it returns
+        out = []
+        for cls in (BluetoothDevice, BluetoothLEDevice):
+            sel = cls.get_device_selector_from_pairing_state(True)
+            out += [record(d) for d in await DeviceInformation.find_all_async_aqs_filter_and_additional_properties(sel, PROPS)]
+        return out
     try:
         return merge(asyncio.run(go()))
     except OSError as e:

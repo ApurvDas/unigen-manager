@@ -21,12 +21,6 @@ ALL = [row(UNI_WIFI, "AIC8800D80 USB WiFi"), row(UNI_BT, "Generic Bluetooth Adap
        row(ETH, "PCIe Gigabit Ethernet Controller")]
 
 
-def fake_ps(rows):
-    def ps(script, params=None, *, timeout=60):
-        return json.dumps(rows if params["action"] == "devices" else {"ok": True})
-    return ps
-
-
 def test_device_key_maps_known_ids():
     assert hw.device_key(UNI_WIFI, "x") == ("unigen", "wifi")
     assert hw.device_key(UNI_BT, "x") == ("unigen", "bt")
@@ -37,7 +31,7 @@ def test_device_key_maps_known_ids():
 
 
 def test_devices_groups_by_adapter(monkeypatch):
-    monkeypatch.setattr(hw, "_ps", fake_ps(ALL))
+    monkeypatch.setattr(hw, "_rows", lambda: ALL)
     d = hw.devices()
     assert set(d) == {"unigen", "builtin"}
     assert d["unigen"] == {"present": True, "wifi": {"id": UNI_WIFI, "ok": True, "disabled": False},
@@ -47,13 +41,10 @@ def test_devices_groups_by_adapter(monkeypatch):
 
 
 def test_devices_without_dongle(monkeypatch):
-    monkeypatch.setattr(hw, "_ps", fake_ps(ALL[2:]))
+    monkeypatch.setattr(hw, "_rows", lambda: ALL[2:])
     assert "unigen" not in hw.devices()
 
 
-def test_devices_single_object_from_powershell(monkeypatch):
-    monkeypatch.setattr(hw, "_ps", lambda *a, **k: json.dumps(ALL[2]))  # ConvertTo-Json of one item, if not wrapped
-    assert hw.devices()["builtin"]["bt"] is None
 
 
 def test_choice_roundtrip(tmp_path):
@@ -409,11 +400,6 @@ def test_follow_unplug_retries_enable_until_it_works(monkeypatch, tmp_path):
     assert tries == [MT_WIFI, MT_WIFI, MT_BT] and len(pc.notes) == 1
 
 
-def test_ps1_instance_id_pattern_is_a_valid_regex():
-    # a lone trailing backslash is "Illegal \ at end of pattern" in .NET and broke devices() on real hardware
-    import re
-    pat = re.search(r"-match '([^']*)'", hw._SCRIPT.read_text(encoding="utf-8")).group(1)
-    assert re.compile(pat).match(r"USB\VID_1&PID_2") and re.compile(pat).match(r"PCI\VEN_1")
 
 
 def test_use_waits_until_the_new_adapter_sees_the_network(world):

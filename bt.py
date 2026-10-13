@@ -4,7 +4,7 @@ from ctypes import wintypes
 from pathlib import Path
 
 import btwinrt
-import winrun
+import pnp, winrun
 from btwinrt import BtError
 from wifi import ADAPTER_NAMES
 
@@ -35,7 +35,12 @@ def radio_key(instance_id, name):
 
 def radios():
     return [{"key": radio_key(r["id"], r["name"]), "id": r["id"], "name": r["name"], "ok": r["status"] == "OK",
-             "disabled": r["problem"] in ("CM_PROB_DISABLED", "22"), "version": version(r["lmp"])} for r in _call("radios")]
+             "disabled": r["problem"] in ("CM_PROB_DISABLED", "22"), "version": version(r["lmp"])} for r in _radio_rows()]
+
+
+def _radio_rows():
+    """Bluetooth radios (devices that report an LMP version), from SetupAPI: milliseconds, no PowerShell."""
+    return [r for r in pnp.list_devices() if r["lmp"] is not None]
 
 
 def _label(key):

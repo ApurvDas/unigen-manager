@@ -24,6 +24,13 @@ class FakePs:
         return json.dumps(self.answers.get(a, {"ok": True}))
 
 
+def use_fake(monkeypatch, fake):
+    """bt.ps1 answers enable/disable; the radio list comes from SetupAPI (bt._radio_rows), scripted by the same fake."""
+    monkeypatch.setattr(bt, "_ps", fake)
+    monkeypatch.setattr(bt, "_radio_rows", lambda: json.loads(fake("$p.action", {"action": "radios"})))
+    return fake
+
+
 def flipped(unigen_ok, builtin_ok):
     a, b = (dict(r) for r in RADIOS_OK_UNIGEN)
     a["status"], a["problem"] = ("OK", "CM_PROB_NONE") if unigen_ok else ("Error", "CM_PROB_DISABLED")
@@ -38,7 +45,7 @@ def test_versions_and_kinds():
 
 
 def test_radios_keys_and_state(monkeypatch):
-    monkeypatch.setattr(bt, "_ps", FakePs([RADIOS_OK_UNIGEN]))
+    use_fake(monkeypatch, FakePs([RADIOS_OK_UNIGEN]))
     uni, bi = bt.radios()
     assert (uni["key"], uni["ok"], uni["version"]) == ("unigen", True, "5.4")
     assert (bi["key"], bi["ok"], bi["disabled"], bi["version"]) == ("builtin", False, True, "5.2")
@@ -46,7 +53,7 @@ def test_radios_keys_and_state(monkeypatch):
 
 def test_switch_success_disables_current_then_enables_target(monkeypatch):
     fake = FakePs([RADIOS_OK_UNIGEN, flipped(False, False), flipped(False, True)])
-    monkeypatch.setattr(bt, "_ps", fake)
+    use_fake(monkeypatch, fake)
     assert bt.switch("builtin", sleep=lambda s: None) == "builtin"
     acts = [(c["action"], c.get("id", "")[:21]) for c in fake.calls if c["action"] != "radios"]
     assert acts == [("disable", "USB\\VID_368B&PID_8D81"), ("enable", "USB\\VID_13D3&PID_3563")]
@@ -54,7 +61,7 @@ def test_switch_success_disables_current_then_enables_target(monkeypatch):
 
 def test_switch_rolls_back_when_target_never_starts(monkeypatch):
     fake = FakePs([RADIOS_OK_UNIGEN, flipped(False, False)])
-    monkeypatch.setattr(bt, "_ps", fake)
+    use_fake(monkeypatch, fake)
     t = iter(range(100))
     with pytest.raises(bt.BtError, match="Built-in MediaTek radio didn't start. Switched back to the Unigen dongle."):
         bt.switch("builtin", wait=10, clock=lambda: next(t), sleep=lambda s: None)
@@ -73,7 +80,7 @@ def test_switch_rolls_back_when_enable_raises(monkeypatch):
             raise CmdError("enable failed")
         return real(script, params, **kw)
 
-    monkeypatch.setattr(bt, "_ps", flaky)
+    use_fake(monkeypatch, flaky)
     with pytest.raises(bt.BtError, match="Switched back to the Unigen dongle"):
         bt.switch("builtin", sleep=lambda s: None)
     acts = [(c["action"], c["id"][:21]) for c in fake.calls if c["action"] != "radios"]
@@ -87,7 +94,7 @@ def test_service_changed():
 
 
 def test_switch_to_missing_radio(monkeypatch):
-    monkeypatch.setattr(bt, "_ps", FakePs([RADIOS_OK_UNIGEN[:1]]))
+    use_fake(monkeypatch, FakePs([RADIOS_OK_UNIGEN[:1]]))
     with pytest.raises(bt.BtError, match="isn't connected to this PC"):
         bt.switch("builtin")
 
@@ -163,7 +170,7 @@ def test_connect_without_settings_fallback_just_raises(monkeypatch):
 
 
 def test_second_concurrent_switch_is_refused(monkeypatch):
-    monkeypatch.setattr(bt, "_ps", FakePs([RADIOS_OK_UNIGEN]))
+    use_fake(monkeypatch, FakePs([RADIOS_OK_UNIGEN]))
     assert bt._switch_lock.acquire(blocking=False)
     try:
         with pytest.raises(bt.BtError, match="A radio switch is already running."):

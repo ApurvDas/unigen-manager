@@ -2,10 +2,11 @@
 import json, logging, threading, time
 from pathlib import Path
 
-import bt, winrun, wifi
+import bt, pnp, winrun, wifi
 
 log = logging.getLogger("unigen")
-_ps = winrun.ps  # tests replace this
+_ps = winrun.ps  # tests replace this (enable/disable)
+_rows = pnp.list_devices  # tests replace this (reads)
 _SCRIPT = Path(__file__).with_name("hw.ps1")
 
 
@@ -30,9 +31,8 @@ def device_key(instance_id, name):
 
 
 def devices():
-    rows = _call("devices")
     out = {}
-    for r in rows if isinstance(rows, list) else [rows]:  # PowerShell can unwrap a one-item array
+    for r in _rows():
         key, kind = device_key(r["id"], r["name"])
         if key is None:
             continue

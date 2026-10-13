@@ -13,8 +13,11 @@ def by_key():
     return {wifi.adapter_key(i["description"]): i for i in wifi.interfaces()}
 
 
-def test_both_wifi_adapters_present():
-    assert {"unigen", "builtin"} <= set(by_key())
+def test_wifi_adapter_in_use_is_listed():
+    # the one switch turns the other adapter's Wi-Fi off, so netsh lists only the one in use
+    import hw
+    on = {k for k, d in hw.devices().items() if d["wifi"] and d["wifi"]["ok"]}
+    assert on and on <= set(by_key())
 
 
 def test_drivers_report_wifi_6():
@@ -86,3 +89,19 @@ def test_hw_devices_finds_both_adapters():
     assert {"unigen", "builtin"} <= set(devs)
     for k in ("unigen", "builtin"):
         assert devs[k]["wifi"] is not None and devs[k]["bt"] is not None, (k, devs[k])
+
+
+def test_paired_list_is_fast():
+    # the association-endpoint query with an explicit kind waits ~30 s before returning; the device selectors don't
+    import time, btwinrt
+    t = time.perf_counter()
+    btwinrt.paired()
+    assert time.perf_counter() - t < 3
+
+
+def test_device_reads_are_fast():
+    # SetupAPI, not PowerShell: the tray watchdog reads these every 5 s
+    import time, bt, hw
+    t = time.perf_counter()
+    hw.devices(); bt.radios()
+    assert time.perf_counter() - t < 0.3
