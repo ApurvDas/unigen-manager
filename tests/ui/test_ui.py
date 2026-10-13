@@ -1,5 +1,5 @@
 """UI tests: ui/index.html against ui/mock-api.js, in the installed Microsoft Edge (no browser download)."""
-import functools, http.server, threading
+import functools, http.server, re, threading
 from pathlib import Path
 
 import pytest
@@ -158,17 +158,96 @@ def test_bt_switch_needs_admin(open_page):
     expect(pg.locator("#btMsg")).to_contain_text("needs administrator rights")
 
 
-def test_bt_search_pair_remove(open_page):
-    pg = open_page()
+def bt_page(open_page, hooks=""):
+    pg = open_page(hooks)
     pg.keyboard.press("Control+2")
-    expect(pg.locator("#paired .row")).to_have_count(6)
+    expect(pg.locator("#paired .row")).to_have_count(7 if "HOSTILE" in hooks else 6)  # hostile mode adds a paired device
+    return pg
+
+
+def nearby(pg, name):
+    return pg.locator("#nearby .row").filter(has=pg.get_by_text(name, exact=True))
+
+
+def test_bt_search_pair_remove(open_page):
+    pg = bt_page(open_page)
     pg.locator("#btSearch").click()
-    expect(pg.locator("#nearby .row")).to_have_count(3)
-    pg.locator("#nearby .pair").first.click()
+    expect(pg.locator("#nearby .row")).to_have_count(6)
+    expect(pg.locator("#btSearch .label")).to_have_text("Search again")
+    nearby(pg, "Galaxy Buds2 Pro").locator(".pair").click()
     expect(pg.locator("#paired .row")).to_have_count(7)
     expect(pg.locator("#pairedCount")).to_have_text("7")
+    expect(pg.locator("#btMsg")).to_have_text("Paired with Galaxy Buds2 Pro.")
     hold(pg, pg.locator("#paired .row").nth(1).locator(".hold"))
     expect(pg.locator("#paired .row")).to_have_count(6)
+
+
+def test_bt_pair_confirm_pin(open_page):
+    pg = bt_page(open_page)
+    pg.locator("#btSearch").click()
+    nearby(pg, "Pixel 8").locator(".pair").click()
+    expect(pg.locator(".pairbox")).to_contain_text("Does the device show 482 913?")
+    pg.locator(".pairbox .yes").click()
+    expect(pg.locator(".pairbox")).to_have_count(0)
+    expect(pg.locator("#paired .row")).to_have_count(7)
+
+
+def test_bt_pair_cancel(open_page):
+    pg = bt_page(open_page)
+    pg.locator("#btSearch").click()
+    nearby(pg, "Pixel 8").locator(".pair").click()
+    pg.locator(".pairbox .no").click()
+    expect(pg.locator("#btMsg")).to_have_text("Pairing cancelled.")
+    expect(nearby(pg, "Pixel 8")).to_have_count(1)
+    expect(pg.locator("#paired .row")).to_have_count(6)
+
+
+def test_bt_pair_display_pin(open_page):
+    pg = bt_page(open_page)
+    pg.locator("#btSearch").click()
+    nearby(pg, "Keys-To-Go K3").locator(".pair").click()
+    expect(pg.locator(".pairbox")).to_contain_text("Type 482 913 on the device, then press Enter.")
+    expect(pg.locator("#paired .row")).to_have_count(7)
+
+
+def test_bt_pair_provide_pin_wrong_then_right(open_page):
+    pg = bt_page(open_page)
+    pg.locator("#btSearch").click()
+    nearby(pg, "Car Kit 2").locator(".pair").click()
+    pg.locator("#pinIn").fill("1111"); pg.locator("#pinIn").press("Enter")
+    expect(pg.locator("#btMsg")).to_have_text("Wrong PIN. Try again.")
+    nearby(pg, "Car Kit 2").locator(".pair").click()
+    pg.locator("#pinIn").fill("0000"); pg.locator(".pairbox .yes").click()
+    expect(pg.locator("#paired .row")).to_have_count(7)
+
+
+def test_bt_power_off_and_on(open_page):
+    pg = bt_page(open_page)
+    pg.locator("#btPower").click()
+    expect(pg.locator("#bt")).to_have_class(re.compile(r"\boff\b"))
+    expect(pg.locator("#btPower")).to_have_attribute("aria-checked", "false")
+    expect(pg.locator("#btOnNote")).to_be_visible()
+    pg.locator("#btOn").click()
+    expect(pg.locator("#bt")).not_to_have_class(re.compile(r"\boff\b"))
+    expect(pg.locator("#btRunNote")).to_be_visible()
+
+
+def test_bt_search_stops_when_leaving_page(open_page):
+    pg = bt_page(open_page, "window.MOCK_SEARCH_HOLD = true; window.MOCK_LOG = [];")
+    pg.locator("#btSearch").click()
+    expect(pg.locator("#btSearch .label")).to_have_text("Searching…")
+    pg.keyboard.press("Control+1")
+    pg.wait_for_function("window.MOCK_LOG.includes('bt_search_stop')")
+
+
+def test_hostile_nearby_name_is_text(open_page):
+    pg = bt_page(open_page, "window.MOCK_HOSTILE = true;")
+    pg.locator("#btSearch").click()
+    row = nearby(pg, "<img src=x onerror=alert(2)>")
+    expect(row).to_have_count(1)
+    row.locator(".pair").click()
+    expect(pg.locator(".pairbox")).to_contain_text("482 913")
+    assert pg.locator("#nearby img").count() == 0 and not pg.errors
 
 
 def test_bt_connect_toggles(open_page):

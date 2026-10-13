@@ -167,9 +167,17 @@
     display: flex; align-items: center; gap: 14px;
     background: var(--raised); border-radius: 8px; padding: 12px 14px;
   }
-  .radio-note p { margin: 0; flex: 1; }
+  .radio-note .note-text { flex: 1; }
+  .radio-note p { margin: 0; }
+  .head .switch { align-self: center; }
   .radio-note .msg { display: block; margin-top: 4px; }
   .radio-note .msg:empty { display: none; }
+  .bt.off .group { opacity: .45; pointer-events: none; }
+  .pairbox { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 12px; margin: 2px 0 8px;
+    background: var(--raised); border: 1px solid var(--line); border-radius: 8px; }
+  .pairbox .pin { font: 600 18px/1 var(--display); letter-spacing: .08em; }
+  .pairbox input { width: 120px; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line);
+    background: var(--panel); color: inherit; font: inherit; }
   .empty { color: var(--muted); padding: 14px 12px; display: flex; gap: 14px; align-items: center; }
 
   .progress { width: 140px; height: 3px; background: var(--line); border-radius: 2px; overflow: hidden; position: relative; }
@@ -313,10 +321,14 @@
 
   <!-- Bluetooth -->
   <section id="bt" class="bt" hidden>
-    <div class="head"><h1>Bluetooth</h1></div>
+    <div class="head"><h1>Bluetooth</h1><span class="grow"></span>
+      <button class="switch on" id="btPower" role="switch" aria-checked="true" aria-label="Bluetooth"><i></i></button></div>
     <div class="radio-note">
-      <p>Bluetooth is running on the <b id="btRadio">…</b>. <span id="btOther"></span>
-        <span class="msg" id="btMsg"></span></p>
+      <div class="note-text">
+        <p id="btRunNote">Bluetooth is running on the <b id="btRadio">…</b>. <span id="btOther"></span></p>
+        <p id="btOnNote" hidden>Bluetooth is off. <button class="btn small" id="btOn"><span class="label">Turn on</span></button></p>
+        <span class="msg" id="btMsg"></span>
+      </div>
       <button class="btn small" id="tryRadio"><span class="label">Use built-in radio</span></button>
     </div>
     <div class="group">
@@ -646,7 +658,7 @@ const countSaved = () => setText($("#savedCount"), visibleRows($("#savedList")))
 async function loadBt() {
   try {
     const [radio, paired] = await Promise.all([call("bt_radio"), call("bt_paired")]);
-    BT = radio; renderRadio();
+    BT = radio; renderRadio(); renderPower();
     $("#paired").innerHTML = paired.map(pairedRow).join("");
     countPaired();
   } catch (e) { setMsg($("#btMsg"), e.message, true); }
@@ -682,28 +694,93 @@ $("#paired").addEventListener("click", async e => {
     setText(st, on ? r.dataset.kind : "Connected");
   } catch (err) { setMsg($("#btMsg"), err.message, true); }
 });
-$("#btSearch").addEventListener("click", async function () {
+let searching = false, pairingRow = null;
+const fmtPin = p => p && p.length === 6 ? `${p.slice(0, 3)} ${p.slice(3)}` : (p || "");
+function renderPower() {
+  const on = BT.power !== "off", sw = $("#btPower");
+  sw.setAttribute("aria-checked", String(on));
+  sw.classList.toggle("on", on);
+  anime.animate($("i", sw), { x: on ? 16 : 0, duration: reduce ? 0 : 180, ease });
+  $("#bt").classList.toggle("off", !on);
+  $("#btRunNote").hidden = !on;
+  $("#btOnNote").hidden = on;
+  if (!on) stopSearch();
+}
+$("#btPower").addEventListener("click", async function () {
+  if (this.disabled || !BT) return;
+  const on = BT.power === "off";
+  this.disabled = true;
   try {
-    const found = await busy(this, "Searching…", call("bt_nearby"), { prog: $("#btProg") });
-    const have = new Set($$("#nearby .row").map(r => r.dataset.id));
-    found.filter(d => !have.has(d.id)).forEach((d, i) => setTimeout(() => addEl($("#nearby"), nearbyRow(d)), reduce ? 0 : i * 60));
-    if (!found.length) setMsg($("#btMsg"), "No devices in pairing mode were found.");
+    BT.power = (await call("bt_power", on)).power; renderPower();
+    setMsg($("#btMsg"), on ? "Bluetooth is on." : "Bluetooth is off.");
+    if (on) loadBt();
   } catch (e) { setMsg($("#btMsg"), e.message, true); }
+  finally { this.disabled = false; }
 });
+$("#btOn").addEventListener("click", () => $("#btPower").click());
+
+function endSearch(found) {
+  if (!searching) return;
+  searching = false;
+  const b = $("#btSearch"); b.disabled = false; swap(b, "Search again"); $("#btProg").hidden = true;
+  if (!found && !pairingRow) setMsg($("#btMsg"), "No devices found. Put the device in pairing mode and search again.");
+}
+function stopSearch() {
+  if (!searching) return;
+  call("bt_search_stop").catch(() => {});
+  endSearch(true);
+}
+$("#btSearch").addEventListener("click", async function () {
+  if (searching || this.disabled) return;
+  this.disabled = true;
+  try { await call("bt_search_start"); }
+  catch (e) { this.disabled = false; return setMsg($("#btMsg"), e.message, true); }
+  searching = true; swap(this, "Searching…"); $("#btProg").hidden = false; setMsg($("#btMsg"), "");
+});
+// the whole current list arrives each time: add newcomers, drop devices that left (never the one being paired)
+window.onBtNearby = ({ devices, done }) => {
+  const list = $("#nearby"), ids = new Set(devices.map(d => d.id));
+  $$(".row", list).forEach(r => { if (!ids.has(r.dataset.id) && r !== pairingRow && r.style.display !== "none") removeEl(r); });
+  const have = new Set($$(".row", list).map(r => r.dataset.id));
+  devices.filter(d => !have.has(d.id)).forEach(d => addEl(list, nearbyRow(d)));
+  if (done) endSearch(devices.length > 0);
+};
+
+function closePrompt() { const box = $("#nearby .pairbox"); if (box) box.remove(); }
+window.onPairPrompt = ({ kind, pin }) => {
+  const r = pairingRow; if (!r) return;
+  closePrompt();
+  const p = `<b class="pin">${esc(fmtPin(pin))}</b>`;
+  const html = kind === "confirm"
+    ? `<div class="pairbox"><span>Does the device show ${p}?</span><button class="btn small yes"><span class="label">Yes, pair</span></button><button class="btn small no"><span class="label">Cancel</span></button></div>`
+    : kind === "display"
+    ? `<div class="pairbox"><span>Type ${p} on the device, then press Enter.</span></div>`
+    : `<div class="pairbox"><label for="pinIn">Enter the device's PIN</label><input id="pinIn" maxlength="16" autocomplete="off" placeholder="Often 0000 or 1234"><button class="btn small yes"><span class="label">Pair</span></button><button class="btn small no"><span class="label">Cancel</span></button></div>`;
+  r.insertAdjacentHTML("afterend", html);
+  const box = r.nextElementSibling, input = $("#pinIn", box);
+  arrive(box);
+  const reply = ok => { call("bt_pair_answer", ok, input ? input.value.trim() : null).catch(() => {});
+    $$("button, input", box).forEach(x => x.disabled = true); };
+  if (input) { input.focus(); input.addEventListener("keydown", e => { if (e.key === "Enter") $(".yes", box).click(); }); }
+  $(".yes", box)?.addEventListener("click", () => { if (input && !input.value.trim()) return input.focus(); reply(true); });
+  $(".no", box)?.addEventListener("click", () => reply(false));
+};
+
 // pairing moves the device from Nearby into Paired
 $("#nearby").addEventListener("click", async e => {
-  const b = e.target.closest(".pair"); if (!b || b.disabled) return;
+  const b = e.target.closest(".pair"); if (!b || b.disabled || pairingRow) return;
   const r = b.closest(".row");
-  try { await busy(b, "Pairing…", call("bt_pair", r.dataset.id)); }
-  catch (err) { return setMsg($("#btMsg"), err.message, true); }
+  pairingRow = r; stopSearch();
+  setMsg($("#btMsg"), "Pairing. This can take up to a minute.");
+  let d;
+  try { d = await busy(b, "Pairing…", call("bt_pair", r.dataset.id)); }
+  catch (err) { closePrompt(); pairingRow = null; return setMsg($("#btMsg"), err.message, true); }
+  closePrompt(); pairingRow = null;
+  setMsg($("#btMsg"), `Paired with ${r.dataset.name}.`);
   removeEl(r);
-  let d = { id: r.dataset.id, name: r.dataset.name, kind: r.dataset.kind, connected: false };
-  try {
-    const paired = await call("bt_paired");
-    d = paired.find(x => x.id === d.id) || paired.find(x => x.name === d.name) || d;
-  } catch { /* keep the row we know */ }
-  addEl($("#paired"), pairedRow(d));
-  countPaired();
+  d = d || { id: r.dataset.id, ids: [r.dataset.id], name: r.dataset.name, kind: r.dataset.kind, connected: false };
+  const old = $$("#paired .row").find(x => x.dataset.id === d.id); if (old) old.remove();
+  addEl($("#paired"), pairedRow(d)); countPaired();
 });
 
 // ================= Saved =================
@@ -1001,6 +1078,7 @@ $$(".tabs button").forEach(b => b.addEventListener("click", () => view(b.dataset
 const nearbyShown = () => !$("#wifi").hidden && !$("#vNearby").hidden;
 
 function go(id, instant) {
+  if (id !== "bt") stopSearch();
   $$("main section").forEach(s => s.hidden = s.id !== id);
   $$("nav button").forEach(b => b.dataset.go === id ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current"));
   slide($(".nav-ind"), $(`nav button[data-go="${id}"]`), instant);
