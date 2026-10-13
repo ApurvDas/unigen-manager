@@ -73,8 +73,8 @@ def download_samples(ip, *, host, port, tls, path, rounds=3, interval=0.2, max_s
             while chunk := r.read(65536):
                 if s.add(len(chunk)):
                     return s.samples
-        except OSError as e:
-            raise SpeedError(f"The download stopped: {e.strerror or e}.") from None
+        except (OSError, http.client.HTTPException) as e:
+            raise SpeedError(f"The download stopped: {getattr(e, 'strerror', None) or e}.") from None
         finally:
             c.close()
     return s.samples
@@ -96,8 +96,8 @@ def upload_samples(ip, *, host, port, tls, path, size=25_000_000, interval=0.2, 
                 break
         if sent == size:
             c.getresponse().read()
-    except OSError as e:
-        raise SpeedError(f"The upload stopped: {e.strerror or e}.") from None
+    except (OSError, http.client.HTTPException) as e:
+        raise SpeedError(f"The upload stopped: {getattr(e, 'strerror', None) or e}.") from None
     finally:
         c.close()
     return s.samples
@@ -120,7 +120,8 @@ def run_test(ip, gateway, *, on_sample=None, server=CLOUDFLARE):
 
 def load_results(path):
     try:
-        return json.loads(Path(path).read_text(encoding="utf-8"))
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
         return {}
 

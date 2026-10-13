@@ -87,10 +87,27 @@ def test_saved_merge_password_copy_delete(hw, monkeypatch):
     assert a.password("nope")["ok"] is False
     calls = []
     monkeypatch.setattr(wifi, "copy_profile", lambda *args: calls.append(("copy",) + args))
-    monkeypatch.setattr(wifi, "delete_profile", lambda *args: calls.append(("delete",) + args))
+    def fake_delete(ssid, ifaces):
+        calls.append(("delete", ssid, ifaces))
+        for n in ifaces:
+            prof[n].remove(ssid)
+    prof = wifi.parse_profiles(fixture("profiles.txt"))
+    monkeypatch.setattr(wifi, "profiles", lambda: prof)
+    monkeypatch.setattr(wifi, "delete_profile", fake_delete)
     a.copy_profile("oldrouter", "unigen", "builtin")
     a.delete_profile("oldrouter")
     assert calls == [("copy", "oldrouter", "Wi-Fi 2", "Wi-Fi"), ("delete", "oldrouter", ["Wi-Fi 2"])]
+
+
+def test_delete_profile_that_did_not_go_away_is_an_error(hw, monkeypatch):
+    monkeypatch.setattr(wifi, "delete_profile", lambda ssid, ifaces: None)  # netsh failed and wifi swallowed it
+    assert api.Api().delete_profile("oldrouter") == {"ok": False, "error": "Couldn't delete oldrouter."}
+
+
+def test_app_info_survives_bluetooth_failure(hw, monkeypatch):
+    monkeypatch.setattr(bt, "radios", raising(bt.BtError("no radios")))
+    info = api.Api().app_info()
+    assert info["ok"] and [a["bt"] for a in info["data"]["adapters"]] == [None, None]
 
 
 def test_bt_switch_needs_admin(hw, monkeypatch):
@@ -169,6 +186,21 @@ def test_use_adapter_copies_missing_profile_first(hw, monkeypatch):
     assert calls[0] == ("copy", "HOME-5G", "Wi-Fi", "Wi-Fi 2")
 
 
+def test_use_adapter_copies_the_source_profile_name(hw, monkeypatch):
+    ifs = wifi.parse_interfaces(fixture("interfaces.txt"))
+    ifs[0]["profile"] = "HOME-5G 2"  # the profile on the connected adapter is not named after the SSID
+    prof = wifi.parse_profiles(fixture("profiles.txt"))
+    prof["Wi-Fi 2"].remove("HOME-5G")
+    copied = []
+    monkeypatch.setattr(wifi, "interfaces", lambda: ifs)
+    monkeypatch.setattr(wifi, "profiles", lambda: prof)
+    monkeypatch.setattr(wifi, "connect", lambda *a, **k: {})
+    monkeypatch.setattr(wifi, "disconnect", lambda iface: None)
+    monkeypatch.setattr(wifi, "copy_profile", lambda *a: copied.append(a))
+    api.Api().use_adapter("unigen")
+    assert copied == [("HOME-5G 2", "Wi-Fi", "Wi-Fi 2")]
+
+
 def test_use_adapter_needs_a_connection(hw, monkeypatch):
     ifs = wifi.parse_interfaces(fixture("interfaces.txt"))
     ifs[0]["state"] = "disconnected"
@@ -191,6 +223,34 @@ def test_widget_fit_keeps_bottom_right_above_taskbar(monkeypatch):
     a._widget = FakeWin()
     assert a.widget_fit(480.4)["ok"]
     assert a._widget.calls == [("resize", 342, 480), ("move", 1566, 548)]
+
+
+def test_widget_opens_in_place_before_show(monkeypatch):
+    monkeypatch.setattr(tray, "work_area", lambda: (0, 0, 1920, 1040))
+    monkeypatch.setattr(tray, "scale", lambda: 1.0)
+    a = api.Api()
+    a._widget = FakeWin()
+    a.widget_fit(300)
+    a._widget.calls.clear()
+    a._toggle_widget()  # reopening after a move/resize elsewhere: place it first, at the last reported height
+    names = [c[0] for c in a._widget.calls]
+    assert names.index("resize") < names.index("move") < names.index("show")
+    assert a._widget.calls[0] == ("resize", 342, 300)
+
+
+def test_is_visible_tracks_windows():
+    a = api.Api()
+    a._widget = FakeWin()
+    assert a.is_visible("main") == {"ok": True, "data": True}
+    assert a.is_visible("widget")["data"] is False
+    a._main_visible = False
+    a._toggle_widget()
+    assert a.is_visible("main")["data"] is False and a.is_visible("widget")["data"] is True
+    a.hide_widget()
+    assert a.is_visible("widget")["data"] is False
+    a._window = FakeWin()
+    a._show_main()
+    assert a.is_visible("main")["data"] is True
 
 
 def test_toggle_ignores_the_click_that_blurred_it(monkeypatch):

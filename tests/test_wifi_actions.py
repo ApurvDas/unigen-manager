@@ -177,3 +177,15 @@ def test_connect_error_after_add_deletes_profile(monkeypatch):
     with pytest.raises(CmdError, match="not available"):
         wifi.connect("Wi-Fi 2", "Maple House", auth="WPA2-Personal", password="12345678", sleep=lambda s: None)
     assert ["netsh", "wlan", "delete", "profile", "name=Maple House", "interface=Wi-Fi 2"] in calls
+
+
+def test_connect_timeout_message_only_blames_password_for_a_new_secured_profile(monkeypatch):
+    def timeout_msg(**kw):
+        monkeypatch.setattr(wifi, "_run", FakeNetsh([fixture("interfaces.txt")]))
+        t = iter(range(0, 100))
+        with pytest.raises(wifi.WifiError) as e:
+            wifi.connect("Wi-Fi 2", "Cafe", timeout=15, clock=lambda: next(t), sleep=lambda s: None, **kw)
+        return str(e.value)
+    assert timeout_msg(saved=True) == "Couldn't connect to Cafe."
+    assert timeout_msg(auth="Open") == "Couldn't connect to Cafe."
+    assert timeout_msg(auth="WPA2-Personal", password="12345678") == "Couldn't connect to Cafe. Check the password."

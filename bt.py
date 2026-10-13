@@ -1,5 +1,5 @@
 """Bluetooth: radios (switch with rollback), devices (list, pair, remove), audio connect/disconnect."""
-import ctypes, json, os, time, uuid
+import ctypes, json, logging, os, threading, time, uuid
 from ctypes import wintypes
 from pathlib import Path
 
@@ -7,6 +7,7 @@ import winrun
 from wifi import ADAPTER_NAMES
 
 _ps = winrun.ps  # tests replace this
+_switch_lock = threading.Lock()
 SERVICE_TOGGLE = True  # Provisional until the Task 1 spike runs. False = Connect/Disconnect always open Windows Bluetooth settings.
 _SCRIPT = Path(__file__).with_name("bt.ps1")
 LMP = {6: "4.0", 7: "4.1", 8: "4.2", 9: "5.0", 10: "5.1", 11: "5.2", 12: "5.3", 13: "5.4", 14: "6.0"}
@@ -57,7 +58,16 @@ def _label(key):
     return ADAPTER_NAMES.get(key, key)
 
 
-def switch(target, *, wait=10.0, clock=time.monotonic, sleep=time.sleep):
+def switch(target, **kw):
+    if not _switch_lock.acquire(blocking=False):
+        raise BtError("A radio switch is already running.")
+    try:
+        return _switch(target, **kw)
+    finally:
+        _switch_lock.release()
+
+
+def _switch(target, *, wait=10.0, clock=time.monotonic, sleep=time.sleep):
     rs = radios()
     tgt = next((r for r in rs if r["key"] == target), None)
     if tgt is None:
@@ -144,16 +154,34 @@ def _set_audio(address_hex, flags):
         info = BLUETOOTH_DEVICE_INFO(dwSize=ctypes.sizeof(BLUETOOTH_DEVICE_INFO), Address=int(address_hex, 16))
         if lib.BluetoothGetDeviceInfo(radio, ctypes.byref(info)):
             raise BtError("Windows doesn't know that device.")
-        changed = False
-        for flag in flags:
-            for g in AUDIO_SERVICES:
-                guid = (ctypes.c_ubyte * 16).from_buffer_copy(uuid.UUID(g).bytes_le)
-                rc = lib.BluetoothSetServiceState(radio, ctypes.byref(info), ctypes.byref(guid), flag)
-                changed |= _service_changed(rc)
-        if not changed:
-            raise BtError("That device has no audio connection to switch.")
+        def set_state(g, flag):
+            guid = (ctypes.c_ubyte * 16).from_buffer_copy(uuid.UUID(g).bytes_le)
+            return lib.BluetoothSetServiceState(radio, ctypes.byref(info), ctypes.byref(guid), flag)
+        _apply_services(set_state, flags)
     finally:
         k32.CloseHandle(radio)
+
+
+def _apply_services(set_state, flags):
+    """Run set_state(service, flag) -> Win32 rc over every audio service. A failure after a service was turned
+    off turns them all back on, so a half-done connect never leaves the device without audio."""
+    changed = disabled = False
+    try:
+        for flag in flags:
+            for g in AUDIO_SERVICES:
+                ok = _service_changed(set_state(g, flag))
+                changed |= ok
+                disabled |= ok and flag == 0
+        if not changed:
+            raise BtError("That device has no audio connection to switch.")
+    except BtError:
+        if disabled and 1 in flags:
+            for g in AUDIO_SERVICES:
+                try:
+                    set_state(g, 1)
+                except Exception:
+                    pass
+        raise
 
 
 def _toggle(address_hex, name, flags, verb, open_settings):
@@ -161,8 +189,8 @@ def _toggle(address_hex, name, flags, verb, open_settings):
         try:
             _set_audio(address_hex, flags)
             return
-        except (BtError, OSError, ValueError, ctypes.ArgumentError, AttributeError):
-            pass
+        except (BtError, OSError, ValueError, ctypes.ArgumentError, AttributeError) as e:
+            logging.getLogger("unigen").warning("audio toggle failed: %s: %s", type(e).__name__, e)
     open_settings("ms-settings:bluetooth")
     raise BtError(f"Windows didn't let the app {verb} {name}. Bluetooth settings are open so you can do it there.")
 

@@ -28,7 +28,8 @@ class Api:
     def __init__(self, *, admin=False, results_path=DATA_DIR / "results.json"):
         self._admin, self._results, self._window = admin, Path(results_path), None
         self._speed_lock = threading.Lock()
-        self._widget, self._widget_shown, self._hid_at = None, False, 0.0
+        self._widget, self._widget_shown, self._hid_at, self._widget_h = None, False, 0.0, 480
+        self._main_visible = True  # app.py sets False for a --tray start and on close
 
     # ---- helpers (underscore: pywebview does not expose these) ----
     def _ifaces(self):
@@ -73,7 +74,10 @@ class Api:
     @_envelope
     def app_info(self):
         ifs, drv = self._ifaces(), wifi.drivers()
-        radios = {r["key"]: r for r in bt.radios()}
+        try:
+            radios = {r["key"]: r for r in bt.radios()}
+        except _KNOWN:  # Bluetooth trouble must not stop the Wi-Fi page loading
+            radios = {}
         return {"admin": self._admin, "adapters": [
             {"key": k, "name": self._name(k, i["description"]),
              "wifi": wifi.wifi_standard(drv.get(i["name"], {}).get("radio_types", [])),
@@ -139,6 +143,8 @@ class Api:
     def delete_profile(self, ssid):
         prof = wifi.profiles()
         wifi.delete_profile(ssid, [i["name"] for i in self._ifaces().values() if ssid in prof.get(i["name"], [])])
+        if any(ssid in names for names in wifi.profiles().values()):  # delete_profile swallows errors: check it worked
+            raise wifi.WifiError(f"Couldn't delete {ssid}.")
 
     # ---- Bluetooth ----
     @_envelope
@@ -182,6 +188,7 @@ class Api:
 
     # ---- windows (private ones are called from app.py / the tray) ----
     def _show_main(self):
+        self._main_visible = True
         if self._window is not None:
             self._window.show()
             self._window.restore()
@@ -193,6 +200,7 @@ class Api:
             self.hide_widget()
         elif time.monotonic() - self._hid_at > 0.3:  # the tray click that just blurred it should not reopen it
             self._widget_shown = True
+            self._place_widget(self._widget_h)
             self._widget.show()
             self._widget.evaluate_js("window.onWidgetShown && window.onWidgetShown()")
 
@@ -215,14 +223,22 @@ class Api:
         self._widget_shown, self._hid_at = False, time.monotonic()
 
     @_envelope
+    def is_visible(self, which):
+        """Hidden windows stop polling: the pages ask before each refresh."""
+        return self._main_visible if which == "main" else self._widget_shown
+
+    def _place_widget(self, h):
+        x, y = tray.widget_position(tray.work_area(), tray.WIDGET_W, h, tray.scale())
+        self._widget.resize(tray.WIDGET_W, h)
+        self._widget.move(x, y)
+
+    @_envelope
     def widget_fit(self, height):
         """The widget page reports its height; keep its bottom-right corner just above the taskbar."""
         if self._widget is None:
             return
-        h = int(max(200, min(900, round(height))))
-        x, y = tray.widget_position(tray.work_area(), tray.WIDGET_W, h, tray.scale())
-        self._widget.resize(tray.WIDGET_W, h)
-        self._widget.move(x, y)
+        self._widget_h = int(max(200, min(900, round(height))))
+        self._place_widget(self._widget_h)
 
     @_envelope
     def use_adapter(self, key):
@@ -240,7 +256,7 @@ class Api:
             names = wifi.profiles().get(target["name"], [])
             if net not in names and wifi.profile_name(net) not in names:  # reuse the other adapter's saved password
                 src = next(o for o in others if o.get("ssid") == net)
-                wifi.copy_profile(net, src["name"], target["name"])
+                wifi.copy_profile(src.get("profile") or net, src["name"], target["name"])
             wifi.connect(target["name"], net, saved=True)
         for o in others:
             if o.get("state") == "connected":
