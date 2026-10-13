@@ -19,14 +19,19 @@ def test_relaunch_builds_runas_call_and_reports_decline():
     assert verb == "runas" and exe == sys.executable
     assert params.endswith("--debug --no-elevate") and "UnigenManager.pyw" in params
     assert app.relaunch_as_admin([], shell_execute=lambda *a: 42) is True
+    app.relaunch_as_admin(["--tray"], shell_execute=fake, frozen=True)
+    assert seen[-1][2] == "--tray --no-elevate"  # packaged .exe: no script argument
 
 
 def test_install_shortcut_passes_paths_as_params():
     seen = {}
-    app.install_shortcut(run=lambda script, params: seen.update(script=script, params=params))
-    assert seen["params"]["script"].endswith("UnigenManager.pyw")
-    assert "UnigenManager.pyw" not in seen["script"]  # paths travel as $p, not script text
-    assert "pyw.exe" in seen["script"] and "-3.10" in seen["script"]
+    app.install_shortcut(run=lambda script, params: seen.update(script=script, params=params), frozen=False)
+    assert seen["params"]["target"].endswith("pyw.exe") and seen["params"]["args"].startswith("-3.10 ")
+    assert seen["params"]["args"].endswith("UnigenManager.pyw")
+    assert "UnigenManager.pyw" not in seen["script"] and "pyw.exe" not in seen["script"]  # paths travel as $p
+    app.install_shortcut(run=lambda script, params: seen.update(script=script, params=params),
+                         frozen=True, executable=r"C:\Apps\UnigenManager.exe")
+    assert seen["params"] == {"target": r"C:\Apps\UnigenManager.exe", "args": "", "dir": r"C:\Apps"}
 
 
 def test_main_hands_over_to_elevated_copy(monkeypatch):

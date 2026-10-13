@@ -10,7 +10,9 @@
 ![Python 3.10](https://img.shields.io/badge/Python-3.10-0E151D?style=flat-square&logo=python&logoColor=4FB3C8)
 ![pywebview](https://img.shields.io/badge/UI-pywebview%20%2B%20WebView2-0E151D?style=flat-square)
 ![anime.js](https://img.shields.io/badge/motion-anime.js%204-0E151D?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-137%20passing-5CC08A?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-139%20passing-5CC08A?style=flat-square)
+
+**[⬇ Download UnigenManager.exe](https://github.com/ApurvDas/unigen-manager/releases/latest/download/UnigenManager.exe)**
 
 [Quick start](#quick-start) · [Features](#features) · [Setup](#setup) · [Usage](#usage) · [Development](#development) · [Security](#security)
 
@@ -20,14 +22,24 @@
 
 ## Quick start
 
+**The easy way: no Python needed**
+
+1. Download **[UnigenManager.exe](https://github.com/ApurvDas/unigen-manager/releases/latest/download/UnigenManager.exe)** from the [latest release](https://github.com/ApurvDas/unigen-manager/releases/latest).
+2. Put it in a folder of your choice, for example `C:\Apps\Unigen Manager\`, and double-click it.
+3. Choose **Yes** at the Windows prompt.
+
+The window opens, and a cyan icon appears in the taskbar's **^** flyout.
+
+> **"Windows protected your PC"?** The `.exe` isn't code-signed, so SmartScreen warns about it the first time. Click **More info ▸ Run anyway**.
+
+**From source**
+
 ```powershell
 git clone https://github.com/ApurvDas/unigen-manager.git
 cd unigen-manager
 py -3.10 -m pip install -r requirements.txt
 py -3.10 UnigenManager.pyw
 ```
-
-Choose **Yes** at the Windows prompt. That's it: the window opens, and a cyan icon appears in the taskbar's **^** flyout.
 
 ## Features
 
@@ -86,7 +98,7 @@ Each adapter shows its own standards, read from the hardware: **Wi-Fi 6**, **Blu
 | | |
 |---|---|
 | **Windows** | 10 or 11, **set to English** (the app reads `netsh` output) |
-| **Python** | [3.10](https://www.python.org/downloads/release/python-31011/), with the `py` launcher (installed by default) |
+| **Python** | Not needed for `UnigenManager.exe`. To run from source: [3.10](https://www.python.org/downloads/release/python-31011/), with the `py` launcher (installed by default) |
 | **WebView2** | Microsoft Edge WebView2 Runtime, already present on up-to-date Windows |
 | **Rights** | Administrator, for Bluetooth radio switching and Start with Windows (the app asks when it starts) |
 | **Hardware** | Built for the Unigen AIC8800D80 dongle and MediaTek MT7921 card. Other Wi-Fi adapters show up under their Windows names |
@@ -153,6 +165,8 @@ Opening the app again while it's running brings the existing window forward, so 
 | `--debug` | Open WebView developer tools |
 | `--install-shortcut` | Create the desktop shortcut and exit |
 
+The options work the same way on the `.exe`, for example `UnigenManager.exe --tray`.
+
 App data such as the last speed results and `app.log` lives in `%LOCALAPPDATA%\UnigenManager\`.
 
 ## Development
@@ -171,11 +185,20 @@ Then open:
 
 ```powershell
 py -3.10 -m pip install -r requirements-dev.txt
-py -3.10 -m pytest                 # 137 unit, contract and UI tests (UI tests drive the installed Microsoft Edge)
+py -3.10 -m pytest                 # 139 unit, contract and UI tests (UI tests drive the installed Microsoft Edge)
 py -3.10 -m pytest -m hardware     # read-only checks against the real adapters (changes nothing)
 ```
 
 Checks that change system state (connecting, pairing, radio switching, unplugging the dongle) are in the [manual checklist](docs/superpowers/test-reports/manual-checklist.md).
+
+### Build the .exe
+
+```powershell
+py -3.10 -m pip install -r requirements-dev.txt
+py -3.10 build_exe.py
+```
+
+This writes `dist\UnigenManager.exe`: one file of about 33 MB, with no console window, that runs without Python. PyInstaller bundles the Python runtime, the `ui/` folder and `bt.ps1`, and `build_exe.py` draws the app icon from the tray logo. When the app runs as the `.exe`, the admin prompt, the desktop shortcut and Start with Windows all point at the `.exe` itself.
 
 ### How it fits together
 

@@ -10,8 +10,8 @@ UI = ROOT / "ui" / "index.html"
 WIDGET = ROOT / "ui" / "widget.html"
 _SHORTCUT = """
 $s = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path ([Environment]::GetFolderPath('Desktop')) 'Unigen Manager.lnk'))
-$s.TargetPath = Join-Path $env:WINDIR 'pyw.exe'
-$s.Arguments = '-3.10 "' + $p.script + '"'
+$s.TargetPath = $p.target
+$s.Arguments = $p.args
 $s.WorkingDirectory = $p.dir
 $s.Description = 'Wi-Fi and Bluetooth manager for the Unigen dongle'
 $s.Save()
@@ -30,10 +30,12 @@ def should_relaunch(argv, admin):
     return not admin and "--no-elevate" not in argv
 
 
-def relaunch_as_admin(argv, *, shell_execute=None):
+def relaunch_as_admin(argv, *, shell_execute=None, frozen=None):
     """Start an elevated copy. Returns False if the user declined the Windows prompt."""
     shell_execute = shell_execute or ctypes.windll.shell32.ShellExecuteW
-    params = subprocess.list2cmdline([str(ROOT / "UnigenManager.pyw"), *argv, "--no-elevate"])
+    frozen = getattr(sys, "frozen", False) if frozen is None else frozen
+    lead = [] if frozen else [str(ROOT / "UnigenManager.pyw")]  # the .exe is its own program
+    params = subprocess.list2cmdline([*lead, *argv, "--no-elevate"])
     return shell_execute(None, "runas", sys.executable, params, None, 1) > 32
 
 
@@ -43,9 +45,10 @@ def setup_logging():
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 
-def install_shortcut(run=None):
+def install_shortcut(run=None, **target):
     from winrun import ps
-    (run or ps)(_SHORTCUT, {"script": str(ROOT / "UnigenManager.pyw"), "dir": str(ROOT)})
+    exe, lead, workdir = tray.launch_target(ROOT, **target)
+    (run or ps)(_SHORTCUT, {"target": exe, "args": subprocess.list2cmdline(lead), "dir": workdir})
 
 
 def main(argv=None):

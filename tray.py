@@ -1,5 +1,5 @@
 """Tray: notification-area icon, widget placement above the taskbar, start-with-Windows, one running copy."""
-import ctypes, logging, os, threading
+import ctypes, logging, os, subprocess, sys, threading
 from ctypes import wintypes
 from pathlib import Path
 
@@ -53,11 +53,22 @@ def startup_enabled():
         return False
 
 
-def set_startup(on, root, windir=os.environ.get("WINDIR", r"C:\Windows")):
+def launch_target(root, *, frozen=None, executable=None, windir=None):
+    """How to start this app: (program, leading arguments, working folder).
+    Packaged as UnigenManager.exe: the exe itself. From source: pyw.exe -3.10 and the UnigenManager.pyw in root."""
+    frozen = getattr(sys, "frozen", False) if frozen is None else frozen
+    if frozen:
+        exe = Path(executable or sys.executable)
+        return str(exe), [], str(exe.parent)
+    windir = windir or os.environ.get("WINDIR", r"C:\Windows")
+    return str(Path(windir, "pyw.exe")), ["-3.10", str(Path(root, "UnigenManager.pyw"))], str(root)
+
+
+def set_startup(on, root, **target):
     """At sign-in, start the tray with admin rights (no prompt), also on battery and with no time limit."""
     if on:
-        _ps(_REGISTER, {"name": TASK, "exe": str(Path(windir, "pyw.exe")), "dir": str(root),
-                        "args": f'-3.10 "{Path(root, "UnigenManager.pyw")}" --tray'})
+        exe, lead, workdir = launch_target(root, **target)
+        _ps(_REGISTER, {"name": TASK, "exe": exe, "dir": workdir, "args": subprocess.list2cmdline([*lead, "--tray"])})
     else:
         _ps(_UNREGISTER, {"name": TASK})
 
