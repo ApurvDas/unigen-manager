@@ -1,4 +1,4 @@
-import http.server, json, threading
+import http.client, http.server, json, threading
 import pytest
 import speed
 
@@ -118,3 +118,34 @@ def test_addresses_without_ip(monkeypatch):
     monkeypatch.setattr(speed, "_ps", lambda s, p, **k: '{"ip":null,"gateway":null}')
     with pytest.raises(speed.SpeedError, match="isn't connected"):
         speed.addresses("Wi-Fi 2")
+
+
+def test_load_results_ignores_non_dict_json(tmp_path):
+    f = tmp_path / "results.json"
+    for text in ("[]", "null", '"x"', "3"):
+        f.write_text(text, encoding="utf-8")
+        assert speed.load_results(f) == {}
+    speed.save_result(f, "unigen", {"down": 1})  # save_result no longer chokes on a list file
+    assert speed.load_results(f) == {"unigen": {"down": 1}}
+
+
+class JunkConn:
+    def __init__(self, *a, **k):
+        pass
+
+    def close(self):
+        pass
+
+    def __getattr__(self, name):
+        def f(*a, **k):
+            raise http.client.BadStatusLine("junk")
+        return f
+
+
+def test_http_protocol_errors_become_speed_errors(monkeypatch):
+    monkeypatch.setattr(speed, "_conn", lambda *a: JunkConn())
+    kw = dict(host="h", port=1, tls=False, path="/")
+    with pytest.raises(speed.SpeedError, match="download stopped"):
+        speed.download_samples("127.0.0.1", **kw)
+    with pytest.raises(speed.SpeedError, match="upload stopped"):
+        speed.upload_samples("127.0.0.1", **kw)

@@ -222,7 +222,7 @@ def _state(iface):
 
 
 def connect(iface, ssid, *, auth=None, password=None, saved=False, timeout=15.0, clock=time.monotonic, sleep=time.sleep):
-    name, created = profile_name(ssid), False
+    name, created, kind = profile_name(ssid), False, None
     if not saved:
         kind = security_kind(auth)
         if kind is None:
@@ -248,7 +248,7 @@ def connect(iface, ssid, *, auth=None, password=None, saved=False, timeout=15.0,
         raise
     if created:
         delete_profile(name, [iface])
-    raise WifiError(f"Couldn't connect to {ssid}. Check the password.")
+    raise WifiError(f"Couldn't connect to {ssid}." + (" Check the password." if created and kind != "open" else ""))
 
 
 def disconnect(iface):

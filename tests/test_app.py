@@ -86,6 +86,31 @@ def test_closing_main_window_hides_it(monkeypatch, single):
     hidden = []
     main_win.hide = lambda: hidden.append(True)
     assert main_win.events.closing[0]() is False and hidden == [True]  # False cancels the close
+    assert main_win.kw["js_api"]._main_visible is False  # hidden windows stop polling
+
+
+def test_tray_start_is_not_visible_and_normal_start_is(monkeypatch, single):
+    for argv, visible in (([], True), (["--tray"], False)):
+        fake = FakeWebview()
+        monkeypatch.setitem(sys.modules, "webview", fake)
+        monkeypatch.setattr(app, "is_admin", lambda: True)
+        monkeypatch.setattr(app, "setup_logging", lambda: None)
+        app.main(argv)
+        assert fake.windows[0].kw["js_api"]._main_visible is visible
+
+
+def test_closing_widget_hides_it(monkeypatch, single):
+    fake = FakeWebview()
+    monkeypatch.setitem(sys.modules, "webview", fake)
+    monkeypatch.setattr(app, "is_admin", lambda: True)
+    monkeypatch.setattr(app, "setup_logging", lambda: None)
+    app.main([])
+    widget = fake.windows[1]
+    api = widget.kw["js_api"]
+    hidden = []
+    widget.hide = lambda: hidden.append(True)
+    api._widget, api._widget_shown = widget, True
+    assert widget.events.closing[0]() is False and hidden == [True] and api._widget_shown is False
 
 
 def test_second_copy_shows_the_first(monkeypatch):

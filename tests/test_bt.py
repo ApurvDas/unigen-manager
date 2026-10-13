@@ -146,3 +146,47 @@ def test_connect_disabled_by_spike(monkeypatch):
     with pytest.raises(bt.BtError, match="Bluetooth settings are open"):
         bt.disconnect("112233445566", "JBL Go 3", open_settings=opened.append)
     assert opened == ["ms-settings:bluetooth"]
+
+
+def test_failed_connect_turns_services_back_on():
+    calls = []
+    def set_state(g, flag):
+        calls.append((g, flag))
+        return 87 if (g, flag) == (bt.AUDIO_SERVICES[0], 1) else 0  # disable works, re-enable of the first service is refused
+    with pytest.raises(bt.BtError, match="refused"):
+        bt._apply_services(set_state, [0, 1])
+    assert calls[:3] == [(bt.AUDIO_SERVICES[0], 0), (bt.AUDIO_SERVICES[1], 0), (bt.AUDIO_SERVICES[0], 1)]
+    assert calls[3:] == [(g, 1) for g in bt.AUDIO_SERVICES]  # best-effort restore of every service
+
+
+def test_failed_disconnect_and_nothing_to_switch_do_not_enable_anything():
+    calls = []
+    def refuse(g, flag):
+        calls.append(flag)
+        return 87
+    with pytest.raises(bt.BtError):
+        bt._apply_services(refuse, [0])
+    with pytest.raises(bt.BtError, match="no audio connection"):
+        bt._apply_services(lambda g, flag: 1060, [0, 1])
+    assert calls == [0]
+    bt._apply_services(lambda g, flag: 0, [0, 1])  # the happy path still passes
+
+
+def test_toggle_failure_is_logged(monkeypatch, caplog):
+    monkeypatch.setattr(bt, "_set_audio", lambda a, f: (_ for _ in ()).throw(bt.BtError("rc 87")))
+    monkeypatch.setattr(bt, "SERVICE_TOGGLE", True)
+    with pytest.raises(bt.BtError):
+        bt.connect("112233445566", "JBL Go 3", open_settings=lambda u: None)
+    assert "audio toggle failed: BtError: rc 87" in caplog.text
+
+
+def test_second_concurrent_switch_is_refused(monkeypatch):
+    monkeypatch.setattr(bt, "_ps", FakePs([RADIOS_OK_UNIGEN]))
+    assert bt._switch_lock.acquire(blocking=False)
+    try:
+        with pytest.raises(bt.BtError, match="A radio switch is already running."):
+            bt.switch("builtin")
+    finally:
+        bt._switch_lock.release()
+    with pytest.raises(bt.BtError, match="isn't connected"):  # and the lock is free again afterwards
+        bt.switch("nothing")

@@ -73,15 +73,24 @@ def main(argv=None):
                                    frameless=True, easy_drag=False, resizable=False, on_top=True, hidden=True,
                                    background_color="#1F2C3A")
     api._window, api._widget = main_win, widget
+    api._main_visible = "--tray" not in argv
     stop = threading.Event()
 
     def on_closing():  # closing only hides; Quit is in the tray menu
         if stop.is_set():
             return True
+        api._main_visible = False
         main_win.hide()
         return False
 
+    def on_widget_closing():  # Alt+F4 on the widget hides it too
+        if stop.is_set():
+            return True
+        api.hide_widget()
+        return False
+
     main_win.events.closing += on_closing
+    widget.events.closing += on_widget_closing
     icon = None
 
     def quit_app():
