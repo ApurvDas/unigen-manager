@@ -281,6 +281,7 @@
     padding: 8px 10px;
   }
   dialog .ops { display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px; }
+  dialog .msg { margin: 8px 0 0; min-height: 1.2em; }
 
   @media (prefers-reduced-motion: reduce) {
     .progress i { animation-duration: 3s; }
@@ -300,25 +301,12 @@
 <aside class="rail">
   <div>
     <h2>Adapters</h2>
-    <div class="adapters">
-      <span class="ind ad-ind" aria-hidden="true"></span>
-      <!-- versions read from the hardware: Wi-Fi 802.11ax; Bluetooth LMP 13 = 5.4 (Unigen), LMP 11 = 5.2 (MediaTek) -->
-      <button class="adapter" aria-pressed="true" data-adapter="unigen" data-bt="5.4">
-        <span class="dot on"></span><span class="name">Unigen dongle</span>
-        <span class="meta"><b>HOME-5G</b><br><span class="rate">433 Mbps link</span></span>
-        <span class="caps">Wi-Fi 6, Bluetooth 5.4</span>
-      </button>
-      <button class="adapter" aria-pressed="false" data-adapter="builtin" data-bt="5.2">
-        <span class="dot on"></span><span class="name">Built-in MediaTek</span>
-        <span class="meta"><b>HOME-5G</b><br><span class="rate">866 Mbps link</span></span>
-        <span class="caps">Wi-Fi 6, Bluetooth 5.2</span>
-      </button>
-    </div>
+    <div class="adapters"><span class="ind ad-ind" aria-hidden="true"></span></div>
   </div>
   <nav>
     <span class="ind nav-ind" aria-hidden="true"></span>
-    <button aria-current="page" data-go="wifi">Wi-Fi 6 <kbd>Ctrl 1</kbd></button>
-    <button data-go="bt"><span id="btLabel">Bluetooth 5.4</span> <kbd>Ctrl 2</kbd></button>
+    <button aria-current="page" data-go="wifi"><span id="wifiLabel">Wi-Fi</span> <kbd>Ctrl 1</kbd></button>
+    <button data-go="bt"><span id="btLabel">Bluetooth</span> <kbd>Ctrl 2</kbd></button>
     <button data-go="speed">Speed <kbd>Ctrl 3</kbd></button>
   </nav>
 </aside>
@@ -329,12 +317,12 @@
     <div class="tabs" role="tablist" aria-label="Wi-Fi">
       <span class="ind tab-ind" data-axis="x" aria-hidden="true"></span>
       <button role="tab" aria-selected="true" data-view="nearby">Nearby</button>
-      <button role="tab" aria-selected="false" data-view="saved">Saved <span class="count" id="savedCount">7</span></button>
+      <button role="tab" aria-selected="false" data-view="saved">Saved <span class="count" id="savedCount"></span></button>
     </div>
     <div class="view" id="vNearby">
       <div class="head">
-        <h1>7 networks nearby</h1>
-        <span class="sub" id="scanAge">Scanned 12 seconds ago</span>
+        <h1 id="wifiTitle">Looking for networks…</h1>
+        <span class="sub" id="scanAge"></span>
         <span class="grow"></span>
         <button class="btn small" id="scan"><span class="label">Scan again</span></button>
       </div>
@@ -354,7 +342,7 @@
       </div>
     </div>
     <div class="view saved" id="vSaved" hidden>
-      <div class="head"><h1>Saved networks</h1><span class="sub">Stored by Windows on this PC</span></div>
+      <div class="head"><h1>Saved networks</h1><span class="sub">Stored by Windows on this PC</span><span class="grow"></span><span class="msg" id="savedMsg"></span></div>
       <div class="list" id="savedList"></div>
     </div>
   </section>
@@ -363,12 +351,12 @@
   <section id="bt" class="bt" hidden>
     <div class="head"><h1>Bluetooth</h1></div>
     <div class="radio-note">
-      <p>Bluetooth is running on the <b id="btRadio">Unigen dongle</b>. <span id="btOther">The built-in MediaTek radio is turned off.</span>
+      <p>Bluetooth is running on the <b id="btRadio">…</b>. <span id="btOther"></span>
         <span class="msg" id="btMsg"></span></p>
       <button class="btn small" id="tryRadio"><span class="label">Use built-in radio</span></button>
     </div>
     <div class="group">
-      <h2>Paired devices <span id="pairedCount">6</span></h2>
+      <h2>Paired devices <span id="pairedCount"></span></h2>
       <div class="list" id="paired"></div>
     </div>
     <div class="group">
@@ -387,15 +375,16 @@
   <!-- Speed -->
   <section id="speed" hidden>
     <div class="head">
-      <h1>Speed on Unigen dongle</h1>
+      <h1>Speed</h1>
+      <span class="msg" id="speedMsg"></span>
       <span class="grow"></span>
       <span class="progress" id="spProg" hidden><i></i></span>
       <button class="btn primary" id="runTest"><span class="label">Run test</span></button>
     </div>
     <div class="readouts">
-      <div class="readout"><span class="big">2</span><span class="unit">ms</span><div class="what">Ping to router</div></div>
-      <div class="readout"><span class="big">50</span><span class="unit">Mbps</span><div class="what">Download</div></div>
-      <div class="readout"><span class="big">12</span><span class="unit">Mbps</span><div class="what">Upload</div></div>
+      <div class="readout"><span class="big">–</span><span class="unit">ms</span><div class="what">Ping to router</div></div>
+      <div class="readout"><span class="big">–</span><span class="unit">Mbps</span><div class="what">Download</div></div>
+      <div class="readout"><span class="big">–</span><span class="unit">Mbps</span><div class="what">Upload</div></div>
     </div>
     <div class="charts">
       <div class="card">
@@ -416,13 +405,10 @@
       <details class="tv" data-table="sig"><summary>Table view</summary></details>
     </div>
     <div class="group">
-      <h2>Results table <span id="measured">measured 12 Oct 2026</span></h2>
+      <h2>Results table <span id="measured"></span></h2>
       <table>
         <thead><tr><th>Adapter</th><th>Link</th><th>Ping</th><th>Download</th><th>Upload</th></tr></thead>
-        <tbody>
-          <tr data-adapter="unigen"><td>Unigen dongle</td><td class="num">433 Mbps</td><td class="num">2 ms</td><td class="num">50 Mbps</td><td class="num">12 Mbps</td></tr>
-          <tr data-adapter="builtin"><td>Built-in MediaTek</td><td class="num">866 Mbps</td><td class="num">2 ms</td><td class="num">53 Mbps</td><td class="num">31 Mbps</td></tr>
-        </tbody>
+        <tbody id="results"></tbody>
       </table>
     </div>
   </section>
@@ -434,6 +420,7 @@
   <form id="pwForm">
     <h2 id="pwTitle"></h2>
     <input type="password" id="pwInput" aria-label="Password" autocomplete="off" autofocus>
+    <p class="msg err" id="pwErr" aria-live="polite"></p>
     <div class="ops">
       <button type="button" class="btn" id="pwCancel"><span class="label">Cancel</span></button>
       <button class="btn primary"><span class="label">Connect</span></button>
@@ -442,39 +429,28 @@
 </dialog>
 
 <script src="vendor/anime.umd.min.js"></script>
+<script src="mock-api.js"></script>
 <script>
-// Mockup data: real scan from this PC. The backend will replace these arrays.
-const NETS = [
-  { ssid: "HOME-5G", sec: "WPA2", state: "Connected", aps: [{ b: 5, ch: 36, s: 96 }] },
-  { ssid: "Maple House", sec: "WPA2", state: "Saved", aps: [{ b: 2.4, ch: 6, s: 92 }, { b: 2.4, ch: 1, s: 38 }] },
-  { ssid: "AirFiber-Maple House", sec: "WPA2", aps: [{ b: 2.4, ch: 11, s: 48 }, { b: 5, ch: 157, s: 18 }] },
-  { ssid: "AirFiber-Cedar12", sec: "WPA2", aps: [{ b: 2.4, ch: 1, s: 46 }, { b: 5, ch: 157, s: 14 }] },
-  { ssid: "[Smart_Fridge]a1b2", sec: "WPA2", aps: [{ b: 2.4, ch: 11, s: 32 }] },
-  { ssid: "Workshop12", sec: "WPA2", aps: [{ b: 2.4, ch: 11, s: 14 }, { b: 5, ch: 149, s: 14 }] },
-  { ssid: "CEDAR-12", sec: "WPA2", aps: [{ b: 2.4, ch: 11, s: 14 }, { b: 5, ch: 149, s: 14 }] },
-];
-const PAIRED = [
-  { name: "Den Beats Pill", kind: "Speaker", on: true },
-  { name: "OnePlus Nord Buds 3r", kind: "Earbuds" },
-  { name: "JBL Go 3", kind: "Speaker" },
-  { name: "Tribit StormBox Mini+", kind: "Speaker" },
-  { name: "MHX-BT88", kind: "Audio" },
-  { name: "DualSense Wireless Controller", kind: "Controller" },
-];
-const SAVED = [
-  { ssid: "HOME-5G", both: true },
-  { ssid: "Maple House" },
-  { ssid: "oldrouter" },
-  { ssid: "phone_hotspot", both: true },
-  { ssid: "Guest_net", both: true },
-  { ssid: "Guest_net 2", both: true },
-  { ssid: "Cafe_wifi", both: true },
-];
-
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
-const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-const wait = ms => new Promise(r => setTimeout(r, ms));
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+// ================= bridge to Python (api.py) =================
+// Inside the app, pywebview injects window.pywebview.api. Opened as index.html?mock (browser preview, UI tests),
+// the page uses window.mockApi from mock-api.js. Inside the app it never falls back to mock data.
+const MOCK = new URLSearchParams(location.search).has("mock");
+const apiReady = new Promise(resolve => {
+  if (MOCK) return resolve(window.mockApi);
+  if (window.pywebview && window.pywebview.api) return resolve(window.pywebview.api);
+  addEventListener("pywebviewready", () => resolve(window.pywebview.api), { once: true });
+});
+// call: resolves to data, or throws an Error whose message is safe to show
+async function call(name, ...args) {
+  const api = await apiReady;
+  const r = await api[name](...args);
+  if (!r || !r.ok) throw new Error(r && r.error ? r.error : "No answer from the app.");
+  return r.data;
+}
 
 // ================= motion components (anime.js) =================
 // Every click gets a response, sized to how often it happens:
@@ -516,14 +492,18 @@ function swap(btn, text) {
   } });
 }
 
-// busy: the shared shape of every slow action - disable, swap label, progress, then settle
-async function busy(btn, label, ms, { prog, after } = {}) {
+// busy: the shared shape of every slow action. Disable, swap the label, show progress, await the work,
+// then settle on `after` if it worked or the original label if it failed.
+async function busy(btn, label, work, { prog, after } = {}) {
   const was = $(".label", btn).textContent;
+  let ok = false;
   btn.disabled = true; swap(btn, label);
   if (prog) prog.hidden = false;
-  await wait(ms);
-  btn.disabled = false; swap(btn, after ?? was);
-  if (prog) prog.hidden = true;
+  try { const r = await work; ok = true; return r; }
+  finally {
+    btn.disabled = false; swap(btn, ok ? (after ?? was) : was);
+    if (prog) prog.hidden = true;
+  }
 }
 
 // arrive: a changed value settles in so the eye catches what changed
@@ -542,10 +522,10 @@ function setMsg(el, text, isErr) {
   anime.waapi.animate(el, { opacity: [0, 1], duration: 150, ease });
 }
 
-// scramble: password reveal/hide
+// scramble: password reveal/hide (scrambleText writes innerHTML, so the text is escaped first)
 function scramble(el, text) {
   if (reduce) { el.textContent = text; return arrive(el); }
-  anime.animate(el, { innerHTML: anime.scrambleText({ text }), duration: 300 });
+  anime.animate(el, { innerHTML: anime.scrambleText({ text: esc(text) }), duration: 300 });
 }
 
 // pop: a status dot changes state
@@ -574,7 +554,22 @@ function addEl(list, html) {
     { enterFrom: reduce ? { opacity: 0 } : { opacity: 0, transform: "translateY(4px)" } });
 }
 
-// ---------- channel map ----------
+// ================= state =================
+let INFO = null;     // app_info(): admin flag + each adapter's name and standards
+let ADS = [];        // latest adapters() poll
+let NETS = [];       // networks seen by the chosen adapter
+let SAVED = [];      // saved(): [{ssid, on: [keys]}]
+let BT = null;       // bt_radio()
+let RESULTS = {};    // speed_results(): key -> {ping, down, up, link, samples, split, at}
+let selected = 0, selSsid = null, scannedAt = null;
+const activeAdapter = () => $(".adapter[aria-pressed='true']");
+const activeKey = () => activeAdapter()?.dataset.adapter;
+const adapterEl = k => $$(".adapter").find(a => a.dataset.adapter === k);
+const NAME = k => (INFO && INFO.adapters.find(a => a.key === k) || {}).name || k;
+const SHORT = k => ({ unigen: "Unigen", builtin: "Built-in" })[k] || NAME(k);
+const COLOR = k => ({ unigen: "var(--uni)", builtin: "var(--bi)" })[k] || "var(--muted)";
+
+// ================= channel map =================
 const CH5 = [36,40,44,48,52,56,60,64,100,104,108,112,116,120,124,128,132,136,140,144,149,153,157,161,165];
 const H = 92, ROOM = 18; // baseline y; headroom for the name label at 100%
 const peak = sig => H - (sig / 100) * (H - ROOM);
@@ -586,6 +581,7 @@ function hump(x, half, sig) {
 function drawMaps() {
   const s24 = $("#map24"), s5 = $("#map5");
   const W24 = s24.clientWidth, W5 = s5.clientWidth;
+  if (!W24 || !W5) return;
   const u24 = W24 / 16, u5 = W5 / 27;           // padded so edge humps fit
   const x24 = ch => (ch + 1) * u24;            // channels -1..15
   const x5 = i => (i + 1.5) * u5;              // slots -1.5..25.5
@@ -593,11 +589,11 @@ function drawMaps() {
   NETS.forEach((n, ni) => n.aps.forEach(ap => {
     const cls = `hump ${n.state === "Connected" ? "connected" : "dim"}`;
     const top = peak(ap.s) - 6;
-    let x, half, out;
+    let x, half;
     if (ap.b === 2.4) { x = x24(ap.ch); half = 2 * u24; }
-    else { x = x5(Math.floor(CH5.indexOf(ap.ch) / 4) * 4 + 1.5); half = 2 * u5; } // 80 MHz block
-    out = `<path class="${cls}" data-net="${ni}" d="${hump(x, half, ap.s)}"/>
-           <text class="tag" data-net="${ni}" x="${x}" y="${top}" text-anchor="middle">${esc(n.ssid)}</text>`;
+    else { const i = CH5.indexOf(ap.ch); if (i < 0) return; x = x5(Math.floor(i / 4) * 4 + 1.5); half = 2 * u5; } // 80 MHz block
+    const out = `<path class="${cls}" data-net="${ni}" d="${hump(x, half, ap.s)}"/>
+           <text class="tag" data-net="${ni}" x="${x}" y="${top}" text-anchor="middle">${n.hidden ? "(hidden network)" : esc(n.ssid)}</text>`;
     if (ap.b === 2.4) a += out; else b += out;
   }));
   a += [1, 6, 11, 13].map(c => `<text class="axis" x="${x24(c)}" y="106" text-anchor="middle">${c}</text>`).join("");
@@ -615,23 +611,23 @@ function fillIn() {
   }));
 }
 
-// ---------- Wi-Fi list ----------
-let selected = 0;
-const best = n => Math.max(...n.aps.map(a => a.s));
+// ================= Wi-Fi: nearby networks =================
+const best = n => Math.max(0, ...n.aps.map(a => a.s));
 function drawNets() {
-  $("#netRows").innerHTML = NETS.map((n, i) => {
-    const chips = n.aps.map(a => `<span class="chip ${a.b === 5 ? "b5" : "b24"}">${a.b} GHz, ch ${a.ch}</span>`).join("");
-    return `<div class="row" role="option" data-i="${i}" aria-selected="false">
-      <span class="title">${esc(n.ssid)}</span>
+  setText($("#wifiTitle"), `${NETS.length} network${NETS.length === 1 ? "" : "s"} nearby`);
+  $("#netRows").innerHTML = NETS.map((n, i) => `<div class="row" role="option" data-i="${i}" aria-selected="false">
+      <span class="title${n.hidden ? " muted" : ""}">${n.hidden ? "(hidden network)" : esc(n.ssid)}</span>
       <span class="signal"><span class="num">${best(n)}%</span><span class="meter"><i style="transform:scaleX(${best(n) / 100})"></i></span></span>
-      <span class="chips">${chips}</span>
-      <span class="muted">${n.sec}</span>
-      <span class="state ${n.state === "Connected" ? "ok" : "muted"}">${n.state || ""}</span>
-    </div>`;
-  }).join("");
+      <span class="chips">${n.aps.map(a => `<span class="chip ${a.b === 5 ? "b5" : "b24"}">${a.b} GHz, ch ${a.ch}</span>`).join("")}</span>
+      <span class="muted">${esc(n.sec)}</span>
+      <span class="state ${n.state === "Connected" ? "ok" : "muted"}">${esc(n.state)}</span>
+    </div>`).join("");
   markSel(true); syncButtons();
 }
 function markSel(instant) {
+  const i = NETS.findIndex(n => n.ssid === selSsid);
+  selected = i < 0 ? 0 : i;
+  selSsid = NETS[selected] ? NETS[selected].ssid : null;
   $$("#netRows .row").forEach(r => r.setAttribute("aria-selected", r.dataset.i == selected));
   slide($(".sel-ind"), $(`#netRows .row[data-i="${selected}"]`), instant);
 }
@@ -640,77 +636,131 @@ function highlight(i) {
 }
 function syncButtons() {
   const n = NETS[selected];
-  $("#connect").disabled = n.state === "Connected";
-  $("#disconnect").disabled = n.state !== "Connected";
-}
-// state cells update in place; only the ones that changed animate
-function updateStates() {
-  $$("#netRows .row").forEach(r => {
-    const n = NETS[r.dataset.i], c = $(".state", r);
-    c.className = `state ${n.state === "Connected" ? "ok" : "muted"}`;
-    setText(c, n.state || "");
-  });
-  drawMaps(); highlight(selected); fillIn(); syncButtons();
+  $("#connect").disabled = !n || n.hidden || n.state === "Connected";
+  $("#disconnect").disabled = !n || n.state !== "Connected";
 }
 $("#netRows").addEventListener("click", e => {
   const r = e.target.closest(".row"); if (!r) return;
-  selected = +r.dataset.i; markSel(); highlight(selected); syncButtons();
+  selSsid = NETS[+r.dataset.i].ssid; markSel(); highlight(+r.dataset.i); syncButtons();
 });
 $("#netRows").addEventListener("dblclick", () => $("#connect").click());
 $("#netRows").addEventListener("mouseover", e => { const r = e.target.closest(".row"); if (r) highlight(r.dataset.i); });
 $("#netRows").addEventListener("mouseleave", () => highlight(selected));
 
-const activeAdapter = () => $(".adapter[aria-pressed='true']");
-// mockup link rate: 5 GHz vs 2.4 GHz, per adapter
-const linkRate = (a, n) => {
-  const five = n.aps.some(x => x.b === 5), uni = a.dataset.adapter === "unigen";
-  return `${five ? (uni ? 433 : 866) : (uni ? 144 : 287)} Mbps link`;
-};
-async function connect(btn) {
-  const n = NETS[selected];
-  await busy(btn, "Connecting…", 1600, { after: "Connect" });
-  NETS.forEach(x => { if (x.state === "Connected") x.state = "Saved"; });
-  n.state = "Connected"; // mockup: always succeeds; a new network becomes saved too
-  updateStates();
-  const a = activeAdapter();
-  setText($(".meta b", a), n.ssid); setText($(".rate", a), linkRate(a, n)); pop($(".dot", a), true);
-  setMsg($("#wifiMsg"), `Connected to ${n.ssid}.`);
+async function loadNetworks(fresh) {
+  const key = activeKey(); if (!key) return;
+  const r = await call(fresh ? "scan" : "networks", key);
+  let nets = r.networks;
+  if ($("#netRows").matches(":hover") && NETS.length) { // never reorder rows under the pointer
+    const pos = new Map(NETS.map((n, i) => [n.ssid, i]));
+    const at = n => pos.has(n.ssid) ? pos.get(n.ssid) : 1e9;
+    nets = [...nets].sort((a, b) => at(a) - at(b));
+  }
+  NETS = nets; scannedAt = r.scanned_at;
+  drawNets();
+  if (nearbyShown()) { drawMaps(); highlight(selected); }
+  tickAge();
+}
+// ticks every second, so plain text: no animation
+function tickAge() {
+  if (scannedAt == null) return;
+  const s = Math.max(0, Math.round(Date.now() / 1000 - scannedAt));
+  $("#scanAge").textContent = s < 5 ? "Scanned just now" : s < 60 ? `Scanned ${s} seconds ago` : `Scanned ${Math.round(s / 60)} min ago`;
+}
+
+async function doConnect(password) {
+  const n = NETS[selected]; if (!n) return;
+  try {
+    await busy($("#connect"), "Connecting…", call("connect", activeKey(), n.ssid, password ?? null), { after: "Connect" });
+    setMsg($("#wifiMsg"), `Connected to ${n.ssid}.`);
+    await Promise.all([loadNetworks(false), poll()]);
+    fillIn();
+  } catch (e) { setMsg($("#wifiMsg"), e.message, true); syncButtons(); }
 }
 $("#connect").addEventListener("click", function () {
   if (this.disabled) return;
   const n = NETS[selected];
-  if (n.state) connect(this); else openPw(n); // Connected/Saved skip the password
+  if (n.state || n.sec !== "WPA2") doConnect(); // saved, open, or a type the backend will explain
+  else openPw(n);
 });
 $("#disconnect").addEventListener("click", async function () {
   const n = NETS[selected];
-  if (this.disabled || n.state !== "Connected") return;
-  await busy(this, "Disconnecting…", 1000);
-  n.state = "Saved";
-  updateStates();
-  const a = activeAdapter();
-  setText($(".meta b", a), "Not connected"); setText($(".rate", a), "No link"); pop($(".dot", a), false);
-  setMsg($("#wifiMsg"), `Disconnected from ${n.ssid}.`);
+  if (this.disabled || !n) return;
+  try {
+    await busy(this, "Disconnecting…", call("disconnect", activeKey()));
+    setMsg($("#wifiMsg"), `Disconnected from ${n.ssid}.`);
+    await Promise.all([loadNetworks(false), poll()]);
+  } catch (e) { setMsg($("#wifiMsg"), e.message, true); }
 });
 $("#scan").addEventListener("click", async function () {
-  await busy(this, "Scanning…", 1600, { after: "Scan again" });
-  NETS.forEach(n => n.aps.forEach(a => a.s = Math.max(5, Math.min(99, a.s + Math.round(Math.random() * 8 - 4)))));
-  $$("#netRows .row").forEach(r => {
-    const s = best(NETS[r.dataset.i]);
-    $(".signal .num", r).textContent = `${s}%`;
-    const m = $(".meter i", r);
-    if (reduce) anime.set(m, { scaleX: s / 100 });
-    else anime.animate(m, { scaleX: s / 100, duration: 300, ease });
+  const old = new Map(NETS.map(n => [n.ssid, best(n)]));
+  try { await busy(this, "Scanning…", loadNetworks(true), { after: "Scan again" }); }
+  catch (e) { return setMsg($("#wifiMsg"), e.message, true); }
+  if (reduce) return;
+  $$("#netRows .row").forEach(r => { // meters ease from their previous value to the new one
+    const n = NETS[r.dataset.i];
+    if (old.has(n.ssid)) anime.animate($(".meter i", r), { scaleX: [old.get(n.ssid) / 100, best(n) / 100], duration: 300, ease });
   });
-  setText($("#scanAge"), "Scanned just now");
-  drawMaps(); highlight(selected);
 });
 
-// password dialog
+// ================= adapters rail + polling =================
+function renderRail() {
+  $(".adapters").innerHTML = `<span class="ind ad-ind" aria-hidden="true"></span>` + INFO.adapters.map((a, i) => `
+    <button class="adapter" aria-pressed="${i === 0}" data-adapter="${esc(a.key)}" data-bt="${esc(a.bt || "")}">
+      <span class="dot"></span><span class="name">${esc(a.name)}</span>
+      <span class="meta"><b>Checking…</b><br><span class="rate"></span></span>
+      <span class="caps">${esc([a.wifi, a.bt && `Bluetooth ${a.bt}`].filter(Boolean).join(", "))}</span>
+    </button>`).join("");
+  $$(".adapter").forEach(a => a.addEventListener("click", () => pickAdapter(a)));
+  slide($(".ad-ind"), activeAdapter(), true);
+  setText($("#wifiLabel"), (INFO.adapters[0] || {}).wifi || "Wi-Fi");
+}
+function updateRail() {
+  $$(".adapter").forEach(a => {
+    const d = ADS.find(x => x.key === a.dataset.adapter), on = !!d && d.state === "connected";
+    setText($(".meta b", a), !d ? "Unplugged" : on ? d.ssid : "Not connected");
+    setText($(".rate", a), on ? `${d.rate} Mbps link` : "No link");
+    const dot = $(".dot", a);
+    if (dot.classList.contains("on") !== on) pop(dot, on);
+  });
+}
+function pickAdapter(a) {
+  $$(".adapter").forEach(x => x.setAttribute("aria-pressed", x === a));
+  slide($(".ad-ind"), a);
+  setText($("#wifiLabel"), (INFO.adapters.find(x => x.key === a.dataset.adapter) || {}).wifi || "Wi-Fi");
+  setText($("#speed h1"), `Speed on ${$(".name", a).textContent}`);
+  setText($("#tpSub"), `${$(".name", a).textContent}, Mbps`);
+  showReadouts();
+  const r = RESULTS[a.dataset.adapter];
+  if (!$("#speed").hidden) drawTp(r ? r.samples : [], a.dataset.adapter, { draw: true, split: r && r.split });
+  selSsid = null;
+  loadNetworks(false).catch(e => setMsg($("#wifiMsg"), e.message, true));
+}
+
+const SIG_N = 60;  // 2 minutes of readings, one every 2 s
+const sig = {};    // adapter key -> readings; null while not connected
+const trimSig = () => Object.values(sig).forEach(a => { while (a.length > SIG_N) a.shift(); });
+async function poll() {
+  try { ADS = await call("adapters"); }
+  catch (e) { return setMsg($("#wifiMsg"), e.message, true); }
+  updateRail();
+  for (const a of INFO.adapters) {
+    const d = ADS.find(x => x.key === a.key);
+    (sig[a.key] = sig[a.key] || []).push(d && d.state === "connected" ? d.signal : null);
+  }
+  const visible = !$("#speed").hidden && !busyChart($("#sig"));
+  if (visible && !reduce && Object.values(sig).some(a => a.length > SIG_N)) return drawSig(true); // slides, then trims
+  trimSig();
+  if (visible) drawSig();
+}
+
+// ================= password dialog =================
 const pw = $("#pw");
 function openPw(n) {
   if (pw.open) return;
   $("#pwTitle").innerHTML = `Connect to ${esc(n.ssid)}`;
   $("#pwInput").value = "";
+  $("#pwErr").textContent = "";
   pw.classList.remove("closing");
   pw.showModal();
   anime.animate(pw, reduce ? { opacity: [0, 1], duration: 150, ease }
@@ -723,104 +773,142 @@ function closePw(then) {
     : { opacity: 0, scale: 0.96, duration: 150, ease, onComplete: done });
   function done() { pw.close(); pw.classList.remove("closing"); if (then) then(); }
 }
+const validPassword = p => /^[0-9A-Fa-f]{64}$/.test(p) || (p.length >= 8 && p.length <= 63 && /^[\x20-\x7E]+$/.test(p));
 $("#pwCancel").addEventListener("click", () => closePw());
 pw.addEventListener("cancel", e => { e.preventDefault(); closePw(); }); // Escape
-$("#pwForm").addEventListener("submit", e => { e.preventDefault(); closePw(() => connect($("#connect"))); });
+$("#pwForm").addEventListener("submit", e => {
+  e.preventDefault();
+  const value = $("#pwInput").value;
+  if (!validPassword(value)) return setMsg($("#pwErr"), "The password must be 8 to 63 characters.", true);
+  closePw(() => doConnect(value));
+});
 
-// ---------- Bluetooth ----------
-const pairedRow = d => `<div class="row" data-kind="${esc(d.kind)}">
+// ================= Bluetooth =================
+const pairedRow = d => `<div class="row" data-id="${esc(d.id)}" data-kind="${esc(d.kind)}">
   <span class="title">${esc(d.name)}</span>
-  <span class="st ${d.on ? "state ok" : "muted"}">${d.on ? "Connected" : esc(d.kind)}</span>
+  <span class="st ${d.connected ? "state ok" : "muted"}">${d.connected ? "Connected" : esc(d.kind)}</span>
   <span class="ops">
-    <button class="btn small conn"><span class="label">${d.on ? "Disconnect" : "Connect"}</span></button>
+    <button class="btn small conn"><span class="label">${d.connected ? "Disconnect" : "Connect"}</span></button>
     <button class="btn small hold"><span class="label">Hold to remove</span><span class="fill"></span></button>
   </span></div>`;
-$("#paired").innerHTML = PAIRED.map(pairedRow).join("");
+const nearbyRow = d => `<div class="row" data-id="${esc(d.id)}" data-name="${esc(d.name)}" data-kind="${esc(d.kind)}">
+  <span class="title">${esc(d.name || "Unnamed device")}</span>
+  <span class="muted">${esc(d.kind)}</span>
+  <span class="ops"><button class="btn small pair"><span class="label">Pair</span></button></span></div>`;
 const visibleRows = list => $$(".row", list).filter(r => r.style.display !== "none").length;
 const countPaired = () => setText($("#pairedCount"), visibleRows($("#paired")));
 const countSaved = () => setText($("#savedCount"), visibleRows($("#savedList")));
 
+async function loadBt() {
+  try {
+    const [radio, paired] = await Promise.all([call("bt_radio"), call("bt_paired")]);
+    BT = radio; renderRadio();
+    $("#paired").innerHTML = paired.map(pairedRow).join("");
+    countPaired();
+  } catch (e) { setMsg($("#btMsg"), e.message, true); }
+}
+// the Bluetooth tab label follows whichever radio is in use
+function renderRadio() {
+  const act = BT.radios.find(r => r.key === BT.active), other = BT.radios.find(r => r.key !== BT.active);
+  setText($("#btRadio"), act ? act.name : "no radio");
+  setText($("#btOther"), other ? `The ${other.name} radio is turned off.` : "");
+  setText($("#btLabel"), act && act.version ? `Bluetooth ${act.version}` : "Bluetooth");
+  const b = $("#tryRadio");
+  b.hidden = !other;
+  if (other) swap(b, `Use ${other.key === "builtin" ? "built-in" : SHORT(other.key)} radio`);
+  b.disabled = !BT.can_switch;
+  if (!BT.can_switch) setMsg($("#btMsg"), "Bluetooth radio switching needs administrator rights.");
+}
+$("#tryRadio").addEventListener("click", async function () {
+  const other = BT && BT.radios.find(r => r.key !== BT.active);
+  if (!other || this.disabled) return;
+  try {
+    await busy(this, "Switching…", call("bt_switch", other.key));
+    setMsg($("#btMsg"), `Switched to the ${other.name} radio. Paired devices reconnect on their own.`);
+  } catch (e) { setMsg($("#btMsg"), e.message, true); }
+  try { BT = await call("bt_radio"); renderRadio(); } catch (e) { setMsg($("#btMsg"), e.message, true); }
+});
 $("#paired").addEventListener("click", async e => {
   const b = e.target.closest(".conn"); if (!b || b.disabled) return;
   const r = b.closest(".row"), on = $(".st", r).classList.contains("ok");
-  await busy(b, on ? "Disconnecting…" : "Connecting…", 1400, { after: on ? "Connect" : "Disconnect" });
-  const st = $(".st", r);
-  st.className = `st ${on ? "muted" : "state ok"}`;
-  setText(st, on ? r.dataset.kind : "Connected");
+  try {
+    await busy(b, on ? "Disconnecting…" : "Connecting…", call(on ? "bt_disconnect" : "bt_connect", r.dataset.id), { after: on ? "Connect" : "Disconnect" });
+    const st = $(".st", r);
+    st.className = `st ${on ? "muted" : "state ok"}`;
+    setText(st, on ? r.dataset.kind : "Connected");
+  } catch (err) { setMsg($("#btMsg"), err.message, true); }
 });
-
-// Mockup: devices "found" at uneven times during a search; each shows once
-const NEARBY = [
-  { name: "Galaxy Buds2 Pro", kind: "Earbuds", at: 600 },
-  { name: "boAt Stone 350", kind: "Speaker", at: 1400 },
-  { name: "Mi Portable Speaker", kind: "Speaker", at: 2300 },
-];
-const found = new Set();
-$("#btSearch").addEventListener("click", function () {
-  NEARBY.filter(d => !found.has(d.name)).forEach(d => setTimeout(() => {
-    found.add(d.name);
-    addEl($("#nearby"), `<div class="row" data-name="${esc(d.name)}" data-kind="${esc(d.kind)}">
-      <span class="title">${esc(d.name)}</span>
-      <span class="muted">${esc(d.kind)}</span>
-      <span class="ops"><button class="btn small pair"><span class="label">Pair</span></button></span></div>`);
-  }, d.at));
-  busy(this, "Searching…", 3000, { prog: $("#btProg") });
+$("#btSearch").addEventListener("click", async function () {
+  try {
+    const found = await busy(this, "Searching…", call("bt_nearby"), { prog: $("#btProg") });
+    const have = new Set($$("#nearby .row").map(r => r.dataset.id));
+    found.filter(d => !have.has(d.id)).forEach((d, i) => setTimeout(() => addEl($("#nearby"), nearbyRow(d)), reduce ? 0 : i * 60));
+    if (!found.length) setMsg($("#btMsg"), "No devices in pairing mode were found.");
+  } catch (e) { setMsg($("#btMsg"), e.message, true); }
 });
 // pairing moves the device from Nearby into Paired
 $("#nearby").addEventListener("click", async e => {
   const b = e.target.closest(".pair"); if (!b || b.disabled) return;
   const r = b.closest(".row");
-  await busy(b, "Pairing…", 1400);
+  try { await busy(b, "Pairing…", call("bt_pair", r.dataset.id)); }
+  catch (err) { return setMsg($("#btMsg"), err.message, true); }
   removeEl(r);
-  addEl($("#paired"), pairedRow({ name: r.dataset.name, kind: r.dataset.kind }));
+  let d = { id: r.dataset.id, name: r.dataset.name, kind: r.dataset.kind, connected: false };
+  try {
+    const paired = await call("bt_paired");
+    d = paired.find(x => x.id === d.id) || paired.find(x => x.name === d.name) || d;
+  } catch { /* keep the row we know */ }
+  addEl($("#paired"), pairedRow(d));
   countPaired();
 });
-// radio switch: the Bluetooth tab label follows whichever radio is in use
-let btRadio = "unigen";
-$("#tryRadio").addEventListener("click", async function () {
-  const to = btRadio === "unigen" ? "builtin" : "unigen";
-  await busy(this, "Switching…", 2500, { after: to === "unigen" ? "Use built-in radio" : "Use Unigen radio" });
-  btRadio = to;
-  setText($("#btRadio"), NAME[to]);
-  setText($("#btOther"), to === "unigen" ? "The built-in MediaTek radio is turned off." : "The Unigen dongle's radio is turned off.");
-  setText($("#btLabel"), `Bluetooth ${$(`.adapter[data-adapter="${to}"]`).dataset.bt}`);
-  setMsg($("#btMsg"), `Switched to the ${NAME[to]} radio. Paired devices reconnect on their own.`);
-});
 
-// ---------- Saved ----------
-$("#savedList").innerHTML = SAVED.map(s => `<div class="row">
+// ================= Saved =================
+function savedRow(s) {
+  const all = INFO.adapters.map(a => a.key), missing = all.filter(k => !s.on.includes(k));
+  const where = all.length > 1 && !missing.length ? "Both adapters" : `${NAME(s.on[0])} only`;
+  const copy = missing.length ? `<button class="btn small copy" data-src="${esc(s.on[0])}" data-dst="${esc(missing[0])}"><span class="label">Copy to ${esc(missing[0] === "builtin" ? "built-in" : SHORT(missing[0]))}</span></button>` : "";
+  return `<div class="row" data-ssid="${esc(s.ssid)}">
   <span class="title">${esc(s.ssid)}</span>
-  <span class="muted where">${s.both ? "Both adapters" : "Unigen dongle only"}</span>
+  <span class="muted where">${esc(where)}</span>
   <span class="pw"><span class="secret">••••••••</span><button class="link reveal"><span class="label">Show</span></button></span>
-  <span class="ops">
-    ${s.both ? "" : `<button class="btn small copy"><span class="label">Copy to built-in</span></button>`}
+  <span class="ops">${copy}
     <button class="btn small hold"><span class="label">Hold to delete</span><span class="fill"></span></button>
-  </span></div>`).join("");
+  </span></div>`;
+}
+async function loadSaved() {
+  try {
+    SAVED = await call("saved");
+    $("#savedList").innerHTML = SAVED.map(savedRow).join("");
+    countSaved();
+  } catch (e) { setMsg($("#savedMsg"), e.message, true); }
+}
 $("#savedList").addEventListener("click", async e => {
   const show = e.target.closest(".reveal");
   if (show) {
-    const open = !show.dataset.open; show.dataset.open = open ? "1" : "";
-    scramble($(".secret", show.closest(".row")), open ? "not in mockup" : "••••••••");
-    swap(show, open ? "Hide" : "Show");
+    const row = show.closest(".row");
+    if (show.dataset.open) { show.dataset.open = ""; scramble($(".secret", row), "••••••••"); return swap(show, "Show"); }
+    try {
+      const p = await call("password", row.dataset.ssid);
+      show.dataset.open = "1"; scramble($(".secret", row), p || "(no password)"); swap(show, "Hide");
+    } catch (err) { setMsg($("#savedMsg"), err.message, true); }
     return;
   }
   const cp = e.target.closest(".copy"); if (!cp || cp.disabled) return;
-  const r = cp.closest(".row");
-  await busy(cp, "Copying…", 1200);
-  setText($(".where", r), "Both adapters");
+  const row = cp.closest(".row");
+  try { await busy(cp, "Copying…", call("copy_profile", row.dataset.ssid, cp.dataset.src, cp.dataset.dst)); }
+  catch (err) { return setMsg($("#savedMsg"), err.message, true); }
+  setText($(".where", row), "Both adapters");
   removeEl(cp);
+  setMsg($("#savedMsg"), `Copied ${row.dataset.ssid} to the ${NAME(cp.dataset.dst)}.`);
 });
 
-// ---------- hold to confirm ----------
+// ================= hold to confirm =================
 document.addEventListener("pointerdown", e => {
-  const b = e.target.closest(".hold"); if (!b) return;
+  const b = e.target.closest(".hold"); if (!b || b.disabled) return;
   b.classList.add("holding");
   b._a = anime.waapi.animate($(".fill", b), {
     clipPath: ["inset(0 100% 0 0)", "inset(0 0% 0 0)"], duration: HOLD_MS, ease: "linear",
-    onComplete: () => {
-      b._a = null; b.classList.remove("holding");
-      removeEl(b.closest(".row"), () => { countPaired(); countSaved(); }); // mockup: real delete comes with the backend
-    },
+    onComplete: () => { b._a = null; b.classList.remove("holding"); confirmHold(b); },
   });
 });
 ["pointerup", "pointerleave", "pointercancel"].forEach(t => document.addEventListener(t, e => {
@@ -829,17 +917,22 @@ document.addEventListener("pointerdown", e => {
   b._a.cancel(); b._a = null; b.classList.remove("holding");
   anime.waapi.animate($(".fill", b), { clipPath: "inset(0 100% 0 0)", duration: 200, ease });
 }, true));
-
-// ---------- speed ----------
-const speedRow = a => $(`#speed tr[data-adapter="${a.dataset.adapter}"]`);
-function showReadouts(a) {
-  $$(".readout .big").forEach((el, i) => setText(el, parseInt(speedRow(a).cells[i + 2].textContent)));
+// the row only goes once the backend confirms; on failure it stays and says why
+async function confirmHold(b) {
+  const row = b.closest(".row"), saved = !!row.closest("#savedList"), msg = saved ? $("#savedMsg") : $("#btMsg");
+  const label = saved ? row.dataset.ssid : $(".title", row).textContent;
+  b.disabled = true;
+  try { await (saved ? call("delete_profile", row.dataset.ssid) : call("bt_remove", row.dataset.id)); }
+  catch (e) {
+    b.disabled = false;
+    anime.waapi.animate($(".fill", b), { clipPath: "inset(0 100% 0 0)", duration: 200, ease });
+    return setMsg(msg, e.message, true);
+  }
+  removeEl(row, () => { countPaired(); countSaved(); });
+  setMsg(msg, saved ? `Deleted ${label}.` : `Removed ${label}.`);
 }
 
 // ================= charts (dataviz rules: thin marks, one axis, values lead in tooltips) =================
-const COLOR = { unigen: "var(--uni)", builtin: "var(--bi)" };
-const NAME = { unigen: "Unigen dongle", builtin: "Built-in MediaTek" };
-const KEYS = ["unigen", "builtin"];
 // smallest "nice" number >= v, for axis tops
 const nice = v => { const p = 10 ** Math.floor(Math.log10(v)); return [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10].map(m => m * p).find(s => s >= v); };
 const pathOf = pts => pts.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join("");
@@ -874,7 +967,7 @@ function crosshair(svg) {
     if (!g) { g = document.createElementNS("http://www.w3.org/2000/svg", "g"); g.setAttribute("class", "hover"); svg.append(g); }
     const x = m.x(i), rows = m.rows(i), box = svg.getBoundingClientRect();
     g.innerHTML = `<line class="cross" x1="${x}" x2="${x}" y1="${m.top}" y2="${m.bottom}"/>`
-      + rows.map(r => `<circle class="end" cx="${x}" cy="${r.y}" r="4" fill="${r.c}"/>`).join("");
+      + rows.filter(r => r.y != null).map(r => `<circle class="end" cx="${x}" cy="${r.y}" r="4" fill="${r.c}"/>`).join("");
     showTip(cx ?? box.left + x, cy ?? box.top + m.top, rows, m.head(i));
   };
   svg.addEventListener("pointermove", e => { if (svg._m) show(svg._m.index(e.clientX - svg.getBoundingClientRect().left), e.clientX, e.clientY); });
@@ -889,39 +982,39 @@ function crosshair(svg) {
 const busyChart = svg => svg.matches(":hover") || document.activeElement === svg;
 
 // ---------- last test: throughput, one series, download then upload ----------
-const BASE = { unigen: [50, 12], builtin: [53, 31] }; // Mbps down / up, from the 12 Oct test
-const TP_N = 40, TP_SPLIT = 28;                       // 28 download samples, 12 upload
-function mockRun(dl, ul) {
-  return Array.from({ length: TP_N }, (_, i) => {
-    const up = i >= TP_SPLIT, k = up ? i - TP_SPLIT : i;
-    const ramp = Math.min(1, (k + 1) / 5);            // TCP ramp-up at the start of each phase
-    return +((up ? ul : dl) * ramp * (0.85 + Math.random() * 0.3)).toFixed(1);
-  });
-}
-const lastRun = { unigen: mockRun(...BASE.unigen), builtin: mockRun(...BASE.builtin) };
-const tpTime = i => (i * 9 / (TP_N - 1)).toFixed(1); // the real test takes about 9 s
-function drawTp(samples, key, { draw } = {}) {
+const TP_N = 40;  // chart capacity: speed.py takes at most 28 download + 12 upload samples
+const tpTime = i => `${(i * 0.2).toFixed(1)} s`; // one sample every 0.2 s
+let live = null;  // the test that is running: {key, samples, split}
+window.onSpeedSample = s => {  // pushed by Python (api.py _push_sample) while a test runs
+  if (!live) return;
+  if (s.phase === "up" && live.split == null) live.split = live.samples.length;
+  live.samples.push(s.v);
+  drawTp(live.samples, live.key, { split: live.split ?? live.samples.length });
+};
+function drawTp(samples, key, { draw, split } = {}) {
   const svg = $("#tp"), W = svg.clientWidth; if (!W) return;
   const H = 220, L = 30, R = 10, T = 8, B = 24;
-  const max = nice(Math.max(...BASE.unigen, ...BASE.builtin) * 1.3); // one scale for both adapters
+  split = Math.min(split ?? samples.length, samples.length);
+  const max = nice(Math.max(40, ...Object.values(RESULTS).flatMap(r => r.samples || []), ...samples) * 1.1); // one scale for both adapters
   const x = i => L + i * (W - L - R) / (TP_N - 1), y = v => T + (1 - v / max) * (H - T - B);
   const pts = samples.map((v, i) => [x(i), y(v)]);
-  const c = COLOR[key], split = (x(TP_SPLIT - 1) + x(TP_SPLIT)) / 2;
+  const c = COLOR(key), splitX = x((samples.length > split ? split : 28) - 0.5);
   let s = [0, max / 2, max].map(v => `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/>
       <text class="tick" x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${v}</text>`).join("");
-  s += `<line class="grid" x1="${split}" x2="${split}" y1="${T}" y2="${H - B}"/>
-    <text class="tick" x="${(L + split) / 2}" y="${H - 6}" text-anchor="middle">Download</text>
-    <text class="tick" x="${(split + W - R) / 2}" y="${H - 6}" text-anchor="middle">Upload</text>`;
+  s += `<line class="grid" x1="${splitX}" x2="${splitX}" y1="${T}" y2="${H - B}"/>
+    <text class="tick" x="${(L + splitX) / 2}" y="${H - 6}" text-anchor="middle">Download</text>
+    <text class="tick" x="${(splitX + W - R) / 2}" y="${H - 6}" text-anchor="middle">Upload</text>`;
+  if (!samples.length && !live) s += `<text class="tick" x="${W / 2}" y="${H / 2}" text-anchor="middle">No test yet. Press Run test.</text>`;
   // download and upload are separate measurements: one segment each, never joined
-  const phases = [pts.slice(0, TP_SPLIT), pts.slice(TP_SPLIT)].filter(p => p.length > 1);
+  const phases = [pts.slice(0, split), pts.slice(split)].filter(p => p.length > 1);
   s += phases.map(p => `<path class="area" fill="${c}" d="${pathOf(p)}L${p[p.length - 1][0]},${y(0)}L${p[0][0]},${y(0)}Z"/>
       <path class="line" stroke="${c}" d="${pathOf(p)}"/>`).join("");
   if (pts.length) { const last = pts[pts.length - 1]; s += `<circle class="end" cx="${last[0]}" cy="${last[1]}" r="4" fill="${c}"/>`; }
   svg.setAttribute("viewBox", `0 0 ${W} ${H}`); svg.style.height = `${H}px`;
   svg.innerHTML = s;
   svg._m = { n: samples.length, x, top: T, bottom: H - B, index: px => Math.round((px - L) / ((W - L - R) / (TP_N - 1))),
-    rows: i => [{ c, v: `${samples[i]} Mbps`, n: i < TP_SPLIT ? "Download" : "Upload", y: y(samples[i]) }],
-    head: i => `${NAME[key]}, ${tpTime(i)} s` };
+    rows: i => [{ c, v: `${samples[i]} Mbps`, n: i < split ? "Download" : "Upload", y: y(samples[i]) }],
+    head: i => `${NAME(key)}, ${tpTime(i)}` };
   if (draw && !reduce && phases.length) { // the curve draws itself on, download then upload
     $$(".line", svg).forEach((l, i) => anime.animate(anime.createDrawable(l), { draw: ["0 0", "0 1"], duration: 400, delay: i * 300, ease }));
     anime.animate($$(".area, .end", svg), { opacity: [0, 1], duration: 300, delay: 300, ease });
@@ -930,21 +1023,24 @@ function drawTp(samples, key, { draw } = {}) {
 
 // ---------- both adapters: small multiples, each metric on its own scale ----------
 const METRICS = [
-  { col: 3, name: "Download", unit: "Mbps" },
-  { col: 4, name: "Upload", unit: "Mbps" },
-  { col: 1, name: "Link rate", unit: "Mbps" },
-  { col: 2, name: "Ping", unit: "ms", note: "lower is better" },
+  { k: "down", name: "Download", unit: "Mbps" },
+  { k: "up", name: "Upload", unit: "Mbps" },
+  { k: "link", name: "Link rate", unit: "Mbps" },
+  { k: "ping", name: "Ping", unit: "ms", note: "lower is better" },
 ];
-const resultOf = (key, col) => parseInt($(`#speed tr[data-adapter="${key}"]`).cells[col].textContent);
 let barsShown = false;
 function drawBars() {
+  const keys = INFO ? INFO.adapters.map(a => a.key) : [];
   const old = new Map($$("#bars .brow").map(r => [r.dataset.id, $(".bar", r).style.width]));
   $("#bars").innerHTML = METRICS.map(m => {
-    const vals = KEYS.map(k => resultOf(k, m.col)), max = Math.max(...vals) * 1.35; // headroom for the tip label
-    return `<div class="metric"><div class="mname">${m.name}${m.note ? `, ${m.note}` : ""}</div>${KEYS.map((k, i) =>
-      `<div class="brow" data-id="${k}-${m.col}" data-k="${k}" data-m="${m.name}" data-v="${vals[i]} ${m.unit}">
-        <span class="track"><span class="bar" style="background:${COLOR[k]};width:${(vals[i] / max * 100).toFixed(1)}%"></span>
-        <span class="v">${vals[i]} ${m.unit}</span></span></div>`).join("")}</div>`;
+    const vals = keys.map(k => (RESULTS[k] || {})[m.k]);
+    const max = Math.max(1, ...vals.filter(v => typeof v === "number")) * 1.35; // headroom for the tip label
+    return `<div class="metric"><div class="mname">${m.name}${m.note ? `, ${m.note}` : ""}</div>${keys.map((k, i) => {
+      const v = vals[i], text = typeof v === "number" ? `${v} ${m.unit}` : "No test yet";
+      return `<div class="brow" data-id="${esc(k)}-${m.k}" data-k="${esc(k)}" data-m="${m.name}" data-v="${esc(text)}">
+        <span class="track"><span class="bar" style="background:${COLOR(k)};width:${typeof v === "number" ? (v / max * 100).toFixed(1) : 0}%"></span>
+        <span class="v">${esc(text)}</span></span></div>`;
+    }).join("")}</div>`;
   }).join("");
   if (reduce) return;
   $$("#bars .brow").forEach((r, i) => {
@@ -956,48 +1052,54 @@ function drawBars() {
 }
 $("#bars").addEventListener("pointermove", e => {
   const r = e.target.closest(".brow"); if (!r) return hideTip();
-  showTip(e.clientX, e.clientY, [{ c: COLOR[r.dataset.k], v: r.dataset.v, n: NAME[r.dataset.k] }], r.dataset.m);
+  showTip(e.clientX, e.clientY, [{ c: COLOR(r.dataset.k), v: r.dataset.v, n: NAME(r.dataset.k) }], r.dataset.m);
 });
 $("#bars").addEventListener("pointerleave", hideTip);
 
-// ---------- signal strength: two adapters, a reading every 2 s ----------
-const SIG_N = 60, SIG_BASE = { unigen: 97, builtin: 80 }; // % from the 12 Oct readings
-const nextSig = (arr, base) => Math.max(50, Math.min(100, Math.round(arr[arr.length - 1] + Math.random() * 4 - 2 + (base - arr[arr.length - 1]) * 0.2)));
-const sig = {};
-KEYS.forEach(k => { sig[k] = [SIG_BASE[k]]; while (sig[k].length < SIG_N) sig[k].push(nextSig(sig[k], SIG_BASE[k])); });
+function renderResults() {
+  $("#results").innerHTML = (INFO ? INFO.adapters : []).map(a => {
+    const r = RESULTS[a.key];
+    const cells = r ? [`${r.link ?? "–"} Mbps`, `${r.ping} ms`, `${r.down} Mbps`, `${r.up} Mbps`] : ["–", "–", "–", "–"];
+    return `<tr data-adapter="${esc(a.key)}"><td>${esc(a.name)}</td>${cells.map(c => `<td class="num">${esc(c)}</td>`).join("")}</tr>`;
+  }).join("");
+  const at = Object.values(RESULTS).map(r => r.at).sort().pop();
+  $("#measured").textContent = at ? `measured ${at}` : "no tests yet";
+}
+function showReadouts() {
+  const r = RESULTS[activeKey()];
+  $$(".readout .big").forEach((el, i) => setText(el, r ? [r.ping, r.down, r.up][i] : "–"));
+}
+
+// ---------- signal strength: every adapter, a reading every 2 s ----------
 function drawSig(extra) {
-  const svg = $("#sig"), W = svg.clientWidth; if (!W) return;
+  const svg = $("#sig"), W = svg.clientWidth; if (!W || !INFO) return;
+  const keys = INFO.adapters.map(a => a.key);
   // 50-100%: a line chart may start above zero, and this is where signal lives
   const H = 150, L = 36, R = 96, T = 8, B = 22, step = (W - L - R) / (SIG_N - 1);
-  const x = i => L + i * step, y = v => T + (1 - (v - 50) / 50) * (H - T - B);
-  const n = sig.unigen.length; // SIG_N, or SIG_N + 1 while a new reading slides in
+  const n = Math.max(1, ...keys.map(k => (sig[k] || []).length));
+  const off = (extra ? SIG_N + 1 : SIG_N) - n;  // newest reading lands on the right edge (one step beyond while sliding in)
+  const x = i => L + (i + off) * step, y = v => T + (1 - (Math.max(50, v) - 50) / 50) * (H - T - B);
+  const line = vals => { let d = "", pen = false; vals.forEach((v, i) => { if (v == null) { pen = false; return; } d += `${pen ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`; pen = true; }); return d; };
   let s = `<defs><clipPath id="sigclip"><rect x="${L}" y="0" width="${W - L - R}" height="${H}"/></clipPath></defs>`;
   s += [50, 75, 100].map(v => `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/>
     <text class="tick" x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${v}%</text>`).join("");
   s += `<text class="tick" x="${L}" y="${H - 4}">2 min ago</text><text class="tick" x="${W - R}" y="${H - 4}" text-anchor="end">now</text>`;
-  s += `<g clip-path="url(#sigclip)"><g class="shift">${KEYS.map(k =>
-    `<path class="line" stroke="${COLOR[k]}" d="${pathOf(sig[k].map((v, i) => [x(i), y(v)]))}"/>`).join("")}</g></g>`;
+  s += `<g clip-path="url(#sigclip)"><g class="shift">${keys.map(k => `<path class="line" stroke="${COLOR(k)}" d="${line(sig[k] || [])}"/>`).join("")}</g></g>`;
   // end dots + labels at the newest reading; labels drop to the legend if they would collide
-  const ends = KEYS.map(k => ({ k, v: sig[k][n - 1], yy: y(sig[k][n - 1]) }));
-  const apart = Math.abs(ends[0].yy - ends[1].yy) >= 14;
-  s += ends.map(e => `<circle class="end" cx="${x(SIG_N - 1)}" cy="${e.yy}" r="4" fill="${COLOR[e.k]}"/>`
-    + (apart ? `<text class="lab" x="${x(SIG_N - 1) + 10}" y="${e.yy + 4}">${e.k === "unigen" ? "Unigen" : "Built-in"} ${e.v}%</text>` : "")).join("");
+  const xEnd = L + (SIG_N - 1) * step;
+  const ends = keys.map(k => { const a = sig[k] || []; return { k, v: a[a.length - 1] }; }).filter(e => e.v != null).map(e => ({ ...e, yy: y(e.v) }));
+  const apart = ends.length < 2 || Math.abs(ends[0].yy - ends[1].yy) >= 14;
+  s += ends.map(e => `<circle class="end" cx="${xEnd}" cy="${e.yy}" r="4" fill="${COLOR(e.k)}"/>`
+    + (apart ? `<text class="lab" x="${xEnd + 10}" y="${e.yy + 4}">${esc(SHORT(e.k))} ${e.v}%</text>` : "")).join("");
   svg.setAttribute("viewBox", `0 0 ${W} ${H}`); svg.style.height = `${H}px`;
   svg.innerHTML = s;
-  svg._m = { n: SIG_N, x, top: T, bottom: H - B, index: px => Math.round((px - L) / step),
-    rows: i => KEYS.map(k => ({ c: COLOR[k], v: `${sig[k][i + n - SIG_N]}%`, n: NAME[k], y: y(sig[k][i + n - SIG_N]) })),
+  svg._m = { n: SIG_N, x: i => L + i * step, top: T, bottom: H - B, index: px => Math.round((px - L) / step),
+    rows: i => keys.map(k => { const a = sig[k] || [], v = a[a.length - SIG_N + i]; return { c: COLOR(k), v: v === undefined ? "No reading yet" : v === null ? "Not connected" : `${v}%`, n: NAME(k), y: v == null ? null : y(v) }; }),
     head: i => i === SIG_N - 1 ? "Now" : `${(SIG_N - 1 - i) * 2} s ago` };
   if (extra && !reduce) { // slide the lines left by one step, then settle
-    anime.animate($(".shift", svg), { x: [0, -step], duration: 400, ease: "linear",
-      onComplete: () => { KEYS.forEach(k => sig[k].shift()); drawSig(); } });
+    anime.animate($(".shift", svg), { x: [0, -step], duration: 400, ease: "linear", onComplete: () => { trimSig(); drawSig(); } });
   }
 }
-setInterval(() => {
-  KEYS.forEach(k => sig[k].push(nextSig(sig[k], SIG_BASE[k])));
-  const svg = $("#sig");
-  if ($("#speed").hidden || busyChart(svg) || reduce) { KEYS.forEach(k => sig[k].shift()); if (!$("#speed").hidden && !busyChart(svg)) drawSig(); return; }
-  drawSig(true);
-}, 2000);
 
 // table views: built when opened, from the same data the charts draw
 $$("details.tv").forEach(d => d.addEventListener("toggle", () => {
@@ -1005,43 +1107,43 @@ $$("details.tv").forEach(d => d.addEventListener("toggle", () => {
   const t = document.createElement("table");
   const row = (cells, tag = "td") => { const tr = t.insertRow(); cells.forEach(c => { const el = document.createElement(tag); el.textContent = c; tr.append(el); }); };
   if (d.dataset.table === "tp") {
-    const key = activeAdapter().dataset.adapter;
+    const r = RESULTS[activeKey()];
     row(["Time", "Phase", "Mbps"], "th");
-    lastRun[key].forEach((v, i) => row([`${tpTime(i)} s`, i < TP_SPLIT ? "Download" : "Upload", v]));
+    if (r) r.samples.forEach((v, i) => row([tpTime(i), i < r.split ? "Download" : "Upload", v]));
   } else {
-    row(["Time", NAME.unigen, NAME.builtin], "th");
-    const n = sig.unigen.length;
-    for (let i = n - 1; i >= n - SIG_N; i--) row([i === n - 1 ? "Now" : `${(n - 1 - i) * 2} s ago`, `${sig.unigen[i]}%`, `${sig.builtin[i]}%`]);
+    const keys = INFO ? INFO.adapters.map(a => a.key) : [];
+    row(["Time", ...keys.map(NAME)], "th");
+    for (let i = SIG_N - 1; i >= 0; i--) row([i === SIG_N - 1 ? "Now" : `${(SIG_N - 1 - i) * 2} s ago`,
+      ...keys.map(k => { const a = sig[k] || [], v = a[a.length - SIG_N + i]; return v == null ? "–" : `${v}%`; })]);
   }
   d.append(t);
 }));
 
 function drawSpeed() {
-  const key = activeAdapter().dataset.adapter;
-  drawTp(lastRun[key], key); drawBars(); drawSig();
+  const key = activeKey(), r = RESULTS[key];
+  drawTp(r ? r.samples : [], key, { split: r && r.split }); drawBars(); drawSig();
 }
 crosshair($("#tp")); crosshair($("#sig"));
 
 $("#runTest").addEventListener("click", async function () {
-  const a = activeAdapter(), key = a.dataset.adapter, tr = speedRow(a);
-  const run = mockRun(...BASE[key].map(v => v * (0.9 + Math.random() * 0.2)));
-  const live = [];
+  const key = activeKey(); if (!key) return;
+  live = { key, samples: [], split: null };
   // the old curve steps back, then the new one is drawn as samples arrive
   anime.animate($$("#tp .line, #tp .area, #tp .end"), { opacity: 0, duration: 150, ease });
-  const timer = setInterval(() => {
-    live.push(run[live.length]); drawTp(live, key);
-    if (live.length === TP_N) clearInterval(timer);
-  }, 2900 / TP_N);
-  await busy(this, "Testing…", 3000, { prog: $("#spProg") });
-  lastRun[key] = run;
-  const avg = (a, b) => Math.round(run.slice(a, b).reduce((s, v) => s + v, 0) / (b - a)); // skip ramp-up
-  const vals = [Math.max(1, Math.round(2 * (0.8 + Math.random() * 0.6))), avg(5, TP_SPLIT), avg(TP_SPLIT + 5, TP_N)];
-  vals.forEach((v, i) => setText(tr.cells[i + 2], `${v} ${i ? "Mbps" : "ms"}`));
-  showReadouts(a); drawBars();
-  setText($("#measured"), "measured just now");
+  try {
+    RESULTS[key] = await busy(this, "Testing…", call("speed_test", key), { prog: $("#spProg") });
+    live = null;
+    renderResults(); showReadouts(); drawBars();
+    drawTp(RESULTS[key].samples, key, { split: RESULTS[key].split });
+  } catch (e) {
+    live = null;
+    setMsg($("#speedMsg"), e.message, true);
+    const r = RESULTS[key];
+    drawTp(r ? r.samples : [], key, { split: r && r.split });
+  }
 });
 
-// ---------- navigation + adapters ----------
+// ================= navigation =================
 // Wi-Fi tab: Nearby | Saved. Content swaps instantly; only the highlight slides.
 function view(name, instant) {
   $("#vNearby").hidden = name !== "nearby";
@@ -1049,6 +1151,7 @@ function view(name, instant) {
   $$(".tabs button").forEach(b => b.setAttribute("aria-selected", b.dataset.view === name));
   slide($(".tab-ind"), $(`.tabs button[data-view="${name}"]`), instant);
   if (name === "nearby") { drawMaps(); highlight(selected); markSel(true); } // hidden elements measure 0
+  if (name === "saved" && INFO) loadSaved();
 }
 $$(".tabs button").forEach(b => b.addEventListener("click", () => view(b.dataset.view)));
 const nearbyShown = () => !$("#wifi").hidden && !$("#vNearby").hidden;
@@ -1058,6 +1161,7 @@ function go(id, instant) {
   $$("nav button").forEach(b => b.dataset.go === id ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current"));
   slide($(".nav-ind"), $(`nav button[data-go="${id}"]`), instant);
   if (id === "wifi") { slide($(".tab-ind"), $(".tabs button[aria-selected='true']"), true); if (nearbyShown()) view("nearby", true); }
+  if (id === "bt" && INFO) loadBt();
   if (id === "speed") drawSpeed();
   hideTip();
 }
@@ -1067,27 +1171,36 @@ document.addEventListener("keydown", e => {
   if (e.ctrlKey && e.key >= "1" && e.key <= "3") { e.preventDefault(); go(ids[e.key - 1], true); } // keyboard: no motion
   if (e.key === "Enter" && nearbyShown() && !pw.open && !e.target.closest("button")) $("#connect").click();
 });
-$$(".adapter").forEach(a => a.addEventListener("click", () => {
-  $$(".adapter").forEach(x => x.setAttribute("aria-pressed", x === a));
-  slide($(".ad-ind"), a);
-  setText($("#speed h1"), `Speed on ${$(".name", a).textContent}`);
-  setText($("#tpSub"), `${$(".name", a).textContent}, Mbps`);
-  showReadouts(a);
-  if (!$("#speed").hidden) drawTp(lastRun[a.dataset.adapter], a.dataset.adapter, { draw: true });
-}));
 addEventListener("resize", () => {
-  drawMaps(); highlight(selected); markSel(true);
+  if (nearbyShown()) { drawMaps(); highlight(selected); markSel(true); }
   if (!$("#speed").hidden) drawSpeed();
   slide($(".ad-ind"), activeAdapter(), true);
   slide($(".nav-ind"), $("nav button[aria-current]"), true);
   if (!$("#wifi").hidden) slide($(".tab-ind"), $(".tabs button[aria-selected='true']"), true);
 });
 
-drawMaps(); drawNets(); highlight(selected);
-slide($(".ad-ind"), activeAdapter(), true);
+// ================= start =================
 const hash = location.hash.slice(1);
 go(["wifi", "bt", "speed"].includes(hash) ? hash : "wifi", true);
 if (hash === "saved") view("saved", true); // old link: Saved now lives inside Wi-Fi
+setTimeout(() => { if (!INFO && !MOCK) setMsg($("#wifiMsg"), "Waiting for the app. To preview in a browser, open index.html?mock.", true); }, 3000);
+(async function start() {
+  try { INFO = await call("app_info"); }
+  catch (e) { return setMsg($("#wifiMsg"), e.message, true); }
+  if (!INFO.adapters.length) return setMsg($("#wifiMsg"), "No Wi-Fi adapters found. Plug in the Unigen dongle.", true);
+  renderRail();
+  RESULTS = await call("speed_results").catch(() => ({}));
+  renderResults(); showReadouts();
+  setText($("#speed h1"), `Speed on ${NAME(activeKey())}`);
+  setText($("#tpSub"), `${NAME(activeKey())}, Mbps`);
+  await poll();
+  await loadNetworks(false).catch(e => setMsg($("#wifiMsg"), e.message, true));
+  loadSaved(); loadBt();
+  if (!$("#speed").hidden) drawSpeed();
+  setInterval(poll, 2000);
+  setInterval(tickAge, 1000);
+  setInterval(() => { if (nearbyShown() && !pw.open) loadNetworks(false).catch(e => setMsg($("#wifiMsg"), e.message, true)); }, 10000);
+})();
 </script>
 </body>
 </html>
