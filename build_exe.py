@@ -7,6 +7,7 @@ import subprocess, sys
 from pathlib import Path
 
 import tray
+from version import VERSION
 
 ROOT = Path(__file__).resolve().parent
 BUILD, DIST = ROOT / "build", ROOT / "dist"
@@ -34,7 +35,7 @@ def main():
         str(ROOT / "UnigenManager.pyw"),
     ], check=True)
     exe = DIST / "UnigenManager.exe"
-    print(f"\nBuilt {exe} ({exe.stat().st_size / 1e6:.1f} MB)")
+    print(f"\nBuilt {exe} ({exe.stat().st_size / 1e6:.1f} MB), version {VERSION}: release it as v{VERSION}")
 
 
 if __name__ == "__main__":
