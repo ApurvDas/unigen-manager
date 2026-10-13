@@ -81,3 +81,167 @@ def test_enable_disable_pass_id_as_param(monkeypatch):
     hw.disable(MT_WIFI)
     assert [p for _, p in seen] == [{"action": "enable", "id": UNI_WIFI}, {"action": "disable", "id": MT_WIFI}]
     assert all(UNI_WIFI not in s and MT_WIFI not in s for s, _ in seen)
+
+
+# ---- hw.use ----
+import itertools, threading
+
+import bt, wifi
+
+BUILTIN_IF = {"name": "Wi-Fi", "description": "MediaTek Wi-Fi 6 MT7921 Wireless LAN Card", "state": "connected",
+              "ssid": "HOME-5G", "profile": "HOME-5G"}
+DONGLE_IF = {"name": "Wi-Fi 2", "description": "AIC8800D80 USB WiFi", "state": "disconnected"}
+
+
+def dev(i, ok=True):
+    return {"id": i, "ok": ok, "disabled": not ok}
+
+
+class World:
+    """Fake PC: the dongle is plugged in, its devices are off, the built-in adapter is on and joined to HOME-5G."""
+
+    def __init__(self, monkeypatch, tmp_path, *, appear=True, connected=True, dongle_profile=False):
+        self.calls, self.steps, self.appear = [], [], appear
+        self.path = tmp_path / "settings.json"
+        self.state = {"unigen": {"wifi": False, "bt": False}, "builtin": {"wifi": True, "bt": True}}
+        self.ids = {"unigen": {"wifi": UNI_WIFI, "bt": UNI_BT}, "builtin": {"wifi": MT_WIFI, "bt": MT_BT}}
+        self.ifaces = [dict(BUILTIN_IF, state="connected" if connected else "disconnected")]
+        self.fail_connect = self.fail_bt = self.fail_disable_old = False
+        mp = monkeypatch
+        mp.setattr(hw, "devices", self.devices)
+        mp.setattr(hw, "enable", self.enable)
+        mp.setattr(hw, "disable", self.disable)
+        mp.setattr(wifi, "interfaces", lambda: [dict(i) for i in self.ifaces])
+        mp.setattr(wifi, "profiles", lambda: {"Wi-Fi": ["HOME-5G"], "Wi-Fi 2": ["HOME-5G"] if dongle_profile else []})
+        mp.setattr(wifi, "copy_profile", lambda *a: self.calls.append(("copy",) + a))
+        mp.setattr(wifi, "connect", self.connect)
+        mp.setattr(bt, "switch", self.bt_switch)
+
+    def devices(self):
+        return {k: {"present": True, **{kind: dev(self.ids[k][kind], on) for kind, on in v.items()}}
+                for k, v in self.state.items()}
+
+    def _which(self, dev_id):
+        return next((k, kind) for k, v in self.ids.items() for kind, i in v.items() if i == dev_id)
+
+    def enable(self, dev_id):
+        self.calls.append(("enable", dev_id))
+        k, kind = self._which(dev_id)
+        self.state[k][kind] = True
+        if (k, kind) == ("unigen", "wifi") and self.appear and not any(i["name"] == "Wi-Fi 2" for i in self.ifaces):
+            self.ifaces.append(dict(DONGLE_IF))
+
+    def disable(self, dev_id):
+        self.calls.append(("disable", dev_id))
+        k, kind = self._which(dev_id)
+        if self.fail_disable_old and k == "builtin":
+            raise winrun.CmdError("Access denied")
+        self.state[k][kind] = False
+        if (k, kind) == ("unigen", "wifi"):
+            self.ifaces = [i for i in self.ifaces if i["name"] != "Wi-Fi 2"]
+
+    def connect(self, iface, ssid, **kw):
+        self.calls.append(("connect", iface, ssid))
+        if self.fail_connect:
+            raise wifi.WifiError(f"Couldn't connect to {ssid}.")
+
+    def bt_switch(self, key):
+        self.calls.append(("bt.switch", key))
+        if self.fail_bt:
+            raise bt.BtError("The Unigen dongle radio didn't start.")
+
+    def use(self, target="unigen"):
+        return hw.use(target, on_step=self.steps.append, path=self.path, clock=itertools.count().__next__, sleep=lambda s: None)
+
+
+@pytest.fixture
+def world(monkeypatch, tmp_path):
+    return World(monkeypatch, tmp_path)
+
+
+def test_use_full_switch_order(world):
+    assert world.use() == "unigen"
+    assert world.calls == [("enable", UNI_WIFI), ("copy", "HOME-5G", "Wi-Fi", "Wi-Fi 2"), ("connect", "Wi-Fi 2", "HOME-5G"),
+                           ("bt.switch", "unigen"), ("disable", MT_WIFI)]
+    assert hw.load_choice(world.path) == "unigen"
+    assert world.steps == ["Turning on the Unigen dongle…", "Connecting to HOME-5G…", "Moving Bluetooth…",
+                           "Turning off the Built-in MediaTek…", "Done. Using the Unigen dongle."]
+
+
+def test_use_skips_copy_when_dongle_already_has_the_profile(monkeypatch, tmp_path):
+    w = World(monkeypatch, tmp_path, dongle_profile=True)
+    w.use()
+    assert not any(c[0] == "copy" for c in w.calls) and ("connect", "Wi-Fi 2", "HOME-5G") in w.calls
+
+
+def test_use_without_network_skips_connect(monkeypatch, tmp_path):
+    w = World(monkeypatch, tmp_path, connected=False)
+    w.use()
+    assert [c[0] for c in w.calls] == ["enable", "bt.switch", "disable"] and w.calls[-1] == ("disable", MT_WIFI)
+    assert hw.load_choice(w.path) == "unigen"
+
+
+def test_use_target_wifi_never_appears_restarts_once_then_rolls_back(monkeypatch, tmp_path):
+    w = World(monkeypatch, tmp_path, appear=False)
+    hw.save_choice(w.path, "builtin")
+    with pytest.raises(hw.HwError) as e:
+        w.use()
+    assert w.calls == [("enable", UNI_WIFI), ("disable", UNI_WIFI), ("enable", UNI_WIFI), ("disable", UNI_WIFI)]
+    assert str(e.value) == "The Unigen dongle's Wi-Fi didn't start. You're still on the Built-in MediaTek."
+    assert hw.load_choice(w.path) == "builtin"
+
+
+def test_use_connect_fails_rolls_back(world):
+    world.fail_connect = True
+    hw.save_choice(world.path, "builtin")
+    with pytest.raises(hw.HwError, match="You're still on the Built-in MediaTek"):
+        world.use()
+    assert world.calls[-1] == ("disable", UNI_WIFI) and ("bt.switch", "unigen") not in world.calls
+    assert ("disable", MT_WIFI) not in world.calls and hw.load_choice(world.path) == "builtin"
+
+
+def test_use_bt_fails_rolls_back_wifi(world):
+    world.fail_bt = True
+    hw.save_choice(world.path, "builtin")
+    with pytest.raises(hw.HwError, match="You're still on the Built-in MediaTek"):
+        world.use()
+    assert world.calls[-1] == ("disable", UNI_WIFI) and ("disable", MT_WIFI) not in world.calls
+    assert hw.load_choice(world.path) == "builtin"
+
+
+def test_use_enable_refused_is_a_plain_sentence(world, monkeypatch):
+    def refuse(i): raise winrun.CmdError("Enable-PnpDevice : Access is denied")
+    monkeypatch.setattr(hw, "enable", refuse)
+    with pytest.raises(hw.HwError) as e:
+        world.use()
+    assert str(e.value) == "Couldn't turn on the Unigen dongle. You're still on the Built-in MediaTek."
+
+
+def test_use_already_in_use_only_saves_choice(world):
+    world.state = {"unigen": {"wifi": True, "bt": True}, "builtin": {"wifi": False, "bt": False}}
+    assert world.use() == "unigen"
+    assert world.calls == [] and hw.load_choice(world.path) == "unigen"
+    assert world.steps == ["Done. Using the Unigen dongle."]
+
+
+def test_use_old_wifi_disable_fails_still_succeeds(world):
+    world.fail_disable_old = True
+    assert world.use() == "unigen"
+    assert hw.load_choice(world.path) == "unigen"
+    assert world.steps[-1] == "Done. Using the Unigen dongle. The Built-in MediaTek couldn't be turned off; Windows may still use it."
+
+
+def test_use_target_not_plugged_in(world):
+    del world.state["unigen"]
+    with pytest.raises(hw.HwError, match="The Unigen dongle isn't plugged in."):
+        world.use()
+    assert world.calls == []
+
+
+def test_second_concurrent_use_refused(world):
+    assert hw._lock.acquire(blocking=False)
+    try:
+        with pytest.raises(hw.HwError, match="A switch is already running."):
+            world.use()
+    finally:
+        hw._lock.release()

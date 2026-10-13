@@ -66,3 +66,101 @@ def save_choice(path, key):
         data = {}
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({**data, "use": key}), encoding="utf-8")
+
+
+# ---- the switch ----
+_lock = threading.Lock()
+_FAIL = (wifi.WifiError, wifi.ParseError, bt.BtError, winrun.CmdError)
+
+
+def _name(k):
+    return wifi.ADAPTER_NAMES.get(k, k)
+
+
+def _iface(key):
+    return next((i for i in wifi.interfaces() if wifi.adapter_key(i["description"]) == key), None)
+
+
+def _wait_iface(key, wait, clock, sleep):
+    deadline = clock() + wait
+    while clock() < deadline:
+        i = _iface(key)
+        if i:
+            return i
+        sleep(1)
+    return None
+
+
+def use(target, *, on_step=lambda text: None, path, wait=20.0, clock=time.monotonic, sleep=time.sleep):
+    """Make `target` the adapter in use: Wi-Fi and Bluetooth together. Any failure leaves the old adapter working."""
+    if not _lock.acquire(blocking=False):
+        raise HwError("A switch is already running.")
+    try:
+        return _use(target, on_step, path, wait, clock, sleep)
+    finally:
+        _lock.release()
+
+
+def _use(target, on_step, path, wait, clock, sleep):
+    devs = devices()
+    if target not in devs:
+        raise HwError(f"The {_name(target)} isn't plugged in.")
+    old = next((k for k in devs if k != target), None)
+    t, o = devs[target], devs.get(old) or {}
+    back = f" You're still on the {_name(old)}." if old else ""
+    if not t["wifi"]:
+        raise HwError(f"The {_name(target)} has no Wi-Fi device to turn on.{back}")
+    if t["wifi"]["ok"] and not (o.get("wifi") and o["wifi"]["ok"]):  # already in use
+        save_choice(path, target)
+        on_step(f"Done. Using the {_name(target)}.")
+        return target
+    old_iface = _iface(old) if old else None
+    on_step(f"Turning on the {_name(target)}…")
+    try:
+        enable(t["wifi"]["id"])
+        if not _wait_iface(target, wait, clock, sleep):
+            disable(t["wifi"]["id"])  # restart once: clears a half-started driver
+            enable(t["wifi"]["id"])
+            if not _wait_iface(target, wait, clock, sleep):
+                _undo(t)
+                raise HwError(f"The {_name(target)}'s Wi-Fi didn't start.{back}")
+    except _FAIL as e:
+        log.warning("turning on %s failed: %s", target, e)
+        _undo(t)
+        raise HwError(f"Couldn't turn on the {_name(target)}.{back}") from None
+    try:
+        ssid = old_iface.get("ssid") if old_iface and old_iface.get("state") == "connected" else None
+        if ssid:
+            on_step(f"Connecting to {ssid}…")
+            ti = _iface(target)
+            names = wifi.profiles().get(ti["name"], [])
+            if ssid not in names and wifi.profile_name(ssid) not in names:
+                wifi.copy_profile(old_iface.get("profile") or ssid, old_iface["name"], ti["name"])
+            wifi.connect(ti["name"], ssid, saved=True)
+        if t["bt"] and o.get("bt"):
+            on_step("Moving Bluetooth…")
+            bt.switch(target)
+    except _FAIL as e:
+        log.warning("switch to %s failed: %s", target, e)
+        _undo(t)
+        raise HwError(f"Couldn't finish switching to the {_name(target)}.{back}") from None
+    warn = ""
+    if o.get("wifi"):
+        on_step(f"Turning off the {_name(old)}…")
+        try:
+            disable(o["wifi"]["id"])
+        except winrun.CmdError as e:
+            log.warning("turning off %s failed: %s", old, e)
+            warn = f" The {_name(old)} couldn't be turned off; Windows may still use it."
+    save_choice(path, target)
+    on_step(f"Done. Using the {_name(target)}.{warn}")
+    return target
+
+
+def _undo(t):
+    """Best effort: turn the target's Wi-Fi back off if it was off, so the old adapter is exactly as it was."""
+    if t["wifi"]["disabled"]:
+        try:
+            disable(t["wifi"]["id"])
+        except winrun.CmdError:
+            pass
