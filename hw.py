@@ -117,10 +117,10 @@ def _use(target, on_step, path, wait, clock, sleep):
     old_iface = _iface(old) if old else None
     on_step(f"Turning on the {_name(target)}…")
     try:
-        enable(t["wifi"]["id"])
+        _settled(enable, t["wifi"]["id"], sleep)
         if not _wait_iface(target, wait, clock, sleep):
-            disable(t["wifi"]["id"])  # restart once: clears a half-started driver
-            enable(t["wifi"]["id"])
+            _settled(disable, t["wifi"]["id"], sleep)  # restart once: clears a half-started driver
+            _settled(enable, t["wifi"]["id"], sleep)
             if not _wait_iface(target, wait, clock, sleep):
                 _undo(t)
                 raise HwError(f"The {_name(target)}'s Wi-Fi didn't start.{back}")
@@ -136,6 +136,7 @@ def _use(target, on_step, path, wait, clock, sleep):
             names = wifi.profiles().get(ti["name"], [])
             if ssid not in names and wifi.profile_name(ssid) not in names:
                 wifi.copy_profile(old_iface.get("profile") or ssid, old_iface["name"], ti["name"])
+            _wait_visible(ti, ssid, wait, clock, sleep)
             wifi.connect(ti["name"], ssid, saved=True)
         if t["bt"] and o.get("bt"):
             on_step("Moving Bluetooth…")
@@ -155,6 +156,31 @@ def _use(target, on_step, path, wait, clock, sleep):
     save_choice(path, target)
     on_step(f"Done. Using the {_name(target)}.{warn}")
     return target
+
+
+def _settled(action, dev_id, sleep, tries=3):
+    """Windows briefly refuses PnP changes while a device is still settling ("not in the correct state")."""
+    for n in range(tries):
+        try:
+            return action(dev_id)
+        except winrun.CmdError:
+            if n == tries - 1:
+                raise
+            sleep(2)
+
+
+def _wait_visible(iface, ssid, wait, clock, sleep):
+    """A freshly enabled adapter hasn't scanned yet, and netsh can't connect to a network it hasn't seen."""
+    deadline = clock() + wait
+    while clock() < deadline:
+        if any(n["ssid"] == ssid for n in wifi.networks(iface["name"])):
+            return
+        if iface.get("guid"):
+            try:
+                wifi.trigger_scan(iface["guid"])
+            except wifi.WifiError:
+                pass  # Windows scans on its own too; connect still gets its chance after the wait
+        sleep(2)
 
 
 def _undo(t):

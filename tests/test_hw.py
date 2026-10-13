@@ -90,7 +90,7 @@ import bt, wifi
 
 BUILTIN_IF = {"name": "Wi-Fi", "description": "MediaTek Wi-Fi 6 MT7921 Wireless LAN Card", "state": "connected",
               "ssid": "HOME-5G", "profile": "HOME-5G"}
-DONGLE_IF = {"name": "Wi-Fi 2", "description": "AIC8800D80 USB WiFi", "state": "disconnected"}
+DONGLE_IF = {"name": "Wi-Fi 2", "description": "AIC8800D80 USB WiFi", "state": "disconnected", "guid": "00000000-0000-0000-0000-000000000002"}
 
 
 def dev(i, ok=True):
@@ -107,7 +107,11 @@ class World:
         self.ids = {"unigen": {"wifi": UNI_WIFI, "bt": UNI_BT}, "builtin": {"wifi": MT_WIFI, "bt": MT_BT}}
         self.ifaces = [dict(BUILTIN_IF, state="connected" if connected else "disconnected")]
         self.fail_connect = self.fail_bt = self.fail_disable_old = False
+        self.scans, self.visible_after = 0, 0  # the dongle sees HOME-5G only after this many scans
         mp = monkeypatch
+        mp.setattr(wifi, "trigger_scan", lambda guid: setattr(self, "scans", self.scans + 1))
+        mp.setattr(wifi, "networks", lambda iface: [{"ssid": "HOME-5G", "auth": "WPA2-Personal", "aps": []}]
+                   if iface != "Wi-Fi 2" or self.scans >= self.visible_after else [])
         mp.setattr(hw, "devices", self.devices)
         mp.setattr(hw, "enable", self.enable)
         mp.setattr(hw, "disable", self.disable)
@@ -142,6 +146,8 @@ class World:
 
     def connect(self, iface, ssid, **kw):
         self.calls.append(("connect", iface, ssid))
+        if iface == "Wi-Fi 2" and self.scans < self.visible_after:
+            raise wifi.WifiError(f'The network specified by profile "{ssid}" is not available to connect.')
         if self.fail_connect:
             raise wifi.WifiError(f"Couldn't connect to {ssid}.")
 
@@ -408,3 +414,20 @@ def test_ps1_instance_id_pattern_is_a_valid_regex():
     import re
     pat = re.search(r"-match '([^']*)'", hw._SCRIPT.read_text(encoding="utf-8")).group(1)
     assert re.compile(pat).match(r"USB\VID_1&PID_2") and re.compile(pat).match(r"PCI\VEN_1")
+
+
+def test_use_waits_until_the_new_adapter_sees_the_network(world):
+    world.visible_after = 3  # a freshly enabled adapter hasn't scanned yet: connecting at once fails
+    assert world.use() == "unigen"
+    assert world.scans >= 3 and ("connect", "Wi-Fi 2", "HOME-5G") in world.calls
+
+
+def test_use_retries_enable_while_the_device_settles(world, monkeypatch):
+    real, tries = world.enable, []
+    def busy_once(i):
+        tries.append(i)
+        if len(tries) == 1:
+            raise winrun.CmdError("The group or resource is not in the correct state to perform the requested operation.")
+        real(i)
+    monkeypatch.setattr(hw, "enable", busy_once)
+    assert world.use() == "unigen" and tries[:2] == [UNI_WIFI, UNI_WIFI]
