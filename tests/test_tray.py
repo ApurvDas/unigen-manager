@@ -10,26 +10,63 @@ def test_widget_position_bottom_right_in_logical_pixels():
     assert tray.widget_position((0, 0, 2400, 1300), 342, 480, scale=1.25) == (1566, 548)
 
 
-def test_launch_command_quotes_paths():
-    cmd = tray.launch_command(r"C:\Users\Noisemaker\UnigenManager", windir=r"C:\Windows")
-    assert cmd == r'"C:\Windows\pyw.exe" -3.10 "C:\Users\Noisemaker\UnigenManager\UnigenManager.pyw" --tray'
-
-
 def test_startup_task_commands(monkeypatch):
-    calls = []
+    calls, scripts = [], []
     def fake(args, **kw):
         calls.append(args)
         if args[1] == "/Query" and len(calls) == 1:
             raise CmdError("ERROR: The system cannot find the file specified.")
         return ""
     monkeypatch.setattr(tray, "_run", fake)
+    monkeypatch.setattr(tray, "_ps", lambda script, params=None, **kw: scripts.append((script, params)))
     assert tray.startup_enabled() is False
     assert tray.startup_enabled() is True
-    tray.set_startup(True, r"C:\UM")
-    assert calls[-1][:3] == ["schtasks", "/Create", "/TN"] and calls[-1][3] == "Unigen Manager"
-    assert calls[-1][calls[-1].index("/RL") + 1] == "HIGHEST" and calls[-1][calls[-1].index("/SC") + 1] == "ONLOGON"
+    tray.set_startup(True, r"C:\UM", windir=r"C:\Windows")
+    script, params = scripts[-1]
+    for needle in ("AllowStartIfOnBatteries", "DontStopIfGoingOnBatteries", "[TimeSpan]::Zero", "-RunLevel Highest", "Register-ScheduledTask"):
+        assert needle in script
+    assert "UnigenManager.pyw" not in script and "C:" not in script  # paths travel as $p, not script text
+    assert params == {"name": "Unigen Manager", "exe": r"C:\Windows\pyw.exe", "dir": r"C:\UM",
+                      "args": r'-3.10 "C:\UM\UnigenManager.pyw" --tray'}
     tray.set_startup(False, r"C:\UM")
-    assert calls[-1] == ["schtasks", "/Delete", "/TN", "Unigen Manager", "/F"]
+    script, params = scripts[-1]
+    assert "Unregister-ScheduledTask" in script and "-Confirm:$false" in script and params == {"name": "Unigen Manager"}
+
+
+class FakeIcon:
+    def __init__(self):
+        self.notes, self.updates = [], 0
+
+    def notify(self, message, title):
+        self.notes.append((message, title))
+
+    def update_menu(self):
+        self.updates += 1
+
+
+def _tray_with(monkeypatch, enabled):
+    t = tray.Tray.__new__(tray.Tray)  # skip pystray: only the toggle logic is under test
+    t._root, t.icon, t._startup = r"C:\UM", FakeIcon(), False
+    state = {"on": enabled}
+    monkeypatch.setattr(tray, "startup_enabled", lambda: state["on"])
+    return t, state
+
+
+def test_toggle_startup_refreshes_checkbox(monkeypatch):
+    t, state = _tray_with(monkeypatch, False)
+    monkeypatch.setattr(tray, "set_startup", lambda on, root: state.update(on=on))
+    t._toggle_startup()
+    assert t._startup is True and t.icon.updates == 1 and t.icon.notes == []
+
+
+def test_toggle_startup_failure_is_visible(monkeypatch):
+    t, state = _tray_with(monkeypatch, False)
+    def boom(on, root):
+        raise CmdError("Access is denied.")
+    monkeypatch.setattr(tray, "set_startup", boom)
+    t._toggle_startup()
+    assert t._startup is False and t.icon.updates == 1
+    assert t.icon.notes == [("Couldn't change Start with Windows: Access is denied.", "Unigen Manager")]
 
 
 @pytest.fixture
