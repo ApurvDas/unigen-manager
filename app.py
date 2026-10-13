@@ -1,11 +1,13 @@
 """Start Unigen Manager: elevate (radio switching needs it), log to app.log, open the window."""
-import ctypes, logging, subprocess, sys
+import ctypes, logging, subprocess, sys, threading
 from pathlib import Path
 
+import tray
 from api import Api, DATA_DIR
 
 ROOT = Path(__file__).resolve().parent
 UI = ROOT / "ui" / "index.html"
+WIDGET = ROOT / "ui" / "widget.html"
 _SHORTCUT = """
 $s = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path ([Environment]::GetFolderPath('Desktop')) 'Unigen Manager.lnk'))
 $s.TargetPath = Join-Path $env:WINDIR 'pyw.exe'
@@ -52,13 +54,50 @@ def main(argv=None):
         install_shortcut()
         return 0
     admin = is_admin()
-    if should_relaunch(argv, admin) and relaunch_as_admin(argv):
-        return 0  # the elevated copy takes over; if declined, carry on without admin
+    instance = tray.claim_instance()
+    if instance is None:  # another copy is running: bring it forward instead
+        if not tray.signal_show() and not admin:
+            relaunch_as_admin(argv)  # it runs elevated; an elevated copy can reach it
+        return 0
+    if should_relaunch(argv, admin):
+        tray.release(instance)  # let the elevated copy own the instance
+        if relaunch_as_admin(argv):
+            return 0
+        instance = tray.claim_instance()  # declined: carry on without admin
     setup_logging()
     import webview
     api = Api(admin=admin)
-    window = webview.create_window("Unigen Manager", url=str(UI), js_api=api, width=1180, height=780,
-                                   min_size=(940, 620), background_color="#16202B")
-    api._window = window
-    webview.start(debug="--debug" in argv, private_mode=True)
+    main_win = webview.create_window("Unigen Manager", url=str(UI), js_api=api, width=1180, height=780,
+                                     min_size=(940, 620), background_color="#16202B", hidden="--tray" in argv)
+    widget = webview.create_window("Unigen Manager widget", url=str(WIDGET), js_api=api, width=tray.WIDGET_W, height=480,
+                                   frameless=True, easy_drag=False, resizable=False, on_top=True, hidden=True,
+                                   background_color="#1F2C3A")
+    api._window, api._widget = main_win, widget
+    stop = threading.Event()
+
+    def on_closing():  # closing only hides; Quit is in the tray menu
+        if stop.is_set():
+            return True
+        main_win.hide()
+        return False
+
+    main_win.events.closing += on_closing
+    icon = None
+
+    def quit_app():
+        stop.set()
+        if icon:
+            icon.stop()
+        widget.destroy()
+        main_win.destroy()
+
+    def after_start():
+        nonlocal icon
+        icon = tray.Tray(toggle_widget=api._toggle_widget, open_main=api._show_main, quit_app=quit_app,
+                         root=ROOT, status=api._status)
+        icon.start()
+        threading.Thread(target=tray.watch_show, args=(api._show_main, stop), daemon=True).start()
+
+    webview.start(after_start, debug="--debug" in argv, private_mode=True)
+    tray.release(instance)
     return 0

@@ -29,22 +29,77 @@ def test_install_shortcut_passes_paths_as_params():
     assert "pyw.exe" in seen["script"] and "-3.10" in seen["script"]
 
 
-def test_main_opens_window_with_api(monkeypatch, tmp_path):
-    made = {}
-    fake = types.SimpleNamespace(
-        create_window=lambda title, **kw: made.update(title=title, **kw) or "WINDOW",
-        start=lambda **kw: made.update(start=kw))
-    monkeypatch.setitem(sys.modules, "webview", fake)
-    monkeypatch.setattr(app, "is_admin", lambda: False)
-    monkeypatch.setattr(app, "setup_logging", lambda: None)
-    assert app.main(["--no-elevate"]) == 0
-    assert made["title"] == "Unigen Manager" and made["url"].endswith("index.html")
-    assert made["js_api"]._admin is False and made["js_api"]._window == "WINDOW"
-    assert made["background_color"] == "#16202B" and made["start"]["debug"] is False
-
-
 def test_main_hands_over_to_elevated_copy(monkeypatch):
+    monkeypatch.setattr(app.tray, "claim_instance", lambda: "HANDLE")
+    monkeypatch.setattr(app.tray, "release", lambda h: None)
     monkeypatch.setattr(app, "is_admin", lambda: False)
     monkeypatch.setattr(app, "relaunch_as_admin", lambda argv: True)
     monkeypatch.setitem(sys.modules, "webview", None)  # importing webview would fail: main must return first
     assert app.main([]) == 0
+
+
+class FakeWebview:
+    def __init__(self):
+        self.windows, self.started = [], None
+
+    def create_window(self, title, **kw):
+        w = types.SimpleNamespace(title=title, kw=kw, events=types.SimpleNamespace(closing=Handlers()))
+        self.windows.append(w)
+        return w
+
+    def start(self, func=None, **kw):
+        self.started = kw
+
+
+class Handlers(list):
+    def __iadd__(self, fn):
+        self.append(fn)
+        return self
+
+
+@pytest.fixture
+def single(monkeypatch):
+    monkeypatch.setattr(app.tray, "claim_instance", lambda: "HANDLE")
+    monkeypatch.setattr(app.tray, "release", lambda h: None)
+
+
+def test_main_opens_window_and_widget(monkeypatch, single):
+    fake = FakeWebview()
+    monkeypatch.setitem(sys.modules, "webview", fake)
+    monkeypatch.setattr(app, "is_admin", lambda: True)
+    monkeypatch.setattr(app, "setup_logging", lambda: None)
+    assert app.main(["--tray"]) == 0
+    main_win, widget = fake.windows
+    assert main_win.kw["url"].endswith("index.html") and main_win.kw["hidden"] is True  # --tray: start hidden
+    assert widget.kw["url"].endswith("widget.html") and widget.kw["frameless"] and widget.kw["on_top"] and widget.kw["hidden"]
+    assert main_win.kw["js_api"] is widget.kw["js_api"]  # one Api for both windows
+    assert fake.started["debug"] is False
+
+
+def test_closing_main_window_hides_it(monkeypatch, single):
+    fake = FakeWebview()
+    monkeypatch.setitem(sys.modules, "webview", fake)
+    monkeypatch.setattr(app, "is_admin", lambda: True)
+    monkeypatch.setattr(app, "setup_logging", lambda: None)
+    app.main([])
+    main_win = fake.windows[0]
+    hidden = []
+    main_win.hide = lambda: hidden.append(True)
+    assert main_win.events.closing[0]() is False and hidden == [True]  # False cancels the close
+
+
+def test_second_copy_shows_the_first(monkeypatch):
+    monkeypatch.setattr(app.tray, "claim_instance", lambda: None)
+    monkeypatch.setattr(app.tray, "signal_show", lambda: True)
+    monkeypatch.setattr(app, "is_admin", lambda: False)
+    monkeypatch.setattr(app, "relaunch_as_admin", lambda argv: pytest.fail("should not elevate"))
+    assert app.main([]) == 0
+
+
+def test_second_copy_elevates_to_reach_an_elevated_first(monkeypatch):
+    seen = []
+    monkeypatch.setattr(app.tray, "claim_instance", lambda: None)
+    monkeypatch.setattr(app.tray, "signal_show", lambda: False)  # medium integrity can't open the elevated copy's event
+    monkeypatch.setattr(app, "is_admin", lambda: False)
+    monkeypatch.setattr(app, "relaunch_as_admin", lambda argv: seen.append(argv) or True)
+    assert app.main([]) == 0 and seen == [[]]

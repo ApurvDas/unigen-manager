@@ -3,7 +3,7 @@ pywebview runs each call on its own thread, so slow work never blocks the window
 import functools, json, logging, os, threading, time
 from pathlib import Path
 
-import bt, speed, wifi, winrun
+import bt, speed, tray, wifi, winrun
 
 DATA_DIR = Path(os.environ.get("LOCALAPPDATA", ".")) / "UnigenManager"
 log = logging.getLogger("unigen")
@@ -28,6 +28,7 @@ class Api:
     def __init__(self, *, admin=False, results_path=DATA_DIR / "results.json"):
         self._admin, self._results, self._window = admin, Path(results_path), None
         self._speed_lock = threading.Lock()
+        self._widget, self._widget_shown, self._hid_at = None, False, 0.0
 
     # ---- helpers (underscore: pywebview does not expose these) ----
     def _ifaces(self):
@@ -63,8 +64,10 @@ class Api:
         return d
 
     def _push_sample(self, phase, value):
-        if self._window is not None:
-            self._window.evaluate_js("window.onSpeedSample && window.onSpeedSample(" + json.dumps({"phase": phase, "v": value}) + ")")
+        script = "window.onSpeedSample && window.onSpeedSample(" + json.dumps({"phase": phase, "v": value}) + ")"
+        for w in (self._window, self._widget):
+            if w is not None:
+                w.evaluate_js(script)
 
     # ---- app ----
     @_envelope
@@ -176,6 +179,73 @@ class Api:
     def bt_disconnect(self, dev_id):
         d = self._device(dev_id)
         bt.disconnect(d["address"], d["name"])
+
+    # ---- windows (private ones are called from app.py / the tray) ----
+    def _show_main(self):
+        if self._window is not None:
+            self._window.show()
+            self._window.restore()
+
+    def _toggle_widget(self):
+        if self._widget is None:
+            return
+        if self._widget_shown:
+            self.hide_widget()
+        elif time.monotonic() - self._hid_at > 0.3:  # the tray click that just blurred it should not reopen it
+            self._widget_shown = True
+            self._widget.show()
+            self._widget.evaluate_js("window.onWidgetShown && window.onWidgetShown()")
+
+    def _status(self):
+        for a in self.adapters().get("data") or []:
+            if a["state"] == "connected":
+                return f"{a['name']}: {a['ssid']}, {a['signal']}%"
+        return "Unigen Manager: not connected"
+
+    @_envelope
+    def open_main(self):
+        self._show_main()
+        if self._widget is not None:
+            self.hide_widget()
+
+    @_envelope
+    def hide_widget(self):
+        if self._widget is not None:
+            self._widget.hide()
+        self._widget_shown, self._hid_at = False, time.monotonic()
+
+    @_envelope
+    def widget_fit(self, height):
+        """The widget page reports its height; keep its bottom-right corner just above the taskbar."""
+        if self._widget is None:
+            return
+        h = int(max(200, min(900, round(height))))
+        x, y = tray.widget_position(tray.work_area(), tray.WIDGET_W, h, tray.scale())
+        self._widget.resize(tray.WIDGET_W, h)
+        self._widget.move(x, y)
+
+    @_envelope
+    def use_adapter(self, key):
+        """Wi-Fi uses this adapter: it joins the network the other one is on, then the other disconnects."""
+        ifs = self._ifaces()
+        target = self._iface(key)
+        others = [i for k, i in ifs.items() if k != key]
+        if target.get("state") == "connected":
+            net = target.get("ssid")
+        else:
+            net = next((o.get("ssid") for o in others if o.get("state") == "connected"), None)
+        if not net:
+            raise wifi.WifiError("Neither adapter is connected. Connect to a network first.")
+        if not (target.get("state") == "connected" and target.get("ssid") == net):
+            names = wifi.profiles().get(target["name"], [])
+            if net not in names and wifi.profile_name(net) not in names:  # reuse the other adapter's saved password
+                src = next(o for o in others if o.get("ssid") == net)
+                wifi.copy_profile(net, src["name"], target["name"])
+            wifi.connect(target["name"], net, saved=True)
+        for o in others:
+            if o.get("state") == "connected":
+                wifi.disconnect(o["name"])
+        return {"key": key, "ssid": net}
 
     # ---- speed ----
     @_envelope

@@ -143,3 +143,69 @@ def test_mock_api_matches_python_api():
     mock = set(re.findall(r'def\("(\w+)"', js))
     real = {n for n in dir(api.Api) if not n.startswith("_") and callable(getattr(api.Api, n))}
     assert mock == real
+
+
+import tray
+
+
+def test_use_adapter_joins_other_network_then_disconnects_it(hw, monkeypatch):
+    calls = []
+    monkeypatch.setattr(wifi, "connect", lambda iface, ssid, **kw: calls.append(("connect", iface, ssid, kw["saved"])) or {"rx": 433.0})
+    monkeypatch.setattr(wifi, "disconnect", lambda iface: calls.append(("disconnect", iface)))
+    monkeypatch.setattr(wifi, "copy_profile", lambda *a: calls.append(("copy",) + a))
+    assert api.Api().use_adapter("unigen") == {"ok": True, "data": {"key": "unigen", "ssid": "HOME-5G"}}
+    assert calls == [("connect", "Wi-Fi 2", "HOME-5G", True), ("disconnect", "Wi-Fi")]  # Unigen already has the profile
+
+
+def test_use_adapter_copies_missing_profile_first(hw, monkeypatch):
+    calls = []
+    prof = wifi.parse_profiles(fixture("profiles.txt"))
+    prof["Wi-Fi 2"].remove("HOME-5G")
+    monkeypatch.setattr(wifi, "profiles", lambda: prof)
+    monkeypatch.setattr(wifi, "connect", lambda iface, ssid, **kw: calls.append(("connect", iface)) or {})
+    monkeypatch.setattr(wifi, "disconnect", lambda iface: calls.append(("disconnect", iface)))
+    monkeypatch.setattr(wifi, "copy_profile", lambda ssid, src, dst: calls.append(("copy", ssid, src, dst)))
+    api.Api().use_adapter("unigen")
+    assert calls[0] == ("copy", "HOME-5G", "Wi-Fi", "Wi-Fi 2")
+
+
+def test_use_adapter_needs_a_connection(hw, monkeypatch):
+    ifs = wifi.parse_interfaces(fixture("interfaces.txt"))
+    ifs[0]["state"] = "disconnected"
+    monkeypatch.setattr(wifi, "interfaces", lambda: ifs)
+    assert api.Api().use_adapter("unigen") == {"ok": False, "error": "Neither adapter is connected. Connect to a network first."}
+
+
+class FakeWin:
+    def __init__(self):
+        self.calls = []
+
+    def __getattr__(self, name):
+        return lambda *a, **k: self.calls.append((name,) + a)
+
+
+def test_widget_fit_keeps_bottom_right_above_taskbar(monkeypatch):
+    monkeypatch.setattr(tray, "work_area", lambda: (0, 0, 1920, 1040))
+    monkeypatch.setattr(tray, "scale", lambda: 1.0)
+    a = api.Api()
+    a._widget = FakeWin()
+    assert a.widget_fit(480.4)["ok"]
+    assert a._widget.calls == [("resize", 342, 480), ("move", 1566, 548)]
+
+
+def test_toggle_ignores_the_click_that_blurred_it(monkeypatch):
+    a = api.Api()
+    a._widget = FakeWin()
+    a._toggle_widget()  # opens
+    assert ("show",) in a._widget.calls
+    a.hide_widget()  # the widget hides itself when it loses focus (the tray click does that)...
+    a._widget.calls.clear()
+    a._toggle_widget()  # ...so this same click must not reopen it
+    assert ("show",) not in a._widget.calls
+
+
+def test_open_main_shows_window_and_hides_widget():
+    a = api.Api()
+    a._window, a._widget = FakeWin(), FakeWin()
+    assert a.open_main()["ok"]
+    assert ("show",) in a._window.calls and ("hide",) in a._widget.calls
