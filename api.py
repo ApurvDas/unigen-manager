@@ -3,13 +3,13 @@ pywebview runs each call on its own thread, so slow work never blocks the window
 import functools, json, logging, os, threading, time
 from pathlib import Path
 
-import bt, speed, tray, wifi, winrun
+import bt, hw, speed, tray, wifi, winrun
 from version import VERSION
 
 DATA_DIR = Path(os.environ.get("LOCALAPPDATA", ".")) / "UnigenManager"
 log = logging.getLogger("unigen")
 PAIR_WAIT = 60  # seconds a pairing prompt waits for the user
-_KNOWN = (wifi.WifiError, wifi.ParseError, bt.BtError, speed.SpeedError, winrun.CmdError)
+_KNOWN = (wifi.WifiError, wifi.ParseError, bt.BtError, hw.HwError, speed.SpeedError, winrun.CmdError)
 _SEC = {"WPA2-Personal": "WPA2", "WPA3-Personal": "WPA3", "Open": "Open", "WPA-Personal": "WPA", "WPA2-Enterprise": "WPA2-Ent"}
 
 
@@ -27,8 +27,10 @@ def _envelope(fn):
 
 
 class Api:
-    def __init__(self, *, admin=False, results_path=DATA_DIR / "results.json"):
+    def __init__(self, *, admin=False, results_path=DATA_DIR / "results.json", settings_path=None):
         self._admin, self._results, self._window = admin, Path(results_path), None
+        self._settings = Path(settings_path or DATA_DIR / "settings.json")  # looked up now, so tests can point DATA_DIR at tmp
+        self._notify = lambda text: None  # app.py sets the tray balloon
         self._speed_lock = threading.Lock()
         self._widget, self._widget_shown, self._hid_at, self._widget_h = None, False, 0.0, 480
         self._pair_evt, self._pair_answer = threading.Event(), (False, None)
@@ -65,10 +67,21 @@ class Api:
         return {"networks": out, "scanned_at": time.time()}
 
     def _push_sample(self, phase, value):
-        script = "window.onSpeedSample && window.onSpeedSample(" + json.dumps({"phase": phase, "v": value}) + ")"
+        self._push("window.onSpeedSample && window.onSpeedSample(" + json.dumps({"phase": phase, "v": value}) + ")")
+
+    def _push(self, script):
         for w in (self._window, self._widget):
             if w is not None:
                 w.evaluate_js(script)
+
+    def _push_step(self, text, done=False, error=False):
+        self._push("window.onSwitchStep && window.onSwitchStep(" + json.dumps({"text": text, "done": done, "error": error}) + ")")
+
+    def _follow_notify(self, text, changed):
+        """The watchdog switched (or failed to switch) by itself: tell the user, and make both windows reload."""
+        self._notify(text)
+        if changed:
+            self._push("window.onUsingChanged && window.onUsingChanged()")
 
     # ---- app ----
     @_envelope
@@ -78,10 +91,21 @@ class Api:
             radios = {r["key"]: r for r in bt.radios()}
         except _KNOWN:  # Bluetooth trouble must not stop the Wi-Fi page loading
             radios = {}
-        return {"version": VERSION, "admin": self._admin, "adapters": [
-            {"key": k, "name": self._name(k, i["description"]),
-             "wifi": wifi.wifi_standard(drv.get(i["name"], {}).get("radio_types", [])),
-             "bt": radios.get(k, {}).get("version")} for k, i in ifs.items()]}
+        try:
+            devs = hw.devices()
+        except _KNOWN:  # without the device list nothing can be called off
+            devs = {}
+        order = ["unigen", "builtin"]
+        keys = sorted({*devs, *ifs}, key=lambda k: order.index(k) if k in order else len(order))
+        off = {k: bool(devs.get(k, {}).get("wifi") and devs[k]["wifi"]["disabled"]) for k in keys}
+        choice = hw.load_choice(self._settings)
+        using = choice if choice in keys and not off[choice] else (
+            next((k for k in keys if k in ifs and ifs[k].get("state") == "connected"), None)
+            or next((k for k in keys if not off[k]), None))
+        return {"version": VERSION, "admin": self._admin, "using": using, "adapters": [
+            {"key": k, "name": self._name(k, ifs[k]["description"] if k in ifs else k),
+             "wifi": wifi.wifi_standard(drv.get(ifs[k]["name"], {}).get("radio_types", [])) if k in ifs else None,
+             "bt": radios.get(k, {}).get("version"), "using": k == using, "off": off[k]} for k in keys]}
 
     # ---- Wi-Fi ----
     @_envelope
@@ -171,12 +195,6 @@ class Api:
     def bt_power(self, on):
         bt.set_power(bool(on))
         return {"power": bt.power()}
-
-    @_envelope
-    def bt_switch(self, key):
-        if not self._admin:
-            raise bt.BtError("Bluetooth radio switching needs administrator rights. Restart the app and choose Yes.")
-        return {"active": bt.switch(key)}
 
     @_envelope
     def bt_paired(self):
@@ -291,27 +309,22 @@ class Api:
         self._place_widget(self._widget_h)
 
     @_envelope
-    def use_adapter(self, key):
-        """Wi-Fi uses this adapter: it joins the network the other one is on, then the other disconnects."""
-        ifs = self._ifaces()
-        target = self._iface(key)
-        others = [i for k, i in ifs.items() if k != key]
-        if target.get("state") == "connected":
-            net = target.get("ssid")
-        else:
-            net = next((o.get("ssid") for o in others if o.get("state") == "connected"), None)
-        if not net:
-            raise wifi.WifiError("Neither adapter is connected. Connect to a network first.")
-        if not (target.get("state") == "connected" and target.get("ssid") == net):
-            names = wifi.profiles().get(target["name"], [])
-            if net not in names and wifi.profile_name(net) not in names:  # reuse the other adapter's saved password
-                src = next(o for o in others if o.get("ssid") == net)
-                wifi.copy_profile(src.get("profile") or net, src["name"], target["name"])
-            wifi.connect(target["name"], net, saved=True)
-        for o in others:
-            if o.get("state") == "connected":
-                wifi.disconnect(o["name"])
-        return {"key": key, "ssid": net}
+    def switch_to(self, key):
+        """Make this adapter the one in use, Wi-Fi and Bluetooth together. Every step is pushed to both windows."""
+        if not self._admin:
+            raise hw.HwError("Switching adapters needs administrator rights. Restart the app and choose Yes.")
+        last = []
+
+        def step(text):
+            last[:] = [text]
+            self._push_step(text)
+        try:
+            hw.use(key, on_step=step, path=self._settings)
+        except hw.HwError as e:
+            self._push_step(str(e), done=True, error=True)
+            raise
+        self._push_step(last[0] if last else "", done=True)
+        return {"using": key}
 
     # ---- speed ----
     @_envelope

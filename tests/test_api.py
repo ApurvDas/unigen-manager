@@ -2,7 +2,8 @@ import json, pathlib, re, threading
 import pytest
 
 from tests.conftest import fixture, ROOT
-import api, bt, speed, version, wifi
+import api, bt, speed, version, winrun, wifi
+import hw as hwm  # the `hw` fixture below shadows the module name inside tests
 
 
 def raising(exc):
@@ -12,8 +13,11 @@ def raising(exc):
 
 
 @pytest.fixture
-def hw(monkeypatch):
-    """Fixture-backed adapters: built-in connected to HOME-5G, Unigen disconnected."""
+def hw(monkeypatch, tmp_path):
+    """Fixture-backed adapters: built-in connected to HOME-5G, Unigen disconnected. No saved choice."""
+    monkeypatch.setattr(api, "DATA_DIR", tmp_path)  # settings.json lands in tmp, never in the real %LOCALAPPDATA%
+    monkeypatch.setattr(hwm, "devices", lambda: {k: {"present": True, "wifi": {"id": k + "-w", "ok": True, "disabled": False},
+                                                   "bt": {"id": k + "-b", "ok": True, "disabled": False}} for k in ("unigen", "builtin")})
     monkeypatch.setattr(wifi, "interfaces", lambda: wifi.parse_interfaces(fixture("interfaces.txt")))
     monkeypatch.setattr(wifi, "networks", lambda iface: wifi.parse_networks(fixture("networks.txt")))
     monkeypatch.setattr(wifi, "profiles", lambda: wifi.parse_profiles(fixture("profiles.txt")))
@@ -112,10 +116,7 @@ def test_app_info_survives_bluetooth_failure(hw, monkeypatch):
     assert info["ok"] and [a["bt"] for a in info["data"]["adapters"]] == [None, None]
 
 
-def test_bt_switch_needs_admin(hw, monkeypatch):
-    monkeypatch.setattr(bt, "switch", lambda key: key)
-    assert api.Api(admin=False).bt_switch("builtin") == {"ok": False, "error": "Bluetooth radio switching needs administrator rights. Restart the app and choose Yes."}
-    assert api.Api(admin=True).bt_switch("builtin") == {"ok": True, "data": {"active": "builtin"}}
+def test_bt_radio_reports_radios_and_admin(hw):
     r = api.Api(admin=False).bt_radio()["data"]
     assert r["active"] == "unigen" and r["can_switch"] is False and r["radios"][1]["name"] == "Built-in MediaTek"
 
@@ -165,49 +166,6 @@ def test_mock_api_matches_python_api():
 
 
 import tray
-
-
-def test_use_adapter_joins_other_network_then_disconnects_it(hw, monkeypatch):
-    calls = []
-    monkeypatch.setattr(wifi, "connect", lambda iface, ssid, **kw: calls.append(("connect", iface, ssid, kw["saved"])) or {"rx": 433.0})
-    monkeypatch.setattr(wifi, "disconnect", lambda iface: calls.append(("disconnect", iface)))
-    monkeypatch.setattr(wifi, "copy_profile", lambda *a: calls.append(("copy",) + a))
-    assert api.Api().use_adapter("unigen") == {"ok": True, "data": {"key": "unigen", "ssid": "HOME-5G"}}
-    assert calls == [("connect", "Wi-Fi 2", "HOME-5G", True), ("disconnect", "Wi-Fi")]  # Unigen already has the profile
-
-
-def test_use_adapter_copies_missing_profile_first(hw, monkeypatch):
-    calls = []
-    prof = wifi.parse_profiles(fixture("profiles.txt"))
-    prof["Wi-Fi 2"].remove("HOME-5G")
-    monkeypatch.setattr(wifi, "profiles", lambda: prof)
-    monkeypatch.setattr(wifi, "connect", lambda iface, ssid, **kw: calls.append(("connect", iface)) or {})
-    monkeypatch.setattr(wifi, "disconnect", lambda iface: calls.append(("disconnect", iface)))
-    monkeypatch.setattr(wifi, "copy_profile", lambda ssid, src, dst: calls.append(("copy", ssid, src, dst)))
-    api.Api().use_adapter("unigen")
-    assert calls[0] == ("copy", "HOME-5G", "Wi-Fi", "Wi-Fi 2")
-
-
-def test_use_adapter_copies_the_source_profile_name(hw, monkeypatch):
-    ifs = wifi.parse_interfaces(fixture("interfaces.txt"))
-    ifs[0]["profile"] = "HOME-5G 2"  # the profile on the connected adapter is not named after the SSID
-    prof = wifi.parse_profiles(fixture("profiles.txt"))
-    prof["Wi-Fi 2"].remove("HOME-5G")
-    copied = []
-    monkeypatch.setattr(wifi, "interfaces", lambda: ifs)
-    monkeypatch.setattr(wifi, "profiles", lambda: prof)
-    monkeypatch.setattr(wifi, "connect", lambda *a, **k: {})
-    monkeypatch.setattr(wifi, "disconnect", lambda iface: None)
-    monkeypatch.setattr(wifi, "copy_profile", lambda *a: copied.append(a))
-    api.Api().use_adapter("unigen")
-    assert copied == [("HOME-5G 2", "Wi-Fi", "Wi-Fi 2")]
-
-
-def test_use_adapter_needs_a_connection(hw, monkeypatch):
-    ifs = wifi.parse_interfaces(fixture("interfaces.txt"))
-    ifs[0]["state"] = "disconnected"
-    monkeypatch.setattr(wifi, "interfaces", lambda: ifs)
-    assert api.Api().use_adapter("unigen") == {"ok": False, "error": "Neither adapter is connected. Connect to a network first."}
 
 
 class FakeWin:
@@ -354,9 +312,94 @@ def test_bt_search_pushes_rows_to_main_window(monkeypatch):
     assert a._window.scripts[0].startswith("window.onBtNearby && window.onBtNearby(") and '"done": true' in a._window.scripts[0]
 
 
-def test_bt_radio_power_and_switch(hw, monkeypatch):
+def test_bt_radio_power(hw, monkeypatch):
     monkeypatch.setattr(bt, "power", lambda: "off")
     assert api.Api().bt_radio()["data"]["power"] == "off"
     calls = []
     monkeypatch.setattr(bt, "set_power", calls.append)
     assert api.Api().bt_power(1) == {"ok": True, "data": {"power": "off"}} and calls == [True]
+
+
+# ---- one switch ----
+def test_switch_to_needs_admin(hw, monkeypatch):
+    monkeypatch.setattr(hwm, "use", lambda *a, **k: pytest.fail("must not switch without admin"))
+    assert api.Api(admin=False).switch_to("builtin") == {
+        "ok": False, "error": "Switching adapters needs administrator rights. Restart the app and choose Yes."}
+
+
+def test_switch_to_pushes_steps_and_final(hw, monkeypatch):
+    def fake_use(target, *, on_step, path):
+        on_step("Turning on the Built-in MediaTek…")
+        on_step("Done. Using the Built-in MediaTek.")
+        return target
+    monkeypatch.setattr(hwm, "use", fake_use)
+    a = api.Api(admin=True)
+    a._window, a._widget = Win(), Win()
+    assert a.switch_to("builtin") == {"ok": True, "data": {"using": "builtin"}}
+    for w in (a._window, a._widget):  # both windows hear every step, then the final one
+        assert [json.loads(s.split("onSwitchStep(", 1)[1][:-1]) for s in w.scripts] == [
+            {"text": "Turning on the Built-in MediaTek…", "done": False, "error": False},
+            {"text": "Done. Using the Built-in MediaTek.", "done": False, "error": False},
+            {"text": "Done. Using the Built-in MediaTek.", "done": True, "error": False}]
+        assert all(s.startswith("window.onSwitchStep && window.onSwitchStep(") for s in w.scripts)
+
+
+def test_switch_to_error_pushes_error_and_returns_message(hw, monkeypatch):
+    msg = "Couldn't finish switching to the Built-in MediaTek. You're still on the Unigen dongle."
+    monkeypatch.setattr(hwm, "use", raising(hwm.HwError(msg)))
+    a = api.Api(admin=True)
+    a._window = Win()
+    assert a.switch_to("builtin") == {"ok": False, "error": msg}
+    assert json.loads(a._window.scripts[-1].split("onSwitchStep(", 1)[1][:-1]) == {"text": msg, "done": True, "error": True}
+
+
+def test_switch_to_passes_the_settings_path(hw, monkeypatch, tmp_path):
+    seen = {}
+    monkeypatch.setattr(hwm, "use", lambda target, *, on_step, path: seen.update(path=path) or target)
+    api.Api(admin=True, settings_path=tmp_path / "s.json").switch_to("unigen")
+    assert seen["path"] == tmp_path / "s.json"
+
+
+def test_app_info_lists_off_adapter(hw, monkeypatch, tmp_path):
+    devs = hwm.devices()
+    devs["builtin"]["wifi"] = {"id": "builtin-w", "ok": False, "disabled": True}
+    monkeypatch.setattr(hwm, "devices", lambda: devs)
+    monkeypatch.setattr(wifi, "interfaces", lambda: [i for i in wifi.parse_interfaces(fixture("interfaces.txt")) if i["name"] == "Wi-Fi 2"])
+    hwm.save_choice(tmp_path / "settings.json", "unigen")
+    info = api.Api(admin=True).app_info()["data"]
+    ads = {a["key"]: a for a in info["adapters"]}
+    assert set(ads) == {"unigen", "builtin"} and info["using"] == "unigen"
+    assert ads["builtin"] == {"key": "builtin", "name": "Built-in MediaTek", "wifi": None, "bt": "5.2", "using": False, "off": True}
+    assert ads["unigen"]["using"] is True and ads["unigen"]["off"] is False and ads["unigen"]["wifi"] == "Wi-Fi 6"
+
+
+def test_app_info_without_choice_uses_the_connected_adapter(hw):
+    info = api.Api().app_info()["data"]
+    assert info["using"] == "builtin"  # the fixture's built-in adapter is the one joined to HOME-5G
+    assert {a["key"]: a["using"] for a in info["adapters"]} == {"unigen": False, "builtin": True}
+
+
+def test_app_info_ignores_a_choice_that_is_off(hw, monkeypatch, tmp_path):
+    devs = hwm.devices()
+    devs["unigen"]["wifi"] = {"id": "unigen-w", "ok": False, "disabled": True}
+    monkeypatch.setattr(hwm, "devices", lambda: devs)
+    hwm.save_choice(tmp_path / "settings.json", "unigen")  # saved choice, but its Wi-Fi is off right now
+    info = api.Api().app_info()["data"]
+    assert info["using"] == "builtin" and {a["key"]: a["off"] for a in info["adapters"]} == {"unigen": True, "builtin": False}
+
+
+def test_app_info_survives_hw_failure(hw, monkeypatch):
+    monkeypatch.setattr(hwm, "devices", raising(winrun.CmdError("powershell.exe took longer than 90 s.")))
+    info = api.Api().app_info()["data"]
+    assert {a["key"] for a in info["adapters"]} == {"unigen", "builtin"} and not any(a["off"] for a in info["adapters"])
+
+
+def test_follow_notify_pushes_reload_when_changed(hw):
+    shown = []
+    a = api.Api()
+    a._window, a._widget, a._notify = Win(), Win(), shown.append
+    a._follow_notify("The dongle was unplugged. Using the built-in adapter.", True)
+    a._follow_notify("Couldn't turn on the Unigen dongle.", False)
+    assert shown == ["The dongle was unplugged. Using the built-in adapter.", "Couldn't turn on the Unigen dongle."]
+    for w in (a._window, a._widget):
+        assert w.scripts == ["window.onUsingChanged && window.onUsingChanged()"]

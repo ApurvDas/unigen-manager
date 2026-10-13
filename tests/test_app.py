@@ -1,4 +1,4 @@
-import sys, types
+import sys, threading, types
 import pytest
 import app
 
@@ -53,7 +53,7 @@ class FakeWebview:
         return w
 
     def start(self, func=None, **kw):
-        self.started = kw
+        self.started, self.after_start = kw, func
 
 
 class Handlers(list):
@@ -133,3 +133,36 @@ def test_second_copy_elevates_to_reach_an_elevated_first(monkeypatch):
     monkeypatch.setattr(app, "is_admin", lambda: False)
     monkeypatch.setattr(app, "relaunch_as_admin", lambda argv: seen.append(argv) or True)
     assert app.main([]) == 0 and seen == [[]]
+
+
+def test_watchdog_runs_a_pass_at_start_and_notifies_through_the_tray(monkeypatch, single):
+    fake, steps, got = FakeWebview(), threading.Event(), {}
+    monkeypatch.setitem(sys.modules, "webview", fake)
+    monkeypatch.setattr(app, "is_admin", lambda: True)
+    monkeypatch.setattr(app, "setup_logging", lambda: None)
+    monkeypatch.setattr(app.tray, "watch_show", lambda *a: None)
+
+    class FakeTray:
+        def __init__(self, **kw):
+            got["quit"] = kw["quit_app"]
+            self.icon = types.SimpleNamespace(notify=lambda text, title: got.setdefault("balloon", (text, title)))
+        def start(self): pass
+        def stop(self): pass
+
+    class FakeFollower:
+        def __init__(self, path, notify, *, admin):
+            got["args"] = (path, notify, admin)
+        def step(self): steps.set()
+
+    monkeypatch.setattr(app.tray, "Tray", FakeTray)
+    monkeypatch.setattr(app.hw, "Follower", FakeFollower)
+    app.main([])
+    for w in fake.windows:
+        w.destroy = lambda: None
+    fake.after_start()
+    api = fake.windows[0].kw["js_api"]
+    assert steps.wait(2)  # the first pass does not wait 5 s
+    assert got["args"] == (api._settings, api._follow_notify, True)
+    api._notify("The dongle was unplugged. Using the built-in adapter.")
+    assert got["balloon"] == ("The dongle was unplugged. Using the built-in adapter.", "Unigen Manager")
+    got["quit"]()  # stops the watchdog thread

@@ -2,7 +2,7 @@
 import ctypes, logging, subprocess, sys, threading
 from pathlib import Path
 
-import tray
+import hw, tray
 from api import Api, DATA_DIR
 
 ROOT = Path(__file__).resolve().parent
@@ -108,7 +108,16 @@ def main(argv=None):
         icon = tray.Tray(toggle_widget=api._toggle_widget, open_main=api._show_main, quit_app=quit_app,
                          root=ROOT, status=api._status)
         icon.start()
+        api._notify = lambda text: icon.icon.notify(text, "Unigen Manager")
         threading.Thread(target=tray.watch_show, args=(api._show_main, stop), daemon=True).start()
+        follower = hw.Follower(api._settings, api._follow_notify, admin=api._admin)
+
+        def follow():  # a pass now (enforces the saved choice after a restart), then every 5 s
+            while True:
+                follower.step()
+                if stop.wait(5):
+                    return
+        threading.Thread(target=follow, daemon=True).start()
 
     webview.start(after_start, debug="--debug" in argv, private_mode=True)
     tray.release(instance)
