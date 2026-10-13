@@ -41,8 +41,8 @@ def test_bluetooth_radios_and_versions():
 
 
 def test_paired_devices_list():
-    devs = bt.devices(paired=True)
-    assert all(set(d) == {"id", "name", "connected", "kind", "address"} for d in devs)
+    devs = bt.devices()
+    assert all(set(d) == {"id", "ids", "name", "connected", "kind", "address"} for d in devs)
 
 
 def test_ping_router_from_connected_adapter():
