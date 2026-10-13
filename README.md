@@ -12,9 +12,11 @@
 ![anime.js](https://img.shields.io/badge/motion-anime.js%204-0E151D?style=flat-square)
 ![Tests](https://img.shields.io/badge/tests-139%20passing-5CC08A?style=flat-square)
 
-**[⬇ Download UnigenManager.exe](https://github.com/ApurvDas/unigen-manager/releases/latest/download/UnigenManager.exe)**
+<a href="https://github.com/ApurvDas/unigen-manager/releases/latest/download/UnigenManager.exe"><img src="https://img.shields.io/badge/Download-UnigenManager.exe%20%C2%B7%2033%20MB-4FB3C8?style=for-the-badge&logo=windows&logoColor=white" alt="Download UnigenManager.exe" height="44"></a>
 
-[Quick start](#quick-start) · [Features](#features) · [Setup](#setup) · [Usage](#usage) · [Development](#development) · [Security](#security)
+**Plug and play:** download, double-click, done. No installer, no Python.
+
+[Quick start](#quick-start) · [Features](#features) · [Usage](#usage) · [Run from source](#run-from-source) · [Development](#development) · [Security](#security)
 
 <img src="docs/screenshots/wifi.png" alt="The Wi-Fi screen: both adapters in the side menu, a 2.4 and 5 GHz channel map, and the list of nearby networks" width="900">
 
@@ -22,24 +24,19 @@
 
 ## Quick start
 
-**The easy way: no Python needed**
+| Step | What to do |
+|:---:|---|
+| **1** | Plug in the Unigen dongle. Its driver must be installed, so the dongle shows up in Windows' Wi-Fi list. |
+| **2** | **[Download UnigenManager.exe](https://github.com/ApurvDas/unigen-manager/releases/latest/download/UnigenManager.exe)**: one file of about 33 MB. |
+| **3** | Double-click it and choose **Yes** at the Windows prompt. |
 
-1. Download **[UnigenManager.exe](https://github.com/ApurvDas/unigen-manager/releases/latest/download/UnigenManager.exe)** from the [latest release](https://github.com/ApurvDas/unigen-manager/releases/latest).
-2. Put it in a folder of your choice, for example `C:\Apps\Unigen Manager\`, and double-click it.
-3. Choose **Yes** at the Windows prompt.
-
-The window opens, and a cyan icon appears in the taskbar's **^** flyout.
+That's it. The window opens, and a cyan icon appears in the taskbar's **^** flyout. Nothing is installed: the app runs from the `.exe` wherever you keep it, for example `C:\Apps\Unigen Manager\`.
 
 > **"Windows protected your PC"?** The `.exe` isn't code-signed, so SmartScreen warns about it the first time. Click **More info ▸ Run anyway**.
 
-**From source**
+**To remove it:** untick **Start with Windows** in the tray menu if you turned it on, quit from the tray, then delete the `.exe` and `%LOCALAPPDATA%\UnigenManager\`.
 
-```powershell
-git clone https://github.com/ApurvDas/unigen-manager.git
-cd unigen-manager
-py -3.10 -m pip install -r requirements.txt
-py -3.10 UnigenManager.pyw
-```
+Older versions and checksums are on the [releases page](https://github.com/ApurvDas/unigen-manager/releases). Developers can [run from source](#run-from-source).
 
 ## Features
 
@@ -103,9 +100,11 @@ Each adapter shows its own standards, read from the hardware: **Wi-Fi 6**, **Blu
 | **Rights** | Administrator, for Bluetooth radio switching and Start with Windows (the app asks when it starts) |
 | **Hardware** | Built for the Unigen AIC8800D80 dongle and MediaTek MT7921 card. Other Wi-Fi adapters show up under their Windows names |
 
-## Setup
+## Run from source
 
-<details open>
+Only needed for development. Everyone else can use [the `.exe`](#quick-start).
+
+<details>
 <summary><b>1. Download</b></summary>
 
 - **Git:** `git clone https://github.com/ApurvDas/unigen-manager.git`
@@ -113,7 +112,7 @@ Each adapter shows its own standards, read from the hardware: **Wi-Fi 6**, **Blu
 
 </details>
 
-<details open>
+<details>
 <summary><b>2. Install</b></summary>
 
 Open a terminal in the project folder:
@@ -126,7 +125,7 @@ That installs pywebview, pystray and Pillow. anime.js already ships in `ui/vendo
 
 </details>
 
-<details open>
+<details>
 <summary><b>3. Run</b></summary>
 
 ```powershell
