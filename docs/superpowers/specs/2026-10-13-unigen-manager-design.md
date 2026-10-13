@@ -188,8 +188,9 @@ The app runs as administrator and shows network names that **anyone nearby can s
 
 ## Testing
 
-- `test_parsers.py`: assert-based checks of each parser against real netsh/PowerShell output captured from this PC (including networks on two bands, hidden SSIDs, and the "both adapters" case). Run with `py test_parsers.py`.
-- Hardware actions (connect, pair, radio switch) are checked by hand against a short checklist in the plan, because they change real system state.
+- Automated: `py -3.10 -m pytest`. This covers unit tests (parsers against real captured netsh output, commands, profile XML, Bluetooth switch and rollback, the speed sampler against a local server), API contract tests (including mock-api.js ↔ Api method names), and Playwright UI tests against `?mock` in Microsoft Edge.
+- Hardware, read-only: `py -3.10 -m pytest -m hardware`.
+- State-changing: `docs/superpowers/test-reports/manual-checklist.md`, run with the user.
 
 ## Risks
 
