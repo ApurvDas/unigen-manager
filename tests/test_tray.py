@@ -21,13 +21,16 @@ def test_startup_task_commands(monkeypatch):
     monkeypatch.setattr(tray, "_ps", lambda script, params=None, **kw: scripts.append((script, params)))
     assert tray.startup_enabled() is False
     assert tray.startup_enabled() is True
-    tray.set_startup(True, r"C:\UM", windir=r"C:\Windows")
+    tray.set_startup(True, r"C:\My UM", frozen=False, windir=r"C:\Windows")
     script, params = scripts[-1]
     for needle in ("AllowStartIfOnBatteries", "DontStopIfGoingOnBatteries", "[TimeSpan]::Zero", "-RunLevel Highest", "Register-ScheduledTask"):
         assert needle in script
     assert "UnigenManager.pyw" not in script and "C:" not in script  # paths travel as $p, not script text
-    assert params == {"name": "Unigen Manager", "exe": r"C:\Windows\pyw.exe", "dir": r"C:\UM",
-                      "args": r'-3.10 "C:\UM\UnigenManager.pyw" --tray'}
+    assert params == {"name": "Unigen Manager", "exe": r"C:\Windows\pyw.exe", "dir": r"C:\My UM",
+                      "args": r'-3.10 "C:\My UM\UnigenManager.pyw" --tray'}
+    tray.set_startup(True, r"C:\Temp\_MEI123", frozen=True, executable=r"C:\Apps\Unigen Manager\UnigenManager.exe")
+    assert scripts[-1][1] == {"name": "Unigen Manager", "exe": r"C:\Apps\Unigen Manager\UnigenManager.exe",
+                              "dir": r"C:\Apps\Unigen Manager", "args": "--tray"}  # the .exe starts itself
     tray.set_startup(False, r"C:\UM")
     script, params = scripts[-1]
     assert "Unregister-ScheduledTask" in script and "-Confirm:$false" in script and params == {"name": "Unigen Manager"}

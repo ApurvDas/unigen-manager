@@ -52,9 +52,12 @@ class Api:
         for n in nets:
             ssid = n["ssid"]
             state = "Connected" if ssid and ssid == current else "Saved" if ssid in saved or wifi.profile_name(ssid) in saved else ""
+            aps = [{"b": a["band"], "ch": a["channel"], "s": a["signal"]} for a in n["aps"] if "channel" in a and "signal" in a]
+            if not aps and state == "Connected" and "channel" in iface and "signal" in iface:
+                # Windows can list the connected network without access-point details until it rescans
+                aps = [{"b": wifi.band(iface["channel"]), "ch": iface["channel"], "s": iface["signal"]}]
             out.append({"ssid": ssid, "sec": _SEC.get(n["auth"], n["auth"] or "?"), "auth": n["auth"], "state": state,
-                        "hidden": not ssid, "aps": [{"b": a["band"], "ch": a["channel"], "s": a["signal"]}
-                                                    for a in n["aps"] if "channel" in a and "signal" in a]})
+                        "hidden": not ssid, "aps": aps})
         out.sort(key=lambda n: (n["state"] != "Connected", -max([a["s"] for a in n["aps"]] or [0])))
         return {"networks": out, "scanned_at": time.time()}
 

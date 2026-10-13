@@ -7,6 +7,7 @@ window.mockApi = (() => {
   const api = {};
   function def(name, ms, fn) {
     api[name] = async (...args) => {
+      if (window.MOCK_LOG) window.MOCK_LOG.push(name);
       await wait(ms);
       const fail = (window.MOCK_FAIL || {})[name];
       if (fail) return { ok: false, error: fail };

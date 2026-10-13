@@ -269,3 +269,10 @@ def test_open_main_shows_window_and_hides_widget():
     a._window, a._widget = FakeWin(), FakeWin()
     assert a.open_main()["ok"]
     assert ("show",) in a._window.calls and ("hide",) in a._widget.calls
+
+
+def test_connected_network_without_details_uses_adapter_status(hw, monkeypatch):
+    bare = "\nSSID 1 : HOME-5G\n    Network type            : Infrastructure\n    Authentication          : WPA2-Personal\n"
+    monkeypatch.setattr(wifi, "networks", lambda iface: wifi.parse_networks(bare))
+    nets = api.Api().networks("builtin")["data"]["networks"]
+    assert nets[0]["state"] == "Connected" and nets[0]["aps"] == [{"b": 5, "ch": 36, "s": 80}]

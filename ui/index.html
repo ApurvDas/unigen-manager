@@ -576,7 +576,7 @@ function pickAdapter(a) {
   const r = RESULTS[a.dataset.adapter];
   if (!$("#speed").hidden) drawTp(r ? r.samples : [], a.dataset.adapter, { draw: true, split: r && r.split });
   selSsid = null;
-  loadNetworks(false).catch(e => setMsg($("#wifiMsg"), e.message, true));
+  loadNetworks(false).then(() => loadNetworks(true)).catch(e => setMsg($("#wifiMsg"), e.message, true));
 }
 
 const SIG_N = 60;  // 2 minutes of readings, one every 2 s
@@ -1038,6 +1038,7 @@ setTimeout(() => { if (!INFO && !MOCK && !window.pywebview) setMsg($("#wifiMsg")
   setText($("#tpSub"), `${NAME(activeKey())}, Mbps`);
   await poll();
   await loadNetworks(false).catch(e => setMsg($("#wifiMsg"), e.message, true));
+  loadNetworks(true).catch(() => {}); // Windows' cached list can be stale or empty until the adapter rescans
   loadSaved(); loadBt();
   if (!$("#speed").hidden) drawSpeed();
   const visible = () => call("is_visible", "main").catch(() => true);  // a hidden window stops polling
