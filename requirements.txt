@@ -1,3 +1,9 @@
 pywebview==6.2.1
 pystray==0.19.5
 Pillow==12.3.0
+winrt-runtime==3.2.1
+winrt-Windows.Foundation==3.2.1
+winrt-Windows.Foundation.Collections==3.2.1
+winrt-Windows.Devices.Enumeration==3.2.1
+winrt-Windows.Devices.Bluetooth==3.2.1
+winrt-Windows.Devices.Radios==3.2.1
