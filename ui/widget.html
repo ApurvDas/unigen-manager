@@ -114,6 +114,7 @@
   </div>
   <div class="sec">
     <div class="bt">
+      <button class="switch on" id="btPower" role="switch" aria-checked="true" aria-label="Bluetooth"><i></i></button>
       <span class="ver" id="btVer">Bluetooth</span>
       <span class="dev" id="btDev"></span>
       <button class="btn" id="btSwitch"><span class="label">Switch</span></button>
@@ -242,10 +243,13 @@ $("#nets").addEventListener("click", async e => {
 async function loadBt() {
   const [radio, paired] = await Promise.all([call("bt_radio"), call("bt_paired")]);
   BT = radio;
+  const on = BT.power !== "off", sw = $("#btPower");
+  sw.setAttribute("aria-checked", String(on)); sw.classList.toggle("on", on);
+  anime.animate($("i", sw), { x: on ? 16 : 0, duration: reduce ? 0 : 180, ease });
   const act = BT.radios.find(r => r.key === BT.active), other = BT.radios.find(r => r.key !== BT.active);
   const dev = paired.find(d => d.connected);
   setText($("#btVer"), act && act.version ? `Bluetooth ${act.version}` : "Bluetooth");
-  setText($("#btDev"), dev ? dev.name : "No device connected");
+  setText($("#btDev"), on ? (dev ? dev.name : "No device connected") : "Bluetooth is off");
   const b = $("#btSwitch");
   b.hidden = !other;
   if (other) swap(b, `Use ${other.key === "builtin" ? "built-in" : SHORT(other.key)}`);
@@ -259,6 +263,14 @@ $("#btSwitch").addEventListener("click", async function () {
     await busy(this, "Switching…", call("bt_switch", other.key));
     note($("#btMsg"), `Bluetooth now uses the ${other.name} radio.`);
   } catch (e) { note($("#btMsg"), e.message, true); }
+  loadBt().catch(fail($("#btMsg")));
+});
+
+$("#btPower").addEventListener("click", async function () {
+  if (this.disabled || !BT) return;
+  this.disabled = true;
+  try { await call("bt_power", BT.power === "off"); } catch (e) { note($("#btMsg"), e.message, true); }
+  finally { this.disabled = false; }
   loadBt().catch(fail($("#btMsg")));
 });
 

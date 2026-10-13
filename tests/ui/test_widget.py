@@ -114,3 +114,14 @@ def test_use_adapter_works_when_both_are_connected(widget):
     expect(pg.locator("#wifiMsg")).to_have_text("Wi-Fi now uses the Unigen dongle.")
     expect(ad(pg, "builtin").locator(".ssid")).to_have_text("Not connected")
     expect(ad(pg, "unigen").locator(".ssid")).to_have_text("HOME-5G")
+
+
+def test_widget_bluetooth_power(widget):
+    pg = widget()
+    sw = pg.locator("#btPower")
+    expect(sw).to_have_attribute("aria-checked", "true")
+    sw.click()
+    expect(sw).to_have_attribute("aria-checked", "false")
+    expect(pg.locator("#btDev")).to_have_text("Bluetooth is off")
+    sw.click()
+    expect(sw).to_have_attribute("aria-checked", "true")
