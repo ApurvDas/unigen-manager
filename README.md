@@ -10,7 +10,7 @@
 ![Python 3.10](https://img.shields.io/badge/Python-3.10-0E151D?style=flat-square&logo=python&logoColor=4FB3C8)
 ![pywebview](https://img.shields.io/badge/UI-pywebview%20%2B%20WebView2-0E151D?style=flat-square)
 ![anime.js](https://img.shields.io/badge/motion-anime.js%204-0E151D?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-142%20passing-5CC08A?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-176%20passing-5CC08A?style=flat-square)
 
 <a href="https://github.com/ApurvDas/unigen-manager/releases/latest/download/UnigenManager.exe"><img src="https://img.shields.io/badge/Download-UnigenManager.exe%20%C2%B7%2033%20MB-4FB3C8?style=for-the-badge&logo=windows&logoColor=white" alt="Download UnigenManager.exe" height="44"></a>
 
@@ -54,7 +54,10 @@ Older versions and checksums are on the [releases page](https://github.com/Apurv
 <td width="50%" valign="top">
 
 ### 🎧 Bluetooth
-- Paired and nearby devices: pair, remove, connect and disconnect audio devices.
+- **Live search:** nearby devices appear as Windows finds them, and the search stops when you leave the page.
+- **Pairing with PIN prompts:** confirm a code, type the code the device shows, or enter the device's PIN, right in the app.
+- Bluetooth **on/off switch**, here and in the tray widget.
+- Remove devices, and connect or disconnect audio devices.
 - Switch between the dongle's radio (Bluetooth 5.4) and the built-in one (5.2).
 - If the new radio doesn't start within 10 seconds, the app switches back on its own.
 
@@ -121,7 +124,7 @@ Open a terminal in the project folder:
 py -3.10 -m pip install -r requirements.txt
 ```
 
-That installs pywebview, pystray and Pillow. anime.js already ships in `ui/vendor/`.
+That installs pywebview, pystray, Pillow and the WinRT packages used for Bluetooth. anime.js already ships in `ui/vendor/`.
 
 </details>
 
@@ -184,7 +187,7 @@ Then open:
 
 ```powershell
 py -3.10 -m pip install -r requirements-dev.txt
-py -3.10 -m pytest                 # 142 unit, contract and UI tests (UI tests drive the installed Microsoft Edge)
+py -3.10 -m pytest                 # 176 unit, contract and UI tests (UI tests drive the installed Microsoft Edge)
 py -3.10 -m pytest -m hardware     # read-only checks against the real adapters (changes nothing)
 ```
 
@@ -216,7 +219,7 @@ flowchart LR
     widget --> shared
     shared -- "window.pywebview.api" --> api["api.py<br/>plain-language errors"]
     api --> wifi["wifi.py<br/>netsh, wlanapi"]
-    api --> bt["bt.py + bt.ps1<br/>WinRT, bthprops"]
+    api --> bt["bt.py + btwinrt.py + bt.ps1<br/>WinRT, KS audio, bthprops"]
     api --> speed["speed.py<br/>ping, sampled HTTP"]
     wifi --> winrun["winrun.py<br/>argument lists only, no shell"]
     bt --> winrun
@@ -229,7 +232,8 @@ flowchart LR
 | `app.py` | Administrator prompt, single instance, main and widget windows, tray |
 | `api.py` | Everything the pages call, with plain-language errors |
 | `wifi.py` | `netsh` parsing, connect and disconnect, saved profiles, Windows scan request |
-| `bt.py`, `bt.ps1` | Bluetooth radios, devices, pairing, audio connect |
+| `bt.py`, `bt.ps1` | Bluetooth radio switching and audio connect |
+| `btwinrt.py` | Bluetooth through Windows' WinRT device APIs: paired list, live search, pairing with PIN prompts, unpair, radio power |
 | `speed.py` | Ping and per-adapter sampled download and upload |
 | `tray.py` | Tray icon, widget placement, Start with Windows, single instance |
 | `winrun.py` | The only place that starts processes |
@@ -249,9 +253,10 @@ flowchart LR
 - Network names with non-English characters may display incorrectly, and you can't connect to them from the app.
 - New WPA3 and Enterprise networks must be added in Windows settings. Once saved, they connect normally.
 - **Bluetooth audio Connect and Disconnect:**
-  - The app toggles the device's audio services.
-  - If Windows refuses, the app opens Windows Bluetooth settings instead.
-  - This is still to be confirmed on real hardware (checklist row 24).
+  - The app first asks the device's audio driver to reconnect, the same way Windows Settings does.
+  - If that fails it toggles the device's audio services, and if Windows still refuses, it opens Windows Bluetooth settings instead.
+  - Which of the three works is still to be confirmed on real hardware (checklist row 24).
+- Pairing a device that isn't in pairing mode times out after about a minute.
 - An adapter plugged in after the app starts appears after the app restarts.
 
 ## Built with
