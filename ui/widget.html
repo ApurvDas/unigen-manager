@@ -198,7 +198,7 @@ async function poll() {
 }
 async function useAdapter(b) {
   const k = b.dataset.k;
-  if (k === uses || b.disabled) return;
+  if (b.disabled || (k === uses && ADS.filter(a => a.state === "connected").length <= 1)) return;  // both connected: this still disconnects the other
   const was = uses;
   $$(".seg button").forEach(x => { x.setAttribute("aria-checked", x === b); x.disabled = true; });
   slide($(".seg .ind"), b);
@@ -335,7 +335,7 @@ if (!MOCK) {
   addEventListener("blur", hideWidget);  // like Windows flyouts: losing focus closes it
   new ResizeObserver(() => { if (shown) call("widget_fit", Math.ceil(W.getBoundingClientRect().height)).catch(() => {}); }).observe(W);
 }
-setInterval(() => { if (shown) { poll().catch(fail($("#wifiMsg"))); loadNets().catch(fail($("#netMsg"))); } }, 3000);
+setInterval(async () => { if (shown && await call("is_visible", "widget").catch(() => true)) { poll().catch(fail($("#wifiMsg"))); loadNets().catch(fail($("#netMsg"))); } }, 3000);
 
 // ================= ?mock preview: fake taskbar with the ^ overflow =================
 if (MOCK) {

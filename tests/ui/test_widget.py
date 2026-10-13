@@ -106,3 +106,11 @@ def test_confirmations_fade_errors_stay(widget):
     pg.locator("#btSwitch").click()
     expect(pg.locator("#btMsg")).not_to_be_empty()
     expect(pg.locator("#btMsg")).to_be_empty(timeout=6000)
+
+
+def test_use_adapter_works_when_both_are_connected(widget):
+    pg = widget()
+    pg.locator('.seg button[data-k="unigen"]').click()  # already highlighted, but both adapters are on the network
+    expect(pg.locator("#wifiMsg")).to_have_text("Wi-Fi now uses the Unigen dongle.")
+    expect(ad(pg, "builtin").locator(".ssid")).to_have_text("Not connected")
+    expect(ad(pg, "unigen").locator(".ssid")).to_have_text("HOME-5G")

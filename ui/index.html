@@ -1025,10 +1025,11 @@ addEventListener("resize", () => {
 const hash = location.hash.slice(1);
 go(["wifi", "bt", "speed"].includes(hash) ? hash : "wifi", true);
 if (hash === "saved") view("saved", true); // old link: Saved now lives inside Wi-Fi
-setTimeout(() => { if (!INFO && !MOCK) setMsg($("#wifiMsg"), "Waiting for the app. To preview in a browser, open index.html?mock.", true); }, 3000);
+setTimeout(() => { if (!INFO && !MOCK && !window.pywebview) setMsg($("#wifiMsg"), "Waiting for the app. To preview in a browser, open index.html?mock.", true); }, 3000);
 (async function start() {
   try { INFO = await call("app_info"); }
   catch (e) { return setMsg($("#wifiMsg"), e.message, true); }
+  if ($("#wifiMsg").textContent.startsWith("Waiting for the app")) setMsg($("#wifiMsg"), "");
   if (!INFO.adapters.length) return setMsg($("#wifiMsg"), "No Wi-Fi adapters found. Plug in the Unigen dongle.", true);
   renderRail();
   RESULTS = await call("speed_results").catch(() => ({}));
@@ -1039,9 +1040,10 @@ setTimeout(() => { if (!INFO && !MOCK) setMsg($("#wifiMsg"), "Waiting for the ap
   await loadNetworks(false).catch(e => setMsg($("#wifiMsg"), e.message, true));
   loadSaved(); loadBt();
   if (!$("#speed").hidden) drawSpeed();
-  setInterval(poll, 2000);
+  const visible = () => call("is_visible", "main").catch(() => true);  // a hidden window stops polling
+  setInterval(async () => { if (await visible()) poll(); }, 2000);
   setInterval(tickAge, 1000);
-  setInterval(() => { if (nearbyShown() && !pw.open) loadNetworks(false).catch(e => setMsg($("#wifiMsg"), e.message, true)); }, 10000);
+  setInterval(async () => { if (nearbyShown() && !pw.open && await visible()) loadNetworks(false).catch(e => setMsg($("#wifiMsg"), e.message, true)); }, 10000);
 })();
 </script>
 </body>

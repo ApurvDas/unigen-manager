@@ -76,6 +76,11 @@ def test_hostile_ssid_is_text(open_page):
     pg = open_page("window.MOCK_HOSTILE = true;")
     expect(net(pg, "<img src=x onerror=alert(1)>")).to_be_visible()
     assert pg.locator("#netRows img, .map img, #tip img").count() == 0
+    pg.locator('.tabs button[data-view="saved"]').click()
+    expect(saved_row(pg, "<img src=x onerror=alert(1)>")).to_be_visible()
+    pg.keyboard.press("Control+2")
+    expect(pg.locator("#paired .row").filter(has=pg.get_by_text("<img src=x onerror=alert(1)>", exact=True))).to_be_visible()
+    assert pg.locator("img").count() == 0  # the page has no images of its own: a hostile name never becomes markup
 
 
 def test_hidden_network_cannot_connect(open_page):
@@ -200,3 +205,15 @@ def test_signal_chart_fills_from_polling(open_page):
     pg.wait_for_timeout(4500)
     expect(pg.locator("#sig .line")).to_have_count(2)
     assert pg.evaluate("document.querySelector('#sig .line').getAttribute('d').length") > 10
+
+
+def test_hidden_window_stops_polling(open_page):
+    pg = open_page()
+    pg.evaluate("""window.n = 0; const a = mockApi.adapters;
+        mockApi.adapters = (...x) => { window.n++; return a(...x); };
+        mockApi.is_visible = async () => ({ ok: true, data: false });""")
+    pg.wait_for_timeout(4500)
+    assert pg.evaluate("window.n") == 0
+    pg.evaluate("mockApi.is_visible = async () => ({ ok: true, data: true })")
+    pg.wait_for_timeout(2600)
+    assert pg.evaluate("window.n") >= 1
