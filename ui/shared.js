@@ -48,6 +48,19 @@ function slide(ind, to, instant) {
   else anime.animate(ind, { ...at, duration: 200, ease });
 }
 
+// The Using control (Dongle | Built-in) is built the same way in both windows.
+const USE_LABEL = k => ({ unigen: "Dongle", builtin: "Built-in" })[k] || k;
+function buildSeg(seg, adapters) {
+  seg.innerHTML = `<span class="ind" data-axis="x" aria-hidden="true"></span>` + adapters.map(a =>
+    `<button role="radio" aria-checked="false" data-k="${esc(a.key)}">${esc(USE_LABEL(a.key))}</button>`).join("");
+}
+function markSeg(seg, key, instant) {
+  const bs = $$("button", seg);
+  bs.forEach(b => b.setAttribute("aria-checked", b.dataset.k === key));
+  slide($(".ind", seg), bs.find(b => b.dataset.k === key), instant);
+}
+const ADMIN_TIP = "Switching adapters needs administrator rights.";
+
 // swap: a label changes with a short blur, so it reads as one control changing
 function swap(btn, text) {
   const l = $(".label", btn);

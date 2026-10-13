@@ -53,7 +53,8 @@ def ad(pg, key):
 def test_opens_from_tray_and_shows_live_status(widget):
     pg = widget()
     expect(ad(pg, "unigen").locator(".ssid")).to_have_text("HOME-5G")
-    expect(pg.locator('.seg button[aria-checked="true"]')).to_have_text("Unigen")
+    expect(pg.locator('.seg button[aria-checked="true"]')).to_have_text("Dongle")
+    expect(pg.locator("#usesLbl")).to_have_text("Using")
     expect(pg.locator("#nets .net")).to_have_count(2)  # saved networks in range on the Unigen dongle
     expect(pg.locator("#btVer")).to_have_text("Bluetooth 5.4")
     expect(pg.locator("#btDev")).to_have_text("Den Beats Pill")
@@ -61,19 +62,46 @@ def test_opens_from_tray_and_shows_live_status(widget):
     expect(pg.locator("#w")).to_be_hidden()  # like Windows flyouts: clicking elsewhere closes it
 
 
-def test_use_built_in(widget):
+def test_widget_using_switch(widget):
     pg = widget()
+    expect(ad(pg, "builtin").locator(".ssid")).to_have_text("Off")
     pg.locator('.seg button[data-k="builtin"]').click()
-    expect(pg.locator("#wifiMsg")).to_have_text("Wi-Fi now uses the Built-in MediaTek.")
-    expect(ad(pg, "unigen").locator(".ssid")).to_have_text("Not connected")
+    expect(pg.locator("#wifiMsg")).to_have_text("Done. Using the Built-in MediaTek.")
+    expect(pg.locator('.seg button[aria-checked="true"]')).to_have_text("Built-in")
     expect(ad(pg, "builtin").locator(".ssid")).to_have_text("HOME-5G")
+    expect(ad(pg, "unigen").locator(".ssid")).to_have_text("Off")
+    expect(pg.locator("#btVer")).to_have_text("Bluetooth 5.2")  # Bluetooth moved with Wi-Fi
 
 
-def test_use_failure_puts_the_switch_back(widget):
-    pg = widget('window.MOCK_FAIL = { use_adapter: "Neither adapter is connected. Connect to a network first." };')
+def test_widget_shows_each_step(widget):
+    pg = widget("window.MOCK_FAST = false;")
     pg.locator('.seg button[data-k="builtin"]').click()
-    expect(pg.locator("#wifiMsg")).to_have_text("Neither adapter is connected. Connect to a network first.")
-    expect(pg.locator('.seg button[aria-checked="true"]')).to_have_text("Unigen")
+    expect(pg.locator("#wifiMsg")).to_have_text("Turning on the Built-in MediaTek…")
+    expect(pg.locator(".seg button").first).to_be_disabled()
+    expect(pg.locator("#wifiMsg")).to_have_text("Done. Using the Built-in MediaTek.", timeout=5000)
+    expect(pg.locator(".seg button").first).to_be_enabled()
+
+
+def test_widget_using_failure_puts_the_switch_back(widget):
+    msg = "Couldn't finish switching to the Built-in MediaTek. You're still on the Unigen dongle."
+    pg = widget(f'window.MOCK_FAIL = {{ switch_to: "{msg}" }};')
+    pg.locator('.seg button[data-k="builtin"]').click()
+    expect(pg.locator("#wifiMsg")).to_have_text(msg)
+    expect(pg.locator('.seg button[aria-checked="true"]')).to_have_text("Dongle")
+
+
+def test_widget_using_needs_admin(widget):
+    pg = widget("window.MOCK_ADMIN = false;")
+    expect(pg.locator(".seg button").first).to_be_disabled()
+    expect(pg.locator(".seg")).to_have_attribute("title", "Switching adapters needs administrator rights.")
+
+
+def test_widget_using_changed_event_reloads(widget):
+    pg = widget()
+    pg.evaluate("mockApi._setUsing('builtin'); window.onUsingChanged()")
+    expect(pg.locator('.seg button[aria-checked="true"]')).to_have_text("Built-in")
+    expect(pg.locator("#btVer")).to_have_text("Bluetooth 5.2")
+    expect(ad(pg, "unigen").locator(".ssid")).to_have_text("Off")
 
 
 def test_disconnect_and_connect_saved(widget):
@@ -86,11 +114,9 @@ def test_disconnect_and_connect_saved(widget):
     expect(ad(pg, "unigen").locator(".ssid")).to_have_text("HOME-5G")
 
 
-def test_bluetooth_switch(widget):
+def test_bluetooth_row_has_no_switch_button(widget):
     pg = widget()
-    pg.locator("#btSwitch").click()
-    expect(pg.locator("#btVer")).to_have_text("Bluetooth 5.2")
-    expect(pg.locator("#btSwitch .label")).to_have_text("Use Unigen")
+    assert pg.locator("#btSwitch").count() == 0
 
 
 def test_speed_test_sparkline(widget):
@@ -103,17 +129,9 @@ def test_speed_test_sparkline(widget):
 
 def test_confirmations_fade_errors_stay(widget):
     pg = widget()
-    pg.locator("#btSwitch").click()
-    expect(pg.locator("#btMsg")).not_to_be_empty()
-    expect(pg.locator("#btMsg")).to_be_empty(timeout=6000)
-
-
-def test_use_adapter_works_when_both_are_connected(widget):
-    pg = widget()
-    pg.locator('.seg button[data-k="unigen"]').click()  # already highlighted, but both adapters are on the network
-    expect(pg.locator("#wifiMsg")).to_have_text("Wi-Fi now uses the Unigen dongle.")
-    expect(ad(pg, "builtin").locator(".ssid")).to_have_text("Not connected")
-    expect(ad(pg, "unigen").locator(".ssid")).to_have_text("HOME-5G")
+    pg.locator('.seg button[data-k="builtin"]').click()
+    expect(pg.locator("#wifiMsg")).not_to_be_empty()
+    expect(pg.locator("#wifiMsg")).to_be_empty(timeout=6000)
 
 
 def test_widget_bluetooth_power(widget):

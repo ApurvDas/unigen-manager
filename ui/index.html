@@ -60,6 +60,14 @@
   .adapter .meta b { color: var(--ink); font-weight: 400; display: inline-block; }
   .adapter .meta .rate { display: inline-block; }
   .adapter .caps { grid-column: 2; color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .adapter .badge { margin-left: 8px; font: 600 11px/1 var(--display); padding: 3px 6px; border-radius: 4px; vertical-align: 2px;
+    color: var(--muted); border: 1px solid var(--line); }
+  .adapter .badge.use { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+  .adapter.off { cursor: default; }
+  .adapter.off .name, .adapter.off .meta, .adapter.off .caps { opacity: .6; }
+  #using button { flex: 1; }
+  #switchMsg { display: block; margin: 8px 6px 0; font-size: 12.5px; }
+  #switchMsg:empty { display: none; }
 
   nav { display: flex; flex-direction: column; gap: 2px; position: relative; }
   nav button {
@@ -270,6 +278,11 @@
 <body>
 
 <aside class="rail">
+  <div id="usingBox">
+    <h2 id="usingLbl">Using</h2>
+    <div class="seg" id="using" role="radiogroup" aria-labelledby="usingLbl"></div>
+    <p class="msg" id="switchMsg"></p>
+  </div>
   <div>
     <h2>Adapters</h2>
     <div class="adapters"><span class="ind ad-ind" aria-hidden="true"></span></div>
@@ -329,7 +342,6 @@
         <p id="btOnNote" hidden>Bluetooth is off. <button class="btn small" id="btOn"><span class="label">Turn on</span></button></p>
         <span class="msg" id="btMsg"></span>
       </div>
-      <button class="btn small" id="tryRadio"><span class="label">Use built-in radio</span></button>
     </div>
     <div class="group">
       <h2>Paired devices <span id="pairedCount"></span></h2>
@@ -420,6 +432,7 @@ let RESULTS = {};    // speed_results(): key -> {ping, down, up, link, samples, 
 let selected = 0, selSsid = null, scannedAt = null;
 const activeAdapter = () => $(".adapter[aria-pressed='true']");
 const activeKey = () => activeAdapter()?.dataset.adapter;
+let switching = false; // a switch started here is running
 const adapterEl = k => $$(".adapter").find(a => a.dataset.adapter === k);
 const NAME = k => (INFO && INFO.adapters.find(a => a.key === k) || {}).name || k;
 const SHORT = k => ({ unigen: "Unigen", builtin: "Built-in" })[k] || NAME(k);
@@ -560,38 +573,91 @@ $("#scan").addEventListener("click", async function () {
 });
 
 // ================= adapters rail + polling =================
+const inUse = () => INFO.adapters.find(a => a.using) || INFO.adapters[0] || {};
 function renderRail() {
-  $(".adapters").innerHTML = `<span class="ind ad-ind" aria-hidden="true"></span>` + INFO.adapters.map((a, i) => `
-    <button class="adapter" aria-pressed="${i === 0}" data-adapter="${esc(a.key)}" data-bt="${esc(a.bt || "")}">
-      <span class="dot"></span><span class="name">${esc(a.name)}</span>
-      <span class="meta"><b>Checking…</b><br><span class="rate"></span></span>
+  $(".adapters").innerHTML = `<span class="ind ad-ind" aria-hidden="true"></span>` + INFO.adapters.map(a => `
+    <button class="adapter${a.off ? " off" : ""}" aria-pressed="${!!a.using}"${a.off ? ' aria-disabled="true"' : ""} data-adapter="${esc(a.key)}" data-bt="${esc(a.bt || "")}">
+      <span class="dot"></span><span class="name">${esc(a.name)}${a.using ? '<span class="badge use">In use</span>' : a.off ? '<span class="badge">Off</span>' : ""}</span>
+      <span class="meta"><b>${a.off ? "Off" : "Checking…"}</b><br><span class="rate"></span></span>
       <span class="caps">${esc([a.wifi, a.bt && `Bluetooth ${a.bt}`].filter(Boolean).join(", "))}</span>
     </button>`).join("");
   $$(".adapter").forEach(a => a.addEventListener("click", () => pickAdapter(a)));
   slide($(".ad-ind"), activeAdapter(), true);
-  setText($("#wifiLabel"), (INFO.adapters[0] || {}).wifi || "Wi-Fi");
+  setText($("#wifiLabel"), inUse().wifi || "Wi-Fi");
 }
 function updateRail() {
   $$(".adapter").forEach(a => {
-    const d = ADS.find(x => x.key === a.dataset.adapter), on = !!d && d.state === "connected";
-    setText($(".meta b", a), !d ? "Unplugged" : on ? d.ssid : "Not connected");
+    const d = ADS.find(x => x.key === a.dataset.adapter), on = !!d && d.state === "connected", off = a.classList.contains("off");
+    setText($(".meta b", a), !d ? (off ? "Off" : "Unplugged") : on ? d.ssid : "Not connected");
     setText($(".rate", a), on ? `${d.rate} Mbps link` : "No link");
     const dot = $(".dot", a);
     if (dot.classList.contains("on") !== on) pop(dot, on);
   });
 }
 function pickAdapter(a) {
+  if (a.classList.contains("off")) return; // an adapter that is off has no Wi-Fi to show
   $$(".adapter").forEach(x => x.setAttribute("aria-pressed", x === a));
   slide($(".ad-ind"), a);
-  setText($("#wifiLabel"), (INFO.adapters.find(x => x.key === a.dataset.adapter) || {}).wifi || "Wi-Fi");
-  setText($("#speed h1"), `Speed on ${$(".name", a).textContent}`);
-  setText($("#tpSub"), `${$(".name", a).textContent}, Mbps`);
+  const key = a.dataset.adapter;
+  setText($("#wifiLabel"), (INFO.adapters.find(x => x.key === key) || {}).wifi || "Wi-Fi");
+  setText($("#speed h1"), `Speed on ${NAME(key)}`);
+  setText($("#tpSub"), `${NAME(key)}, Mbps`);
   showReadouts();
-  const r = RESULTS[a.dataset.adapter];
-  if (!$("#speed").hidden) drawTp(r ? r.samples : [], a.dataset.adapter, { draw: true, split: r && r.split });
+  const r = RESULTS[key];
+  if (!$("#speed").hidden) drawTp(r ? r.samples : [], key, { draw: true, split: r && r.split });
   selSsid = null;
   loadNetworks(false).then(() => loadNetworks(true)).catch(e => setMsg($("#wifiMsg"), e.message, true));
 }
+
+// ================= Using: one switch for Wi-Fi and Bluetooth =================
+function renderUsing() {
+  $("#usingBox").hidden = INFO.adapters.length < 2;
+  buildSeg($("#using"), INFO.adapters);
+  $$("#using button").forEach(b => { b.disabled = !INFO.admin; });
+  $("#using").title = INFO.admin ? "" : ADMIN_TIP;
+  markSeg($("#using"), (INFO.adapters.find(a => a.using) || {}).key, true);
+}
+// INFO changed (a switch, here or by the watchdog): redraw everything that depends on the adapter in use
+function applyInfo() {
+  renderUsing(); renderRail();
+  setText($("#speed h1"), `Speed on ${NAME(activeKey())}`);
+  setText($("#tpSub"), `${NAME(activeKey())}, Mbps`);
+  renderResults(); showReadouts();
+}
+async function reloadInfo() {
+  INFO = await call("app_info");
+  applyInfo();
+  selSsid = null;
+  await poll();
+  if (!$("#speed").hidden) drawSpeed();
+  loadBt(); loadSaved();
+  await loadNetworks(false).catch(e => setMsg($("#wifiMsg"), e.message, true));
+  loadNetworks(true).catch(() => {});
+}
+window.onSwitchStep = s => {
+  setMsg($("#switchMsg"), s.text, s.error);
+  if (s.done && !s.error && !switching) reloadInfo().catch(e => setMsg($("#switchMsg"), e.message, true)); // switched from the widget
+};
+window.onUsingChanged = () => { if (!switching) reloadInfo().catch(e => setMsg($("#switchMsg"), e.message, true)); };
+$("#using").addEventListener("click", async e => {
+  const b = e.target.closest("button");
+  if (!b || b.disabled || switching || b.getAttribute("aria-checked") === "true") return;
+  const was = (INFO.adapters.find(a => a.using) || {}).key;
+  switching = true;
+  $$("#using button").forEach(x => { x.disabled = true; });
+  markSeg($("#using"), b.dataset.k);
+  setMsg($("#switchMsg"), `Switching to the ${NAME(b.dataset.k)}…`);
+  try {
+    await call("switch_to", b.dataset.k);
+    await reloadInfo();
+  } catch (err) {
+    markSeg($("#using"), was);
+    setMsg($("#switchMsg"), err.message, true);
+  } finally {
+    switching = false;
+    $$("#using button").forEach(x => { x.disabled = !INFO.admin; });
+  }
+});
 
 const SIG_N = 60;  // 2 minutes of readings, one every 2 s
 const sig = {};    // adapter key -> readings; null while not connected
@@ -669,21 +735,7 @@ function renderRadio() {
   setText($("#btRadio"), act ? act.name : "no radio");
   setText($("#btOther"), other ? `The ${other.name} radio is turned off.` : "");
   setText($("#btLabel"), act && act.version ? `Bluetooth ${act.version}` : "Bluetooth");
-  const b = $("#tryRadio");
-  b.hidden = !other;
-  if (other) swap(b, `Use ${other.key === "builtin" ? "built-in" : SHORT(other.key)} radio`);
-  b.disabled = !BT.can_switch;
-  if (!BT.can_switch) setMsg($("#btMsg"), "Bluetooth radio switching needs administrator rights.");
 }
-$("#tryRadio").addEventListener("click", async function () {
-  const other = BT && BT.radios.find(r => r.key !== BT.active);
-  if (!other || this.disabled) return;
-  try {
-    await busy(this, "Switching…", call("bt_switch", other.key));
-    setMsg($("#btMsg"), `Switched to the ${other.name} radio. Paired devices reconnect on their own.`);
-  } catch (e) { setMsg($("#btMsg"), e.message, true); }
-  try { BT = await call("bt_radio"); renderRadio(); } catch (e) { setMsg($("#btMsg"), e.message, true); }
-});
 $("#paired").addEventListener("click", async e => {
   const b = e.target.closest(".conn"); if (!b || b.disabled) return;
   const r = b.closest(".row"), on = $(".st", r).classList.contains("ok");
@@ -785,7 +837,7 @@ $("#nearby").addEventListener("click", async e => {
 
 // ================= Saved =================
 function savedRow(s) {
-  const all = INFO.adapters.map(a => a.key), missing = all.filter(k => !s.on.includes(k));
+  const all = INFO.adapters.filter(a => !a.off).map(a => a.key), missing = all.filter(k => !s.on.includes(k));
   const where = all.length > 1 && !missing.length ? "Both adapters" : `${NAME(s.on[0])} only`;
   const copy = missing.length ? `<button class="btn small copy" data-src="${esc(s.on[0])}" data-dst="${esc(missing[0])}"><span class="label">Copy to ${esc(missing[0] === "builtin" ? "built-in" : SHORT(missing[0]))}</span></button>` : "";
   return `<div class="row" data-ssid="${esc(s.ssid)}">
@@ -1097,6 +1149,7 @@ addEventListener("resize", () => {
   if (nearbyShown()) { drawMaps(); highlight(selected); markSel(true); }
   if (!$("#speed").hidden) drawSpeed();
   slide($(".ad-ind"), activeAdapter(), true);
+  slide($("#using .ind"), $("#using [aria-checked='true']"), true);
   slide($(".nav-ind"), $("nav button[aria-current]"), true);
   if (!$("#wifi").hidden) slide($(".tab-ind"), $(".tabs button[aria-selected='true']"), true);
 });
@@ -1112,11 +1165,8 @@ setTimeout(() => { if (!INFO && !MOCK && !window.pywebview) setMsg($("#wifiMsg")
   if ($("#wifiMsg").textContent.startsWith("Waiting for the app")) setMsg($("#wifiMsg"), "");
   setText($("#ver"), `Unigen Manager v${INFO.version}`);
   if (!INFO.adapters.length) return setMsg($("#wifiMsg"), "No Wi-Fi adapters found. Plug in the Unigen dongle.", true);
-  renderRail();
   RESULTS = await call("speed_results").catch(() => ({}));
-  renderResults(); showReadouts();
-  setText($("#speed h1"), `Speed on ${NAME(activeKey())}`);
-  setText($("#tpSub"), `${NAME(activeKey())}, Mbps`);
+  applyInfo();
   await poll();
   await loadNetworks(false).catch(e => setMsg($("#wifiMsg"), e.message, true));
   loadNetworks(true).catch(() => {}); // Windows' cached list can be stale or empty until the adapter rescans

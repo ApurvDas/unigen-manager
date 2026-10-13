@@ -52,3 +52,13 @@ button { font: inherit; color: inherit; }
 .switch.on i { background: #fff; }
 .switch:disabled { opacity: .5; cursor: default; }
 .switch:focus-visible { outline: 2px solid var(--uni); outline-offset: 2px; }
+
+/* segmented control with one sliding highlight (the Using control in both windows; positioned by slide() in JS) */
+.seg { position: relative; display: flex; gap: 2px; background: var(--panel); border-radius: 7px; padding: 3px; }
+.seg button { position: relative; z-index: 1; background: none; border: 0; cursor: pointer; padding: 4px 12px; border-radius: 5px; color: var(--muted); font: 500 13px var(--display); }
+.seg button[aria-checked="true"] { color: var(--ink); }
+.seg button:disabled { cursor: default; }
+.seg .ind { position: absolute; top: 3px; bottom: 3px; left: 0; right: auto; background: var(--raised); border-radius: 5px; pointer-events: none; }
+@media (hover: hover) and (pointer: fine) {
+  .seg button:not(:disabled):hover { color: var(--ink); }
+}

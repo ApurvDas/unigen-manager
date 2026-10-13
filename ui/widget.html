@@ -23,14 +23,9 @@
   .widget .btn { padding: 5px 11px; font-size: 13px; white-space: nowrap; }
   .widget .btn:not(.primary) { background: var(--panel); }
 
-  /* Wi-Fi uses: one sliding highlight between the adapters */
+  /* Using: Dongle | Built-in (.seg is in shared.css) */
   .uses { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
   .uses .lbl { color: var(--muted); font-size: 13px; }
-  .seg { position: relative; display: flex; gap: 2px; background: var(--panel); border-radius: 7px; padding: 3px; }
-  .seg button { position: relative; z-index: 1; background: none; border: 0; cursor: pointer; padding: 4px 12px; border-radius: 5px; color: var(--muted); font: 500 13px var(--display); }
-  .seg button[aria-checked="true"] { color: var(--ink); }
-  .seg button:disabled { cursor: default; }
-  .seg .ind { position: absolute; top: 3px; bottom: 3px; left: 0; background: var(--raised); border-radius: 5px; pointer-events: none; }
 
   .ad { display: grid; grid-template-columns: 10px 1fr auto; column-gap: 10px; row-gap: 2px; align-items: center; padding: 6px 0; }
   .ad + .ad { border-top: 1px solid var(--line); }
@@ -67,7 +62,7 @@
   #spark .area { fill-opacity: 0.1; }
 
   @media (hover: hover) and (pointer: fine) {
-    .icon-btn:hover, .seg button:not(:disabled):hover { color: var(--ink); }
+    .icon-btn:hover { color: var(--ink); }
   }
 
   /* ---------- ?mock preview only: a Windows 10 taskbar to click ---------- */
@@ -103,7 +98,7 @@
     </button>
   </header>
   <div class="sec">
-    <div class="uses"><span class="lbl" id="usesLbl">Wi-Fi uses</span><div class="seg" role="radiogroup" aria-labelledby="usesLbl"></div></div>
+    <div class="uses"><span class="lbl" id="usesLbl">Using</span><div class="seg" role="radiogroup" aria-labelledby="usesLbl"></div></div>
     <div id="ads"></div>
     <p class="msg" id="wifiMsg"></p>
   </div>
@@ -117,7 +112,6 @@
       <button class="switch on" id="btPower" role="switch" aria-checked="true" aria-label="Bluetooth"><i></i></button>
       <span class="ver" id="btVer">Bluetooth</span>
       <span class="dev" id="btDev"></span>
-      <button class="btn" id="btSwitch"><span class="label">Switch</span></button>
     </div>
     <p class="msg" id="btMsg"></p>
   </div>
@@ -155,7 +149,6 @@
 // opened as widget.html?mock it floats above a fake taskbar for preview and tests.
 let INFO = null, ADS = [], uses = null, BT = null, RESULTS = {}, live = null, shown = false;
 const NAME = k => (INFO && INFO.adapters.find(a => a.key === k) || {}).name || k;
-const SHORT = k => ({ unigen: "Unigen", builtin: "Built-in" })[k] || NAME(k);
 const COLOR = k => ({ unigen: "var(--uni)", builtin: "var(--bi)" })[k] || "var(--muted)";
 const note = (el, text, isErr) => setMsg(el, text, isErr, { clearAfter: isErr ? 0 : 4000 }); // a flyout stays compact
 const fail = el => e => note(el, e.message, true);
@@ -164,29 +157,25 @@ const fail = el => e => note(el, e.message, true);
 const level = s => s == null ? 0 : s >= 80 ? 4 : s >= 60 ? 3 : s >= 40 ? 2 : 1;
 const bars = s => `<span class="bars" aria-hidden="true">${[1, 2, 3, 4].map(i => `<i class="${i <= level(s) ? "lit" : ""}"></i>`).join("")}</span>`;
 function renderAdapters() {
-  $(".seg").innerHTML = `<span class="ind" data-axis="x" aria-hidden="true"></span>` + INFO.adapters.map(a =>
-    `<button role="radio" aria-checked="false" data-k="${esc(a.key)}">${esc(SHORT(a.key))}</button>`).join("");
+  buildSeg($(".seg"), INFO.adapters);
   $("#ads").innerHTML = INFO.adapters.map(a => `
     <div class="ad" data-k="${esc(a.key)}">
       <span class="dot"></span><span class="name">${esc(a.name)}</span>
       <span class="ssid off">Checking…</span>
       <span class="sub"><span class="pct num">–</span>${bars(null)}<span class="rate">No link</span></span>
     </div>`).join("");
-  $$(".seg button").forEach(b => b.addEventListener("click", () => useAdapter(b)));
+  $$(".seg button").forEach(b => { b.addEventListener("click", () => switchTo(b)); b.disabled = !INFO.admin; });
+  $(".seg").title = INFO.admin ? "" : ADMIN_TIP;
 }
-function markUses(instant) {
-  $$(".seg button").forEach(b => b.setAttribute("aria-checked", b.dataset.k === uses));
-  const b = $$(".seg button").find(x => x.dataset.k === uses);
-  if (b) slide($(".seg .ind"), b, instant);
-}
+const markUses = instant => markSeg($(".seg"), uses, instant);
 // in place: only values that changed animate
 function updateAdapters() {
   for (const row of $$(".ad")) {
     const d = ADS.find(x => x.key === row.dataset.k), on = !!d && d.state === "connected";
     pop($(".dot", row), on);
-    const ssid = $(".ssid", row);
+    const ssid = $(".ssid", row), off = INFO.adapters.find(a => a.key === row.dataset.k).off;
     ssid.classList.toggle("off", !on);
-    setText(ssid, !d ? "Unplugged" : on ? d.ssid : "Not connected");
+    setText(ssid, !d ? (off ? "Off" : "Unplugged") : on ? d.ssid : "Not connected");
     setText($(".pct", row), on ? `${d.signal}%` : "–");
     setText($(".rate", row), on ? `${d.rate} Mbps` : "No link");
     $(".bars", row).outerHTML = bars(on ? d.signal : null);
@@ -194,26 +183,39 @@ function updateAdapters() {
 }
 async function poll() {
   ADS = await call("adapters");
-  if (!uses || !ADS.some(a => a.key === uses)) uses = (ADS.find(a => a.state === "connected") || ADS[0] || {}).key || null;
+  if (!uses || !ADS.some(a => a.key === uses)) uses = INFO.using || (ADS.find(a => a.state === "connected") || ADS[0] || {}).key || null;
   updateAdapters(); markUses(true);
 }
-async function useAdapter(b) {
+// One switch moves Wi-Fi and Bluetooth; Python pushes each step to onSwitchStep while it runs.
+let switching = false;
+async function reloadAll() {  // after a switch, here or by the watchdog: new INFO, then everything that depends on it
+  INFO = await call("app_info"); uses = INFO.using;
+  renderAdapters(); markUses(true);
+  await poll();
+  await Promise.all([loadNets(), loadBt(), loadSpeed(true)]);
+}
+window.onSwitchStep = s => {
+  note($("#wifiMsg"), s.text, s.error);
+  if (s.done && !s.error && !switching) reloadAll().catch(fail($("#wifiMsg")));  // switched from the other window
+};
+window.onUsingChanged = () => { if (!switching) reloadAll().catch(fail($("#wifiMsg"))); };
+async function switchTo(b) {
   const k = b.dataset.k;
-  if (b.disabled || (k === uses && ADS.filter(a => a.state === "connected").length <= 1)) return;  // both connected: this still disconnects the other
+  if (b.disabled || k === uses || switching) return;
   const was = uses;
-  $$(".seg button").forEach(x => { x.setAttribute("aria-checked", x === b); x.disabled = true; });
-  slide($(".seg .ind"), b);
-  note($("#wifiMsg"), `Switching Wi-Fi to the ${NAME(k)}…`);
+  switching = true;
+  $$(".seg button").forEach(x => { x.disabled = true; });
+  markSeg($(".seg"), k);
+  note($("#wifiMsg"), `Switching to the ${NAME(k)}…`);
   try {
-    await call("use_adapter", k);
-    uses = k;
-    await Promise.all([poll(), loadNets(), loadSpeed(true)]);
-    note($("#wifiMsg"), `Wi-Fi now uses the ${NAME(k)}.`);
+    await call("switch_to", k);
+    await reloadAll();
   } catch (e) {
     uses = was; markUses();
     note($("#wifiMsg"), e.message, true);
   } finally {
-    $$(".seg button").forEach(x => { x.disabled = false; });
+    switching = false;
+    $$(".seg button").forEach(x => { x.disabled = !INFO.admin; });
   }
 }
 
@@ -246,25 +248,11 @@ async function loadBt() {
   const on = BT.power !== "off", sw = $("#btPower");
   sw.setAttribute("aria-checked", String(on)); sw.classList.toggle("on", on);
   anime.animate($("i", sw), { x: on ? 16 : 0, duration: reduce ? 0 : 180, ease });
-  const act = BT.radios.find(r => r.key === BT.active), other = BT.radios.find(r => r.key !== BT.active);
+  const act = BT.radios.find(r => r.key === BT.active);
   const dev = paired.find(d => d.connected);
   setText($("#btVer"), act && act.version ? `Bluetooth ${act.version}` : "Bluetooth");
   setText($("#btDev"), on ? (dev ? dev.name : "No device connected") : "Bluetooth is off");
-  const b = $("#btSwitch");
-  b.hidden = !other;
-  if (other) swap(b, `Use ${other.key === "builtin" ? "built-in" : SHORT(other.key)}`);
-  b.disabled = !BT.can_switch;
-  b.title = BT.can_switch ? "" : "Bluetooth radio switching needs administrator rights.";
 }
-$("#btSwitch").addEventListener("click", async function () {
-  const other = BT && BT.radios.find(r => r.key !== BT.active);
-  if (!other || this.disabled) return;
-  try {
-    await busy(this, "Switching…", call("bt_switch", other.key));
-    note($("#btMsg"), `Bluetooth now uses the ${other.name} radio.`);
-  } catch (e) { note($("#btMsg"), e.message, true); }
-  loadBt().catch(fail($("#btMsg")));
-});
 
 $("#btPower").addEventListener("click", async function () {
   if (this.disabled || !BT) return;
@@ -373,7 +361,7 @@ if (MOCK) {
 
 (async function start() {
   try {
-    INFO = await call("app_info");
+    INFO = await call("app_info"); uses = INFO.using;
     renderAdapters();
     await refresh(false);
   } catch (e) { note($("#wifiMsg"), e.message, true); }

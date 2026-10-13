@@ -66,7 +66,7 @@ def test_loads_networks_rail_and_versions(open_page):
     expect(pg.locator("#netRows .row")).to_have_count(8)  # 7 named + 1 hidden
     expect(pg.locator(".adapter")).to_have_count(2)
     expect(pg.locator(".adapter").nth(0).locator(".caps")).to_have_text("Wi-Fi 6, Bluetooth 5.4")
-    expect(pg.locator(".adapter").nth(1).locator(".caps")).to_have_text("Wi-Fi 6, Bluetooth 5.2")
+    expect(pg.locator(".adapter").nth(1).locator(".caps")).to_have_text("Bluetooth 5.2")  # off: no Wi-Fi driver to read
     expect(pg.locator(".adapter").nth(0).locator(".meta b")).to_have_text("HOME-5G")
     expect(pg.locator("#wifiLabel")).to_have_text("Wi-Fi 6")
     expect(pg.locator("#btLabel")).to_have_text("Bluetooth 5.4")
@@ -114,7 +114,7 @@ def test_new_network_password_rules_and_wrong_password(open_page):
 
 
 def test_saved_show_copy_delete(open_page):
-    pg = open_page()
+    pg = open_page("window.MOCK_BOTH_ON = true;")  # copy needs two adapters that are on
     pg.locator('.tabs button[data-view="saved"]').click()
     r = saved_row(pg, "Maple House")
     r.locator(".reveal").click()
@@ -142,20 +142,91 @@ def test_delete_failure_keeps_row(open_page):
     expect(saved_row(pg, "oldrouter")).to_have_count(1)
 
 
-def test_bt_radio_switch_changes_label(open_page):
+def using(pg, key):
+    return pg.locator(f'#using button[data-k="{key}"]')
+
+
+def rail(pg, key):
+    return pg.locator(f'.adapter[data-adapter="{key}"]')
+
+
+def test_using_switch_main(open_page):
     pg = open_page()
-    pg.keyboard.press("Control+2")
+    expect(using(pg, "unigen")).to_have_attribute("aria-checked", "true")
+    expect(pg.locator("#using button")).to_have_text(["Dongle", "Built-in"])
+    expect(rail(pg, "unigen").locator(".badge")).to_have_text("In use")
+    expect(rail(pg, "builtin").locator(".badge")).to_have_text("Off")
     expect(pg.locator("#btLabel")).to_have_text("Bluetooth 5.4")
-    pg.locator("#tryRadio").click()
+    using(pg, "builtin").click()
+    expect(pg.locator("#switchMsg")).to_have_text("Done. Using the Built-in MediaTek.")
+    expect(using(pg, "builtin")).to_have_attribute("aria-checked", "true")
+    expect(rail(pg, "builtin").locator(".badge")).to_have_text("In use")
+    expect(rail(pg, "unigen").locator(".badge")).to_have_text("Off")
+    expect(rail(pg, "builtin")).to_have_attribute("aria-pressed", "true")  # the Wi-Fi page follows the adapter in use
     expect(pg.locator("#btLabel")).to_have_text("Bluetooth 5.2")
-    expect(pg.locator("#btRadio")).to_have_text("Built-in MediaTek")
-
-
-def test_bt_switch_needs_admin(open_page):
-    pg = open_page("window.MOCK_ADMIN = false;")
+    expect(pg.locator("#bt")).to_be_hidden()
     pg.keyboard.press("Control+2")
-    expect(pg.locator("#tryRadio")).to_be_disabled()
-    expect(pg.locator("#btMsg")).to_contain_text("needs administrator rights")
+    expect(pg.locator("#btRadio")).to_have_text("Built-in MediaTek")
+    assert pg.locator("#tryRadio").count() == 0  # the Bluetooth page has no switch of its own any more
+
+
+def test_using_switch_shows_each_step(open_page):
+    pg = open_page("window.MOCK_FAST = false;")  # real 300 ms steps
+    using(pg, "builtin").click()
+    expect(pg.locator("#switchMsg")).to_have_text("Turning on the Built-in MediaTek…")
+    expect(pg.locator("#using button").first).to_be_disabled()
+    expect(pg.locator("#switchMsg")).to_have_text("Moving Bluetooth…", timeout=3000)
+    expect(pg.locator("#switchMsg")).to_have_text("Done. Using the Built-in MediaTek.", timeout=5000)
+    expect(pg.locator("#using button").first).to_be_enabled()
+
+
+def test_off_adapter_not_selectable(open_page):
+    pg = open_page("window.MOCK_LOG = [];")
+    pg.wait_for_function("window.MOCK_LOG.includes('scan')")
+    off = rail(pg, "builtin")
+    expect(off).to_have_class(re.compile(r"\boff\b"))
+    expect(off).to_have_attribute("aria-disabled", "true")
+    expect(off.locator(".meta b")).to_have_text("Off")
+    before = pg.evaluate("window.MOCK_LOG.filter(n => n === 'networks' || n === 'scan').length")
+    off.click(force=True)  # aria-disabled: Playwright would otherwise wait for it to be enabled
+    pg.wait_for_timeout(300)
+    expect(off).to_have_attribute("aria-pressed", "false")
+    expect(rail(pg, "unigen")).to_have_attribute("aria-pressed", "true")
+    assert pg.evaluate("window.MOCK_LOG.filter(n => n === 'networks' || n === 'scan').length") == before
+
+
+def test_using_switch_error_restores(open_page):
+    msg = "Couldn't finish switching to the Built-in MediaTek. You're still on the Unigen dongle."
+    pg = open_page(f'window.MOCK_FAIL = {{ switch_to: "{msg}" }};')
+    using(pg, "builtin").click()
+    expect(pg.locator("#switchMsg")).to_have_text(msg)
+    expect(pg.locator("#switchMsg")).to_have_class("msg err")
+    expect(using(pg, "unigen")).to_have_attribute("aria-checked", "true")
+    expect(using(pg, "builtin")).to_have_attribute("aria-checked", "false")
+    expect(pg.locator("#using button").first).to_be_enabled()
+    expect(rail(pg, "unigen").locator(".badge")).to_have_text("In use")
+
+
+def test_using_needs_admin(open_page):
+    pg = open_page("window.MOCK_ADMIN = false;")
+    expect(pg.locator("#using button").first).to_be_disabled()
+    expect(pg.locator("#using button").last).to_be_disabled()
+    expect(pg.locator("#using")).to_have_attribute("title", "Switching adapters needs administrator rights.")
+
+
+def test_using_changed_event_reloads(open_page):
+    pg = open_page()
+    pg.evaluate("mockApi._setUsing('builtin'); window.onUsingChanged()")  # what the watchdog triggers
+    expect(pg.locator("#btLabel")).to_have_text("Bluetooth 5.2")
+    expect(using(pg, "builtin")).to_have_attribute("aria-checked", "true")
+    expect(rail(pg, "builtin").locator(".badge")).to_have_text("In use")
+    expect(rail(pg, "builtin")).to_have_attribute("aria-pressed", "true")
+
+
+def test_unplugged_dongle_falls_back_in_mock(open_page):
+    pg = open_page("window.MOCK_UNPLUG = 'unigen';")
+    expect(pg.locator(".adapter")).to_have_count(1)
+    expect(using(pg, "builtin")).to_have_attribute("aria-checked", "true")
 
 
 def bt_page(open_page, hooks=""):
@@ -271,7 +342,7 @@ def test_speed_test_draws_and_saves(open_page):
 
 
 def test_unplugged_adapter_in_rail(open_page):
-    pg = open_page()
+    pg = open_page("window.MOCK_BOTH_ON = true;")
     pg.evaluate("window.MOCK_UNPLUG = 'builtin'")
     expect(pg.locator(".adapter").nth(1).locator(".meta b")).to_have_text("Unplugged", timeout=5000)
     pg.locator(".adapter").nth(1).click()
