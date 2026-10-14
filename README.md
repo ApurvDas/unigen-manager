@@ -284,6 +284,10 @@ flowchart LR
 
 ## Built with
 
-[pywebview](https://pywebview.flowrl.com/) · [pystray](https://github.com/moses-palmer/pystray) · [Pillow](https://python-pillow.org/) · [anime.js](https://animejs.com/) (MIT) · [Playwright](https://playwright.dev/python/) and [pytest](https://pytest.org/) for tests
+[pywebview](https://pywebview.flowrl.com/) (BSD) · [pystray](https://github.com/moses-palmer/pystray) (LGPL-3.0) · [Pillow](https://python-pillow.org/) (MIT-CMU) · [PyWinRT](https://github.com/pywinrt/pywinrt) (MIT) · [anime.js](https://animejs.com/) (MIT) · [Playwright](https://playwright.dev/python/) and [pytest](https://pytest.org/) for tests
 
 The network names, addresses and device names in the tests and screenshots are made up.
+
+## License
+
+[MIT](LICENSE). The libraries above keep their own licenses; the exe bundles them unchanged.
