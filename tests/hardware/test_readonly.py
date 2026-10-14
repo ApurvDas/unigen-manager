@@ -125,3 +125,13 @@ def test_battery_levels_read():
     import pnp
     levels = pnp.battery_levels()
     assert all(len(a) == 12 and 0 <= v <= 100 for a, v in levels.items())
+
+
+def test_device_state_read_matches_the_list():
+    # set_enabled polls pnp._status; read-only here: set_enabled itself is never called on real devices
+    import pnp
+    for r in pnp.list_devices():
+        state = pnp._status(r["id"])
+        assert state is not None, r["id"]
+        assert pnp._reached(state, True) == (r["status"] == "OK")
+        assert pnp._reached(state, False) == (r["problem"] == "CM_PROB_DISABLED")

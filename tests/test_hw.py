@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-import hw, winrun
+import hw, pnp, winrun
 
 UNI_WIFI = r"USB\VID_368B&PID_8D81&MI_02\7&AAAA0001&0&0002"
 UNI_BT = r"USB\VID_368B&PID_8D81&MI_00\7&AAAA0001&0&0000"
@@ -65,13 +65,12 @@ def test_save_choice_keeps_other_settings(tmp_path):
     assert json.loads(p.read_text(encoding="utf-8")) == {"other": 1, "use": "builtin"}
 
 
-def test_enable_disable_pass_id_as_param(monkeypatch):
+def test_enable_disable_call_pnp(monkeypatch):
     seen = []
-    monkeypatch.setattr(hw, "_ps", lambda script, params=None, *, timeout=60: seen.append((script, params)) or '{"ok":true}')
+    monkeypatch.setattr(pnp, "set_enabled", lambda i, on, *a, **kw: seen.append((i, on)))
     hw.enable(UNI_WIFI)
     hw.disable(MT_WIFI)
-    assert [p for _, p in seen] == [{"action": "enable", "id": UNI_WIFI}, {"action": "disable", "id": MT_WIFI}]
-    assert all(UNI_WIFI not in s and MT_WIFI not in s for s, _ in seen)
+    assert seen == [(UNI_WIFI, True), (MT_WIFI, False)]
 
 
 # ---- hw.use ----
@@ -98,6 +97,7 @@ class World:
         self.ids = {"unigen": {"wifi": UNI_WIFI, "bt": UNI_BT}, "builtin": {"wifi": MT_WIFI, "bt": MT_BT}}
         self.ifaces = [dict(BUILTIN_IF, state="connected" if connected else "disconnected")]
         self.fail_connect = self.fail_bt = self.fail_disable_old = False
+        self.bt_calls = []
         self.scans, self.visible_after = 0, 0  # the dongle sees HOME-5G only after this many scans
         mp = monkeypatch
         mp.setattr(wifi, "trigger_scan", lambda guid: setattr(self, "scans", self.scans + 1))
@@ -143,12 +143,18 @@ class World:
             raise wifi.WifiError(f"Couldn't connect to {ssid}.")
 
     def bt_switch(self, key):
-        self.calls.append(("bt.switch", key))
-        if self.fail_bt:
+        self.bt_calls.append(key)
+        self.calls.append(("bt", key))
+        if self.fail_bt and key == "unigen":
             raise bt.BtError("The Unigen dongle radio didn't start.")
 
+    def on_step(self, text):
+        self.steps.append(text)
+
     def use(self, target="unigen"):
-        return hw.use(target, on_step=self.steps.append, path=self.path, clock=itertools.count().__next__, sleep=lambda s: None)
+        self.later_notes = []
+        return hw.use(target, on_step=self.on_step, on_later=lambda text, ok: self.later_notes.append((text, ok)), path=self.path,
+                      clock=itertools.count().__next__, sleep=lambda s: None, spawn=lambda f: f())  # Bluetooth inline
 
 
 @pytest.fixture
@@ -158,11 +164,26 @@ def world(monkeypatch, tmp_path):
 
 def test_use_full_switch_order(world):
     assert world.use() == "unigen"
+    # one device change at a time (Windows queues them anyway); Bluetooth last, after the switch reports done
     assert world.calls == [("enable", UNI_WIFI), ("copy", "HOME-5G", "Wi-Fi", "Wi-Fi 2"), ("connect", "Wi-Fi 2", "HOME-5G"),
-                           ("bt.switch", "unigen"), ("disable", MT_WIFI)]
+                           ("disable", MT_WIFI), ("bt", "unigen")]
     assert hw.load_choice(world.path) == "unigen"
-    assert world.steps == ["Turning on the Unigen dongle…", "Connecting to HOME-5G…", "Moving Bluetooth…",
-                           "Turning off the Built-in MediaTek…", "Done. Using the Unigen dongle."]
+    assert world.steps == ["Turning on the Unigen dongle…", "Connecting to HOME-5G…",
+                           "Done. Using the Unigen dongle. Bluetooth is moving too; this can take up to a minute."]
+    assert world.later_notes == [("Bluetooth moved to the Unigen dongle.", True)]
+
+
+def test_use_returns_before_bluetooth_moves_and_holds_the_lock_until_it_has(world):
+    jobs = []
+    r = hw.use("unigen", on_step=world.on_step, path=world.path, clock=itertools.count().__next__, sleep=lambda s: None,
+               spawn=jobs.append)
+    assert r == "unigen" and world.bt_calls == [] and len(jobs) == 1  # Wi-Fi works; old Wi-Fi and Bluetooth not touched yet
+    assert ("disable", MT_WIFI) not in world.calls
+    with pytest.raises(hw.HwError, match="still finishing"):
+        world.use()
+    jobs[0]()
+    assert world.bt_calls == ["unigen"] and hw._lock.acquire(blocking=False)
+    hw._lock.release()
 
 
 def test_use_skips_copy_when_dongle_already_has_the_profile(monkeypatch, tmp_path):
@@ -174,7 +195,7 @@ def test_use_skips_copy_when_dongle_already_has_the_profile(monkeypatch, tmp_pat
 def test_use_without_network_skips_connect(monkeypatch, tmp_path):
     w = World(monkeypatch, tmp_path, connected=False)
     w.use()
-    assert [c[0] for c in w.calls] == ["enable", "bt.switch", "disable"] and w.calls[-1] == ("disable", MT_WIFI)
+    assert [c[0] for c in w.calls] == ["enable", "disable", "bt"] and w.calls[-2] == ("disable", MT_WIFI)
     assert hw.load_choice(w.path) == "unigen"
 
 
@@ -183,7 +204,7 @@ def test_use_target_wifi_never_appears_restarts_once_then_rolls_back(monkeypatch
     hw.save_choice(w.path, "builtin")
     with pytest.raises(hw.HwError) as e:
         w.use()
-    assert w.calls == [("enable", UNI_WIFI), ("disable", UNI_WIFI), ("enable", UNI_WIFI), ("disable", UNI_WIFI)]
+    assert w.calls == [("enable", UNI_WIFI), ("disable", UNI_WIFI), ("enable", UNI_WIFI), ("disable", UNI_WIFI)]  # Bluetooth untouched
     assert str(e.value) == "The Unigen dongle's Wi-Fi didn't start. You're still on the Built-in MediaTek."
     assert hw.load_choice(w.path) == "builtin"
 
@@ -193,17 +214,18 @@ def test_use_connect_fails_rolls_back(world):
     hw.save_choice(world.path, "builtin")
     with pytest.raises(hw.HwError, match="You're still on the Built-in MediaTek"):
         world.use()
-    assert world.calls[-1] == ("disable", UNI_WIFI) and ("bt.switch", "unigen") not in world.calls
+    assert world.calls[-1] == ("disable", UNI_WIFI)
     assert ("disable", MT_WIFI) not in world.calls and hw.load_choice(world.path) == "builtin"
+    assert world.bt_calls == []  # Bluetooth moves only after Wi-Fi works
 
 
-def test_use_bt_fails_rolls_back_wifi(world):
+def test_use_bt_fails_keeps_wifi_and_warns(world):
     world.fail_bt = True
-    hw.save_choice(world.path, "builtin")
-    with pytest.raises(hw.HwError, match="You're still on the Built-in MediaTek"):
-        world.use()
-    assert world.calls[-1] == ("disable", UNI_WIFI) and ("disable", MT_WIFI) not in world.calls
-    assert hw.load_choice(world.path) == "builtin"
+    assert world.use() == "unigen"
+    assert ("disable", MT_WIFI) in world.calls and hw.load_choice(world.path) == "unigen"
+    assert world.later_notes == [("Bluetooth couldn't move and stays on the Built-in MediaTek. Switch again to retry.", False)]
+    assert hw._lock.acquire(blocking=False)  # released even when Bluetooth failed
+    hw._lock.release()
 
 
 def test_use_enable_refused_is_a_plain_sentence(world, monkeypatch):
@@ -217,15 +239,24 @@ def test_use_enable_refused_is_a_plain_sentence(world, monkeypatch):
 def test_use_already_in_use_only_saves_choice(world):
     world.state = {"unigen": {"wifi": True, "bt": True}, "builtin": {"wifi": False, "bt": False}}
     assert world.use() == "unigen"
-    assert world.calls == [] and hw.load_choice(world.path) == "unigen"
+    assert world.calls == [] and world.bt_calls == [] and hw.load_choice(world.path) == "unigen"
     assert world.steps == ["Done. Using the Unigen dongle."]
+
+
+def test_use_already_in_use_repairs_half_moved_bluetooth(world):
+    world.state = {"unigen": {"wifi": True, "bt": False}, "builtin": {"wifi": False, "bt": True}}
+    assert world.use() == "unigen"
+    assert world.calls == [("bt", "unigen")]
+    assert world.steps == ["Done. Using the Unigen dongle. Bluetooth is moving too; this can take up to a minute."]
+    assert world.later_notes == [("Bluetooth moved to the Unigen dongle.", True)]
 
 
 def test_use_old_wifi_disable_fails_still_succeeds(world):
     world.fail_disable_old = True
     assert world.use() == "unigen"
     assert hw.load_choice(world.path) == "unigen"
-    assert world.steps[-1] == "Done. Using the Unigen dongle. The Built-in MediaTek couldn't be turned off; Windows may still use it."
+    assert world.later_notes == [("The Built-in MediaTek couldn't be turned off; Windows may still use it. "
+                                  "Bluetooth moved to the Unigen dongle.", False)]
 
 
 def test_use_target_not_plugged_in(world):
@@ -238,7 +269,7 @@ def test_use_target_not_plugged_in(world):
 def test_second_concurrent_use_refused(world):
     assert hw._lock.acquire(blocking=False)
     try:
-        with pytest.raises(hw.HwError, match="A switch is already running."):
+        with pytest.raises(hw.HwError, match="A switch is still finishing."):
             world.use()
     finally:
         hw._lock.release()
@@ -406,6 +437,17 @@ def test_use_waits_until_the_new_adapter_sees_the_network(world):
     world.visible_after = 3  # a freshly enabled adapter hasn't scanned yet: connecting at once fails
     assert world.use() == "unigen"
     assert world.scans >= 3 and ("connect", "Wi-Fi 2", "HOME-5G") in world.calls
+
+
+def test_use_waits_out_netsh_errors_while_the_adapter_starts(world, monkeypatch):
+    real, n = wifi.interfaces, []
+    def flaky():
+        n.append(1)
+        if len(n) in (2, 3):  # after enable: netsh says "not in the correct state" for a moment
+            raise winrun.CmdError("The group or resource is not in the correct state to perform the requested operation.")
+        return real()
+    monkeypatch.setattr(wifi, "interfaces", flaky)
+    assert world.use() == "unigen" and ("connect", "Wi-Fi 2", "HOME-5G") in world.calls
 
 
 def test_use_retries_enable_while_the_device_settles(world, monkeypatch):

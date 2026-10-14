@@ -339,7 +339,8 @@ class Api:
             last[:] = [text]
             self._push_step(text)
         try:
-            hw.use(key, on_step=step, path=self._settings)
+            hw.use(key, on_step=step, path=self._settings,  # Bluetooth finishes after this returns
+                   on_later=lambda text, ok: self._push_step(text, done=True, error=not ok))
         except hw.HwError as e:
             self._push_step(str(e), done=True, error=True)
             raise

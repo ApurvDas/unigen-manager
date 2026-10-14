@@ -208,13 +208,14 @@ window.mockApi = (() => {
     const t = plugged().find(a => a.key === key);
     if (!t) throw new Error(`The ${NAMES[key] || key} isn't plugged in.`);
     const old = plugged().find(a => a.key !== key), say = (text, done) => window.onSwitchStep && window.onSwitchStep({ text, done, error: false });
-    for (const text of [`Turning on the ${t.name}…`, "Connecting to HOME-5G…", "Moving Bluetooth…", old && `Turning off the ${old.name}…`].filter(Boolean)) {
+    for (const text of [`Turning on the ${t.name}…`, "Connecting to HOME-5G…"]) {
       say(text, false);
       await wait(300);
     }
     USING = key;
     t.state = "connected"; t.ssid = "HOME-5G";
-    say(`Done. Using the ${t.name}.`, true);
+    say(`Done. Using the ${t.name}.${old ? " Bluetooth is moving too; this can take up to a minute." : ""}`, true);
+    if (old) wait(600).then(() => say(`Bluetooth moved to the ${t.name}.`, true));  // like hw: the old Wi-Fi and Bluetooth finish later
     return { using: key };
   });
   def("is_visible", 0, which => true);

@@ -159,7 +159,7 @@ def test_using_switch_main(open_page):
     expect(rail(pg, "builtin").locator(".meta b")).to_have_text("Off")
     expect(pg.locator("#btLabel")).to_have_text("Bluetooth 5.4")
     using(pg, "builtin").click()
-    expect(pg.locator("#switchMsg")).to_have_text("Done. Using the Built-in MediaTek.")
+    expect(pg.locator("#switchMsg")).to_have_text("Bluetooth moved to the Built-in MediaTek.")
     expect(using(pg, "builtin")).to_have_attribute("aria-checked", "true")
     expect(rail(pg, "builtin").locator(".badge")).to_have_text("In use")
     expect(rail(pg, "unigen").locator(".badge")).to_have_count(0)
@@ -177,9 +177,10 @@ def test_using_switch_shows_each_step(open_page):
     using(pg, "builtin").click()
     expect(pg.locator("#switchMsg")).to_have_text("Turning on the Built-in MediaTek…")
     expect(pg.locator("#using button").first).to_be_disabled()
-    expect(pg.locator("#switchMsg")).to_have_text("Moving Bluetooth…", timeout=3000)
-    expect(pg.locator("#switchMsg")).to_have_text("Done. Using the Built-in MediaTek.", timeout=5000)
-    expect(pg.locator("#using button").first).to_be_enabled()
+    expect(pg.locator("#switchMsg")).to_have_text("Connecting to HOME-5G…", timeout=3000)
+    expect(pg.locator("#switchMsg")).to_have_text("Done. Using the Built-in MediaTek. Bluetooth is moving too; this can take up to a minute.", timeout=5000)
+    expect(pg.locator("#using button").first).to_be_enabled()  # Wi-Fi works: no waiting for Bluetooth
+    expect(pg.locator("#switchMsg")).to_have_text("Bluetooth moved to the Built-in MediaTek.", timeout=3000)
 
 
 def test_off_adapter_not_selectable(open_page):

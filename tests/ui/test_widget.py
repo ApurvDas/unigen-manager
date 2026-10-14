@@ -66,7 +66,7 @@ def test_widget_using_switch(widget):
     pg = widget()
     expect(ad(pg, "builtin").locator(".ssid")).to_have_text("Off")
     pg.locator('.seg button[data-k="builtin"]').click()
-    expect(pg.locator("#wifiMsg")).to_have_text("Done. Using the Built-in MediaTek.")
+    expect(pg.locator("#wifiMsg")).to_have_text("Bluetooth moved to the Built-in MediaTek.")
     expect(pg.locator('.seg button[aria-checked="true"]')).to_have_text("Built-in")
     expect(ad(pg, "builtin").locator(".ssid")).to_have_text("HOME-5G")
     expect(ad(pg, "unigen").locator(".ssid")).to_have_text("Off")
@@ -78,7 +78,7 @@ def test_widget_shows_each_step(widget):
     pg.locator('.seg button[data-k="builtin"]').click()
     expect(pg.locator("#wifiMsg")).to_have_text("Turning on the Built-in MediaTek…")
     expect(pg.locator(".seg button").first).to_be_disabled()
-    expect(pg.locator("#wifiMsg")).to_have_text("Done. Using the Built-in MediaTek.", timeout=5000)
+    expect(pg.locator("#wifiMsg")).to_have_text("Done. Using the Built-in MediaTek. Bluetooth is moving too; this can take up to a minute.", timeout=5000)
     expect(pg.locator(".seg button").first).to_be_enabled()
 
 

@@ -5,17 +5,11 @@ from pathlib import Path
 import bt, pnp, winrun, wifi
 
 log = logging.getLogger("unigen")
-_ps = winrun.ps  # tests replace this (enable/disable)
 _rows = pnp.list_devices  # tests replace this (reads)
-_SCRIPT = Path(__file__).with_name("hw.ps1")
 
 
 class HwError(Exception):
     """A switch could not finish; str(e) is safe to show the user and says where the user stands."""
-
-
-def _call(action, **params):
-    return json.loads(_ps(_SCRIPT.read_text(encoding="utf-8"), {"action": action, **params}, timeout=90))
 
 
 def device_key(instance_id, name):
@@ -41,12 +35,12 @@ def devices():
     return out
 
 
-def enable(dev_id):
-    _call("enable", id=dev_id)
+def enable(dev_id):  # tests replace this and disable
+    pnp.set_enabled(dev_id, True)
 
 
 def disable(dev_id):
-    _call("disable", id=dev_id)
+    pnp.set_enabled(dev_id, False)
 
 
 def load_choice(path):
@@ -84,19 +78,55 @@ def _iface(key):
 def _wait_iface(key, wait, clock, sleep):
     deadline = clock() + wait
     while clock() < deadline:
-        i = _iface(key)
+        try:
+            i = _iface(key)
+        except (wifi.WifiError, wifi.ParseError, winrun.CmdError):
+            i = None  # netsh says "not in the correct state" while the adapter starts
         if i:
             return i
         sleep(1)
     return None
 
 
-def use(target, *, on_step=lambda text: None, path, wait=20.0, clock=time.monotonic, sleep=time.sleep):
-    """Make `target` the adapter in use: Wi-Fi and Bluetooth together. Any failure leaves the old adapter working."""
+def use(target, *, on_step=lambda text: None, on_later=lambda text, ok: None, path, wait=20.0, clock=time.monotonic,
+        sleep=time.sleep, spawn=lambda f: threading.Thread(target=f, name="bt-move", daemon=True).start()):
+    """Make `target` the adapter in use: Wi-Fi and Bluetooth together. Any failure leaves the old adapter working.
+    Returns once Wi-Fi works. The old Wi-Fi then goes off and Bluetooth moves in the background (spawn): taking a
+    radio off can take a minute while Windows removes its paired devices' audio drivers. on_later(text, ok) reports
+    how that went; the lock is held until it's over, so a second switch can't overlap it."""
     if not _lock.acquire(blocking=False):
-        raise HwError("A switch is already running.")
+        raise HwError("A switch is still finishing. Bluetooth can take up to a minute; try again in a moment.")
+    move = None
     try:
-        return _use(target, on_step, path, wait, clock, sleep)
+        result, move = _use(target, on_step, path, wait, clock, sleep)
+        return result
+    finally:
+        if move:
+            spawn(lambda: _finish(*move, on_later))
+        else:
+            _lock.release()
+
+
+def _finish(target, old, wifi_id, move_bt, on_later):
+    """The slow tail of a switch, once Wi-Fi works: turn the old adapter's Wi-Fi off, then move Bluetooth."""
+    notes, ok = [], True
+    try:
+        if wifi_id:
+            try:
+                disable(wifi_id)
+            except winrun.CmdError as e:
+                log.warning("turning off %s failed: %s", old, e)
+                notes.append(f"The {_name(old)} couldn't be turned off; Windows may still use it.")
+                ok = False
+        if move_bt:
+            try:
+                bt.switch(target)
+                notes.append(f"Bluetooth moved to the {_name(target)}.")
+            except Exception as e:  # bt.switch put the old radio back
+                log.warning("moving Bluetooth to %s failed: %s", target, e)
+                notes.append(f"Bluetooth couldn't move and stays on the {_name(old)}. Switch again to retry.")
+                ok = False
+        on_later(" ".join(notes) or f"The {_name(old)} is off.", ok)
     finally:
         _lock.release()
 
@@ -110,11 +140,15 @@ def _use(target, on_step, path, wait, clock, sleep):
     back = f" You're still on the {_name(old)}." if old else ""
     if not t["wifi"]:
         raise HwError(f"The {_name(target)} has no Wi-Fi device to turn on.{back}")
+    both_bt = bool(t["bt"] and o.get("bt"))
+    later = " Bluetooth is moving too; this can take up to a minute."
     if t["wifi"]["ok"] and not (o.get("wifi") and o["wifi"]["ok"]):  # already in use
+        half = both_bt and (not t["bt"]["ok"] or o["bt"]["ok"])  # a half-done switch: finish moving Bluetooth
         save_choice(path, target)
-        on_step(f"Done. Using the {_name(target)}.")
-        return target
+        on_step(f"Done. Using the {_name(target)}.{later if half else ''}")
+        return target, (target, old, None, True) if half else None
     old_iface = _iface(old) if old else None
+    bail = lambda: _undo(t)  # Wi-Fi failed: Bluetooth hasn't moved yet, so only Wi-Fi needs undoing
     on_step(f"Turning on the {_name(target)}…")
     try:
         _settled(enable, t["wifi"]["id"], sleep)
@@ -122,11 +156,11 @@ def _use(target, on_step, path, wait, clock, sleep):
             _settled(disable, t["wifi"]["id"], sleep)  # restart once: clears a half-started driver
             _settled(enable, t["wifi"]["id"], sleep)
             if not _wait_iface(target, wait, clock, sleep):
-                _undo(t)
+                bail()
                 raise HwError(f"The {_name(target)}'s Wi-Fi didn't start.{back}")
     except _FAIL as e:
         log.warning("turning on %s failed: %s", target, e)
-        _undo(t)
+        bail()
         raise HwError(f"Couldn't turn on the {_name(target)}.{back}") from None
     try:
         ssid = old_iface.get("ssid") if old_iface and old_iface.get("state") == "connected" else None
@@ -138,24 +172,14 @@ def _use(target, on_step, path, wait, clock, sleep):
                 wifi.copy_profile(old_iface.get("profile") or ssid, old_iface["name"], ti["name"])
             _wait_visible(ti, ssid, wait, clock, sleep)
             wifi.connect(ti["name"], ssid, saved=True)
-        if t["bt"] and o.get("bt"):
-            on_step("Moving Bluetooth…")
-            bt.switch(target)
     except _FAIL as e:
         log.warning("switch to %s failed: %s", target, e)
-        _undo(t)
+        bail()
         raise HwError(f"Couldn't finish switching to the {_name(target)}.{back}") from None
-    warn = ""
-    if o.get("wifi"):
-        on_step(f"Turning off the {_name(old)}…")
-        try:
-            disable(o["wifi"]["id"])
-        except winrun.CmdError as e:
-            log.warning("turning off %s failed: %s", old, e)
-            warn = f" The {_name(old)} couldn't be turned off; Windows may still use it."
-    save_choice(path, target)
-    on_step(f"Done. Using the {_name(target)}.{warn}")
-    return target
+    save_choice(path, target)  # Wi-Fi works: the rest happens in the background
+    on_step(f"Done. Using the {_name(target)}.{later if both_bt else ''}")
+    wifi_id = o["wifi"]["id"] if o.get("wifi") else None
+    return target, (target, old, wifi_id, both_bt) if wifi_id or both_bt else None
 
 
 def _settled(action, dev_id, sleep, tries=3):
@@ -211,7 +235,7 @@ class Follower:
 
     def _switch(self, choice, ok_text):
         try:
-            self._use(choice, path=self._path)
+            self._use(choice, path=self._path, on_later=lambda text, ok: ok or self._notify(text, False))
         except HwError as e:
             self._notify(str(e), False)
         else:

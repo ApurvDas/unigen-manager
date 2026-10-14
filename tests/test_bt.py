@@ -1,4 +1,4 @@
-import ctypes, json
+import ctypes
 import pytest
 import bt
 import btwinrt
@@ -11,23 +11,20 @@ RADIOS_OK_UNIGEN = [
 
 
 class FakePs:
-    """Answers bt.ps1 actions; radio states follow a script of 'radios' answers."""
-    def __init__(self, radio_states, answers=None):
-        self.calls, self.states, self.answers = [], list(radio_states), answers or {}
+    """Replaces bt._set (enable/disable, recorded as (action, id, wait)) and bt._radio_rows (a script of radio lists)."""
+    def __init__(self, radio_states):
+        self.calls, self.states = [], list(radio_states)
 
-    def __call__(self, script, params, **kw):
-        assert "$p.action" in script  # the fixed bt.ps1 text, never built from inputs
-        self.calls.append(params)
-        a = params["action"]
-        if a == "radios":
-            return json.dumps(self.states.pop(0) if len(self.states) > 1 else self.states[0])
-        return json.dumps(self.answers.get(a, {"ok": True}))
+    def rows(self):
+        return self.states.pop(0) if len(self.states) > 1 else self.states[0]
+
+    def set(self, dev_id, on, wait=30.0):
+        self.calls.append(("enable" if on else "disable", dev_id, wait))
 
 
 def use_fake(monkeypatch, fake):
-    """bt.ps1 answers enable/disable; the radio list comes from SetupAPI (bt._radio_rows), scripted by the same fake."""
-    monkeypatch.setattr(bt, "_ps", fake)
-    monkeypatch.setattr(bt, "_radio_rows", lambda: json.loads(fake("$p.action", {"action": "radios"})))
+    monkeypatch.setattr(bt, "_set", fake.set)
+    monkeypatch.setattr(bt, "_radio_rows", fake.rows)
     return fake
 
 
@@ -55,8 +52,8 @@ def test_switch_success_disables_current_then_enables_target(monkeypatch):
     fake = FakePs([RADIOS_OK_UNIGEN, flipped(False, False), flipped(False, True)])
     use_fake(monkeypatch, fake)
     assert bt.switch("builtin", sleep=lambda s: None) == "builtin"
-    acts = [(c["action"], c.get("id", "")[:21]) for c in fake.calls if c["action"] != "radios"]
-    assert acts == [("disable", "USB\\VID_368B&PID_8D81"), ("enable", "USB\\VID_13D3&PID_3563")]
+    assert [(a, i[:21]) for a, i, w in fake.calls] == [("disable", "USB\\VID_368B&PID_8D81"), ("enable", "USB\\VID_13D3&PID_3563")]
+    assert fake.calls[0][2] == 45  # a radio with paired devices takes a long while to switch off
 
 
 def test_switch_rolls_back_when_target_never_starts(monkeypatch):
@@ -65,26 +62,43 @@ def test_switch_rolls_back_when_target_never_starts(monkeypatch):
     t = iter(range(100))
     with pytest.raises(bt.BtError, match="Built-in MediaTek radio didn't start. Switched back to the Unigen dongle."):
         bt.switch("builtin", wait=10, clock=lambda: next(t), sleep=lambda s: None)
-    acts = [(c["action"], c["id"][:21]) for c in fake.calls if c["action"] != "radios"]
-    assert acts == [("disable", "USB\\VID_368B&PID_8D81"), ("enable", "USB\\VID_13D3&PID_3563"),
-                    ("disable", "USB\\VID_13D3&PID_3563"), ("enable", "USB\\VID_368B&PID_8D81")]
+    assert [(a, i[:21]) for a, i, w in fake.calls] == [
+        ("disable", "USB\\VID_368B&PID_8D81"), ("enable", "USB\\VID_13D3&PID_3563"),
+        ("disable", "USB\\VID_13D3&PID_3563"), ("enable", "USB\\VID_368B&PID_8D81")]
+
+
+def test_switch_waits_20_s_for_the_target_by_default(monkeypatch):
+    fake = use_fake(monkeypatch, FakePs([RADIOS_OK_UNIGEN, flipped(False, False)]))
+    now = [0.0]
+    with pytest.raises(bt.BtError):
+        bt.switch("builtin", clock=lambda: now[0], sleep=lambda s: now.__setitem__(0, now[0] + s))
+    assert now[0] == 20
 
 
 def test_switch_rolls_back_when_enable_raises(monkeypatch):
-    fake = FakePs([RADIOS_OK_UNIGEN])
-    real = fake.__call__
+    fake = use_fake(monkeypatch, FakePs([RADIOS_OK_UNIGEN]))
 
-    def flaky(script, params, **kw):
-        if params["action"] == "enable" and "13D3" in params["id"]:
-            fake.calls.append(params)
+    def flaky(dev_id, on, wait=30.0):
+        fake.calls.append(("enable" if on else "disable", dev_id, wait))
+        if on and "13D3" in dev_id:
             raise CmdError("enable failed")
-        return real(script, params, **kw)
-
-    use_fake(monkeypatch, flaky)
+    monkeypatch.setattr(bt, "_set", flaky)
     with pytest.raises(bt.BtError, match="Switched back to the Unigen dongle"):
         bt.switch("builtin", sleep=lambda s: None)
-    acts = [(c["action"], c["id"][:21]) for c in fake.calls if c["action"] != "radios"]
-    assert acts[-1] == ("enable", "USB\\VID_368B&PID_8D81")
+    assert [(a, i[:21]) for a, i, w in fake.calls][-1] == ("enable", "USB\\VID_368B&PID_8D81")
+
+
+def test_switch_rolls_back_when_old_radio_wont_disable(monkeypatch):
+    fake = use_fake(monkeypatch, FakePs([RADIOS_OK_UNIGEN]))
+
+    def stuck(dev_id, on, wait=30.0):
+        fake.calls.append(("enable" if on else "disable", dev_id, wait))
+        if not on and "368B" in dev_id and len(fake.calls) == 1:
+            raise CmdError("The device didn't turn off.")
+    monkeypatch.setattr(bt, "_set", stuck)
+    with pytest.raises(bt.BtError, match="Switched back to the Unigen dongle"):
+        bt.switch("builtin", sleep=lambda s: None)
+    assert [a for a, i, w in fake.calls] == ["disable", "disable", "enable"]  # the target was never enabled
 
 
 def test_service_changed():

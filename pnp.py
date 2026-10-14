@@ -1,6 +1,6 @@
 """Device Manager reads straight from SetupAPI: milliseconds instead of a PowerShell Get-PnpDevice (about 0.5-1 s).
-Changing a device (enable/disable) still goes through PowerShell in hw.ps1, which needs admin anyway."""
-import ctypes, re, uuid
+Changing a device (enable/disable) is set_enabled below: the class-installer call Device Manager makes, no PowerShell."""
+import ctypes, re, time, uuid
 from ctypes import wintypes
 
 CLASSES = {"net": "4d36e972-e325-11ce-bfc1-08002be10318", "bluetooth": "e0cbf06c-cd8b-4647-bb8a-263b43f0f974"}
@@ -43,6 +43,7 @@ def _libs():
     sa.SetupDiDestroyDeviceInfoList.argtypes = [ctypes.c_void_p]
     cm.CM_Get_DevNode_Status.argtypes = [ctypes.POINTER(wintypes.ULONG), ctypes.POINTER(wintypes.ULONG), wintypes.DWORD,
                                          wintypes.ULONG]
+    cm.CM_Locate_DevNodeW.argtypes = [ctypes.POINTER(wintypes.DWORD), wintypes.LPCWSTR, wintypes.ULONG]
     return sa, cm
 
 
@@ -62,8 +63,8 @@ def _byte_prop(sa, h, dev, prop):
 
 
 def list_devices():
-    """Present Wi-Fi/Ethernet and Bluetooth devices on USB or PCI, disabled ones included, in the shape bt.ps1 and
-    hw.ps1 used to print: {"id", "name", "status": "OK" | "Error", "problem": "CM_PROB_NONE" | "CM_PROB_DISABLED" | "<n>",
+    """Present Wi-Fi/Ethernet and Bluetooth devices on USB or PCI, disabled ones included, as
+    {"id", "name", "status": "OK" | "Error", "problem": "CM_PROB_NONE" | "CM_PROB_DISABLED" | "<n>",
     "lmp": int | None}."""
     sa, cm = _libs()
     out = []
@@ -96,6 +97,103 @@ def list_devices():
         finally:
             sa.SetupDiDestroyDeviceInfoList(h)
     return out
+
+
+class _PROPCHANGE(ctypes.Structure):  # SP_PROPCHANGE_PARAMS, with its SP_CLASSINSTALL_HEADER inlined
+    _fields_ = [("cbSize", wintypes.DWORD), ("InstallFunction", wintypes.DWORD), ("StateChange", wintypes.DWORD),
+                ("Scope", wintypes.DWORD), ("HwProfile", wintypes.DWORD)]
+
+
+class _INSTALLPARAMS(ctypes.Structure):  # SP_DEVINSTALL_PARAMS_W
+    _fields_ = [("cbSize", wintypes.DWORD), ("Flags", wintypes.DWORD), ("FlagsEx", wintypes.DWORD), ("hwndParent", wintypes.HWND),
+                ("InstallMsgHandler", ctypes.c_void_p), ("InstallMsgHandlerContext", ctypes.c_void_p),
+                ("FileQueue", ctypes.c_void_p), ("ClassInstallReserved", ctypes.c_size_t), ("Reserved", wintypes.DWORD),
+                ("DriverPath", wintypes.WCHAR * 260)]
+
+
+_DIF_PROPERTYCHANGE, _DICS_ENABLE, _DICS_DISABLE, _DICS_FLAG_GLOBAL = 0x12, 1, 2, 1
+_DI_NEEDRESTART, _DI_NEEDREBOOT = 0x80, 0x100
+
+
+def _change(instance_id, on):
+    """The class-installer call. Its result says little (a slow Bluetooth disable can fail or ask for a restart
+    and still work), so set_enabled judges by the device's state. Raises winrun.CmdError with Windows' sentence."""
+    from winrun import CmdError
+    sa = ctypes.WinDLL("setupapi", use_last_error=True)
+    sa.SetupDiCreateDeviceInfoList.restype = ctypes.c_void_p
+    sa.SetupDiCreateDeviceInfoList.argtypes = [ctypes.c_void_p, wintypes.HWND]
+    sa.SetupDiOpenDeviceInfoW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR, wintypes.HWND, wintypes.DWORD, ctypes.POINTER(_DEVINFO)]
+    sa.SetupDiSetClassInstallParamsW.argtypes = [ctypes.c_void_p, ctypes.POINTER(_DEVINFO), ctypes.c_void_p, wintypes.DWORD]
+    sa.SetupDiCallClassInstaller.argtypes = [wintypes.DWORD, ctypes.c_void_p, ctypes.POINTER(_DEVINFO)]
+    sa.SetupDiGetDeviceInstallParamsW.argtypes = [ctypes.c_void_p, ctypes.POINTER(_DEVINFO), ctypes.POINTER(_INSTALLPARAMS)]
+    sa.SetupDiDestroyDeviceInfoList.argtypes = [ctypes.c_void_p]
+
+    def fail():
+        err = ctypes.get_last_error()
+        text = ctypes.FormatError(err).strip() if err < 0x80000000 else ""
+        raise CmdError(text or f"Windows couldn't change the device (error 0x{err:08X}).")
+    h = sa.SetupDiCreateDeviceInfoList(None, None)
+    if not h or h == ctypes.c_void_p(-1).value:
+        fail()
+    try:
+        dev = _DEVINFO(cbSize=ctypes.sizeof(_DEVINFO))
+        if not sa.SetupDiOpenDeviceInfoW(h, instance_id, None, 0, ctypes.byref(dev)):
+            fail()
+        p = _PROPCHANGE(8, _DIF_PROPERTYCHANGE, _DICS_ENABLE if on else _DICS_DISABLE, _DICS_FLAG_GLOBAL, 0)
+        if not (sa.SetupDiSetClassInstallParamsW(h, ctypes.byref(dev), ctypes.byref(p), ctypes.sizeof(p))
+                and sa.SetupDiCallClassInstaller(_DIF_PROPERTYCHANGE, h, ctypes.byref(dev))):
+            fail()
+        ip = _INSTALLPARAMS(cbSize=ctypes.sizeof(_INSTALLPARAMS))
+        if sa.SetupDiGetDeviceInstallParamsW(h, ctypes.byref(dev), ctypes.byref(ip)) and ip.Flags & (_DI_NEEDRESTART | _DI_NEEDREBOOT):
+            raise CmdError("Windows needs a restart to finish changing that device.")
+    finally:
+        sa.SetupDiDestroyDeviceInfoList(h)
+
+
+def _status(instance_id):
+    """(status, problem) flags of a device, or None if Windows doesn't know it."""
+    _, cm = _libs()
+    node, status, problem = wintypes.DWORD(), wintypes.ULONG(), wintypes.ULONG()
+    if cm.CM_Locate_DevNodeW(ctypes.byref(node), instance_id, 0) or cm.CM_Get_DevNode_Status(
+            ctypes.byref(status), ctypes.byref(problem), node, 0):
+        return None
+    return status.value, problem.value
+
+
+def _reached(state, on):
+    """enabled = started with no problem; disabled = problem 22 (CM_PROB_DISABLED)."""
+    if state is None:
+        return False
+    status, problem = state
+    if on:
+        return bool(status & _DN_STARTED) and not status & _DN_HAS_PROBLEM
+    return bool(status & _DN_HAS_PROBLEM) and problem == _CM_PROB_DISABLED
+
+
+def set_enabled(instance_id, on, wait=30.0, *, sleep=time.sleep, clock=time.monotonic, retry=3.0):
+    """Enable or disable a device the way Device Manager does (it stays that way after a restart). Admin only.
+    Success is the device reaching the wanted state within `wait` seconds, whatever the call returned.
+    Windows refuses to remove a Bluetooth radio while something holds a paired device's audio driver open (it gives
+    up after ~7 s and flags the radio "needs restart"); the next call then goes through at once. So if the state hasn't
+    arrived `retry` seconds after a call, the call is made again.
+    Raises winrun.CmdError with Windows' sentence, or "The device didn't turn on/off."."""
+    from winrun import CmdError
+    deadline = clock() + wait
+    while True:
+        err = None
+        try:
+            _change(instance_id, on)
+        except CmdError as e:
+            err = e
+        again = clock() + retry
+        while not _reached(_status(instance_id), on):
+            if clock() >= deadline:
+                raise err or CmdError(f"The device didn't turn {'on' if on else 'off'}.")
+            if clock() >= again:
+                break  # ask again: a refused change usually goes through on the next call
+            sleep(0.25)
+        else:
+            return
 
 
 def address_from_instance(instance_id):

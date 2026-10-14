@@ -1,23 +1,18 @@
 """Bluetooth: radios (switch with rollback), devices (list, pair, remove), audio connect/disconnect."""
-import ctypes, json, logging, os, threading, time, uuid
+import ctypes, logging, os, threading, time, uuid
 from ctypes import wintypes
-from pathlib import Path
 
 import btwinrt
 import pnp, winrun
 from btwinrt import BtError
 from wifi import ADAPTER_NAMES
 
-_ps = winrun.ps  # tests replace this
+_set = pnp.set_enabled  # tests replace this
 _switch_lock = threading.Lock()
 SERVICE_TOGGLE = True  # Way 2 of audio connect; the hardware check in Task 7 decides whether it stays.
-_SCRIPT = Path(__file__).with_name("bt.ps1")
+_OFF_WAIT = 45  # s: disabling a radio tears down its paired devices' audio first, which can take 25 s
 LMP = {6: "4.0", 7: "4.1", 8: "4.2", 9: "5.0", 10: "5.1", 11: "5.2", 12: "5.3", 13: "5.4", 14: "6.0"}
 AUDIO_SERVICES = ["0000110B-0000-1000-8000-00805F9B34FB", "0000111E-0000-1000-8000-00805F9B34FB"]  # A2DP sink, Hands-free
-
-
-def _call(action, **params):
-    return json.loads(_ps(_SCRIPT.read_text(encoding="utf-8"), {"action": action, **params}, timeout=90))
 
 
 def version(lmp):
@@ -56,7 +51,7 @@ def switch(target, **kw):
         _switch_lock.release()
 
 
-def _switch(target, *, wait=10.0, clock=time.monotonic, sleep=time.sleep):
+def _switch(target, *, wait=20.0, clock=time.monotonic, sleep=time.sleep):
     rs = radios()
     tgt = next((r for r in rs if r["key"] == target), None)
     if tgt is None:
@@ -66,8 +61,8 @@ def _switch(target, *, wait=10.0, clock=time.monotonic, sleep=time.sleep):
         return target
     try:
         for r in others:  # Windows runs one Bluetooth radio at a time
-            _call("disable", id=r["id"])
-        _call("enable", id=tgt["id"])
+            _set(r["id"], False, wait=_OFF_WAIT)
+        _set(tgt["id"], True)
         deadline = clock() + wait
         while clock() < deadline:
             if any(r["key"] == target and r["ok"] for r in radios()):
@@ -76,12 +71,12 @@ def _switch(target, *, wait=10.0, clock=time.monotonic, sleep=time.sleep):
     except winrun.CmdError:
         pass
     try:  # never leave the user without Bluetooth: best-effort restore, each step on its own
-        _call("disable", id=tgt["id"])
+        _set(tgt["id"], False, wait=_OFF_WAIT)
     except winrun.CmdError:
         pass
     for r in others:
         try:
-            _call("enable", id=r["id"])
+            _set(r["id"], True)
         except winrun.CmdError:
             pass
     back = f" Switched back to the {_label(others[0]['key'])}." if others else ""

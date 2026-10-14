@@ -21,19 +21,22 @@ Devices, matched as the existing code already does:
 | `unigen` | `USB\VID_368B&PID_8D81&MI_02…` (AIC8800D80) | `USB\VID_368B&PID_8D81&MI_00…` |
 | `builtin` | `PCI\VEN_14C3&DEV_7961…` (MT7921) | `USB\VID_13D3&PID_3563…` (MediaTek) |
 
-## New module `hw.py` (+ `hw.ps1`)
+## New module `hw.py`
 
-- **`devices() -> {key: {"present", "wifi": dev|None, "bt": dev|None}}`:** each `dev` is `{"id", "ok", "disabled"}`, read from `Get-PnpDevice -PresentOnly` (Net and Bluetooth classes), so disabled devices are still listed. A dongle that isn't plugged in has no entry at all (`present` False).
-- **`enable(id)` / `disable(id)`:** PnP, admin only.
+- **`devices() -> {key: {"present", "wifi": dev|None, "bt": dev|None}}`:** each `dev` is `{"id", "ok", "disabled"}`, read from SetupAPI (`pnp.list_devices`: Net and Bluetooth classes, present devices), so disabled devices are still listed. A dongle that isn't plugged in has no entry at all (`present` False).
+- **`enable(id)` / `disable(id)`:** `pnp.set_enabled`, admin only. It makes the Device Manager class-installer call natively (no PowerShell, which cost 1-2 s per call), then polls the device's state until it is enabled (started, no problem) or disabled (problem 22), up to 30 s. Success is the state reached, not the call's result: a slow Bluetooth disable can return an error or need-restart and still work. Not reached: `CmdError` with Windows' sentence, or "The device didn't turn on/off.".
 - **`load_choice(path)` / `save_choice(path, key)`**
 - **`use(target, *, on_step, path)`:** the switch, holding one lock, run in this order:
+  0. If both adapters have a Bluetooth device, `bt.switch(target)` starts in a thread, right after the checks, and runs while Wi-Fi does steps 1-3. Only the main thread reports steps.
   1. "Turning on the {target}…": enable the target's Wi-Fi device, then wait up to 20 s for its interface in `wifi.interfaces()`. If it doesn't appear, restart it once (disable, then enable) and wait again. If it still doesn't appear, disable it again and raise.
   2. "Connecting to {ssid}…": runs only if the old adapter is connected. Copy the profile to the target if it lacks it, then `wifi.connect(target, ssid, saved=True)`. On failure, disable the target's Wi-Fi and raise.
-  3. "Moving Bluetooth…": runs if both adapters have a Bluetooth device. Call `bt.switch(target)`, which rolls back its own Bluetooth step. On failure, disable the target's Wi-Fi and raise.
-  4. "Turning off the {old}…": disable the old Wi-Fi device. Failure here is reported, not rolled back, because the target already works.
+  3. "Turning off the {old}…": disable the old Wi-Fi device. Failure here is reported, not rolled back, because the target already works.
+  4. Join the Bluetooth thread, with "Moving Bluetooth…" if it is still running. If Bluetooth failed (`bt.switch` already restored the old radio), Wi-Fi is not rolled back: the message ends " Bluetooth couldn't move and stays on the {old}. Switch again to retry."
   5. Save the choice, then "Done. Using the {target}."
+  - **Wi-Fi fails** (steps 1-2): undo Wi-Fi, join the Bluetooth thread, and if Bluetooth had moved, move it back (`bt.switch(old)`, errors ignored), then raise.
+  - **`bt.switch`:** disables the other radio(s) (up to 45 s: Windows tears down paired devices' audio first), enables the target, waits up to 20 s for it to be OK, and restores the old radio on failure.
   - **Errors:** every raise is an `hw.HwError` whose sentence says the old adapter is back, for example "The dongle's Wi-Fi didn't start. You're still on the built-in adapter."
-  - **Already in use:** switching to the adapter already in use (old off, target fine) just saves the choice.
+  - **Already in use:** switching to the adapter already in use (old off, target fine) just saves the choice. If the Bluetooth radios don't match (a half-done switch: the target's is off, or the old one is still on), it first runs `bt.switch(target)` with "Moving Bluetooth…"; a failure ends with the same Bluetooth message.
 - **`follow(path, notify, *, sleep)`:** one watchdog pass, called every 5 s from a tray thread.
   - **Choice is the dongle but it's not present** (unplugged): enable the built-in Wi-Fi and Bluetooth if they're disabled, then call `notify("The dongle was unplugged. Using the built-in adapter.")`. Windows reconnects saved networks by itself. The saved choice stays "unigen".
   - **Dongle comes back** (it wasn't present on the previous pass, and is now), with the choice still "unigen": `use("unigen")`, then `notify("Dongle plugged in. Using the dongle.")`. If that fails, notify the error and don't retry until the next unplug and replug.

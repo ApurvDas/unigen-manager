@@ -91,9 +91,9 @@ Older versions and checksums are on the [releases page](https://github.com/Apurv
 - It joins the same network on the new adapter (copying the saved profile if needed) and shows each step while it runs.
 - **Your choice is remembered** across restarts.
 - **It follows the dongle:** unplug it and the built-in adapter turns back on; plug it in again and the app switches back to it. A tray notification tells you.
-- If any step fails, the old adapter is turned back on and the message says where you stand.
+- If the Wi-Fi step fails, the old adapter is turned back on and the message says where you stand. Bluetooth moves at the same time as Wi-Fi; if only Bluetooth can't move, Wi-Fi stays switched and the app says so (switch again to retry).
 - Needs administrator rights. Without them the switch is disabled and the app changes nothing.
-- **Light on the PC:** adapter and radio status are read straight from Windows (SetupAPI) in milliseconds, so the always-on watchdog doesn't start a PowerShell process every few seconds.
+- **Light on the PC:** adapter and radio status are read straight from Windows (SetupAPI) in milliseconds, so the always-on watchdog doesn't start a PowerShell process every few seconds. Turning devices on and off uses the same Windows call as Device Manager, not PowerShell, and waits for the device to really change state.
 
 </td>
 </tr>
@@ -216,7 +216,7 @@ py -3.10 -m pip install -r requirements-dev.txt
 py -3.10 build_exe.py
 ```
 
-This writes `dist\UnigenManager.exe`: one file of about 33 MB, with no console window, that runs without Python. PyInstaller bundles the Python runtime, the `ui/` folder and `bt.ps1`, and `build_exe.py` draws the app icon from the tray logo. When the app runs as the `.exe`, the admin prompt, the desktop shortcut and Start with Windows all point at the `.exe` itself.
+This writes `dist\UnigenManager.exe`: one file of about 33 MB, with no console window, that runs without Python. PyInstaller bundles the Python runtime, the `ui/` folder, and `build_exe.py` draws the app icon from the tray logo. When the app runs as the `.exe`, the admin prompt, the desktop shortcut and Start with Windows all point at the `.exe` itself.
 
 **Version numbers:** releases go 1.0.0, 1.0.1, … 1.0.9, then 1.1.0. Each part counts 0 to 9 and then rolls into the next one up (1.9.9 becomes 2.0.0). `version.py` holds the number of the next release, and `version.bump()` works out the one after it.
 
@@ -235,8 +235,8 @@ flowchart LR
     widget --> shared
     shared -- "window.pywebview.api" --> api["api.py<br/>plain-language errors"]
     api --> wifi["wifi.py<br/>netsh, wlanapi"]
-    api --> bt["bt.py + btwinrt.py + bt.ps1<br/>WinRT, KS audio, bthprops"]
-    api --> hw["hw.py + hw.ps1<br/>Using switch, watchdog"]
+    api --> bt["bt.py + btwinrt.py<br/>WinRT, KS audio, bthprops"]
+    api --> hw["hw.py<br/>Using switch, watchdog"]
     hw --> pnp["pnp.py<br/>SetupAPI device reads"]
     bt --> pnp
     api --> speed["speed.py<br/>ping, sampled HTTP"]
@@ -252,9 +252,9 @@ flowchart LR
 | `app.py` | Administrator prompt, single instance, main and widget windows, tray |
 | `api.py` | Everything the pages call, with plain-language errors |
 | `wifi.py` | `netsh` parsing, connect and disconnect, saved profiles, Windows scan request |
-| `hw.py`, `hw.ps1` | The Using switch: Wi-Fi and Bluetooth switched together with rollback, saved choice, unplug/replug watchdog. `hw.ps1` only turns devices on and off |
-| `pnp.py` | Reads Device Manager (status, disabled, Bluetooth version, device battery levels) through SetupAPI, in milliseconds |
-| `bt.py`, `bt.ps1` | Bluetooth radio switching and audio connect. `bt.ps1` only turns radios on and off |
+| `hw.py` | The Using switch: Wi-Fi and Bluetooth switched together (Bluetooth in parallel), Wi-Fi rollback, saved choice, unplug/replug watchdog |
+| `pnp.py` | Reads Device Manager (status, disabled, Bluetooth version, device battery levels) through SetupAPI, in milliseconds, and turns devices on and off (verified by their state) |
+| `bt.py` | Bluetooth radio switching and audio connect |
 | `btwinrt.py` | Bluetooth through Windows' WinRT device APIs: paired list, live search, pairing with PIN prompts, unpair, radio power |
 | `speed.py` | Ping and per-adapter sampled download and upload |
 | `tray.py` | Tray icon, widget placement, Start with Windows, single instance |

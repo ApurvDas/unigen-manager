@@ -351,10 +351,12 @@ def test_switch_to_needs_admin(hw, monkeypatch):
 
 
 def test_switch_to_pushes_steps_and_final(hw, monkeypatch):
-    def fake_use(target, *, on_step, path):
+    def fake_use(target, *, on_step, on_later, path):
         on_step("Turning on the Built-in MediaTek…")
         on_step("Done. Using the Built-in MediaTek.")
+        seen.append(on_later)
         return target
+    seen = []
     monkeypatch.setattr(hwm, "use", fake_use)
     a = api.Api(admin=True)
     a._window, a._widget = Win(), Win()
@@ -365,6 +367,9 @@ def test_switch_to_pushes_steps_and_final(hw, monkeypatch):
             {"text": "Done. Using the Built-in MediaTek.", "done": False, "error": False},
             {"text": "Done. Using the Built-in MediaTek.", "done": True, "error": False}]
         assert all(s.startswith("window.onSwitchStep && window.onSwitchStep(") for s in w.scripts)
+    seen[0]("Bluetooth moved to the Built-in MediaTek.", True)  # later, from the Bluetooth thread: windows reload
+    assert json.loads(a._window.scripts[-1].split("onSwitchStep(", 1)[1][:-1]) == {
+        "text": "Bluetooth moved to the Built-in MediaTek.", "done": True, "error": False}
 
 
 def test_switch_to_error_pushes_error_and_returns_message(hw, monkeypatch):
@@ -378,7 +383,7 @@ def test_switch_to_error_pushes_error_and_returns_message(hw, monkeypatch):
 
 def test_switch_to_passes_the_settings_path(hw, monkeypatch, tmp_path):
     seen = {}
-    monkeypatch.setattr(hwm, "use", lambda target, *, on_step, path: seen.update(path=path) or target)
+    monkeypatch.setattr(hwm, "use", lambda target, *, on_step, on_later, path: seen.update(path=path) or target)
     api.Api(admin=True, settings_path=tmp_path / "s.json").switch_to("unigen")
     assert seen["path"] == tmp_path / "s.json"
 
