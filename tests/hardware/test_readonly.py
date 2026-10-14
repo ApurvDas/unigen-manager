@@ -37,6 +37,15 @@ def test_trigger_scan_accepted():
         wifi.trigger_scan(i["guid"])
 
 
+def test_scan_returns_when_windows_finishes():
+    # Windows reports scan-complete after ~1.5 s; the app used to sleep a fixed 4 s
+    import time
+    for i in by_key().values():
+        t = time.perf_counter()
+        wifi.scan(i["name"], i["guid"])
+        assert time.perf_counter() - t < 3.5
+
+
 def test_bluetooth_radios_and_versions():
     rs = {r["key"]: r for r in bt.radios()}
     assert rs["builtin"]["version"] == "5.2"

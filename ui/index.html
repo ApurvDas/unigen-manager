@@ -1204,6 +1204,12 @@ setTimeout(() => { if (!INFO && !MOCK && !window.pywebview) setMsg($("#wifiMsg")
   setInterval(async () => { if (await visible()) poll(); }, 2000);
   setInterval(tickAge, 1000);
   setInterval(async () => { if (!$("#bt").hidden && !pairingRow && await visible()) refreshPaired().catch(() => {}); }, 5000);  // a check takes ~50 ms
+  // opened from the tray or the shortcut: fresh data now, not at the next tick
+  window.onMainShown = () => {
+    poll();
+    if (nearbyShown()) loadNetworks(false).then(() => loadNetworks(true)).catch(e => setMsg($("#wifiMsg"), e.message, true));
+    if (!$("#bt").hidden && !pairingRow) refreshPaired().catch(() => {});
+  };
   setInterval(async () => { if (nearbyShown() && !pw.open && await visible()) loadNetworks(false).catch(e => setMsg($("#wifiMsg"), e.message, true)); }, 10000);
 })();
 </script>

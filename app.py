@@ -119,6 +119,7 @@ def main(argv=None):
                     return
         threading.Thread(target=follow, daemon=True).start()
 
-    webview.start(after_start, debug="--debug" in argv, private_mode=True)
+    # a kept WebView2 profile starts faster than a fresh temp one each launch
+    webview.start(after_start, debug="--debug" in argv, private_mode=False, storage_path=str(DATA_DIR / "webview"))
     tray.release(instance)
     return 0

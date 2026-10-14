@@ -211,6 +211,7 @@ def test_is_visible_tracks_windows():
     a._window = FakeWin()
     a._show_main()
     assert a.is_visible("main")["data"] is True
+    assert ("evaluate_js", "window.onMainShown && window.onMainShown()") in a._window.calls  # refreshes at once
 
 
 def test_toggle_ignores_the_click_that_blurred_it(monkeypatch):

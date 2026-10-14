@@ -416,6 +416,13 @@ def test_bt_refresh_shows_device_connected_elsewhere(open_page):
     expect(pg.locator("#btRefresh")).to_have_text("Refresh")
 
 
+def test_opening_the_window_refreshes_at_once(open_page):
+    # hidden, the page stops polling; Python calls onMainShown when the tray or the shortcut opens it
+    pg = bt_page(open_page)
+    pg.evaluate("mockApi._setConnected('BT-nord', true); window.onMainShown()")
+    expect(paired_row(pg, "OnePlus Nord Buds 3r").locator(".st")).to_have_text("Connected", timeout=2000)
+
+
 def test_bt_battery_after_connect_and_low(open_page):
     pg = bt_page(open_page)
     jbl = paired_row(pg, "JBL Go 3")

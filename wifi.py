@@ -1,8 +1,12 @@
 """Wi-Fi: parse netsh output, identify adapters, and act on networks and saved profiles."""
+import ctypes
 import pathlib
 import re
 import tempfile
+import threading
 import time
+import uuid
+from ctypes import wintypes
 from xml.sax.saxutils import escape
 
 import winrun
@@ -194,26 +198,42 @@ def drivers():
     return parse_drivers(_run([NETSH, "wlan", "show", "drivers"]))
 
 
-def trigger_scan(guid):
-    """Ask the adapter for a fresh scan (netsh only shows Windows' cached list)."""
-    import ctypes, uuid
-    from ctypes import wintypes
+class _NOTIF(ctypes.Structure):  # WLAN_NOTIFICATION_DATA
+    _fields_ = [("source", wintypes.DWORD), ("code", wintypes.DWORD), ("guid", ctypes.c_ubyte * 16),
+                ("size", wintypes.DWORD), ("data", ctypes.c_void_p)]
+
+
+_NOTIFY = ctypes.WINFUNCTYPE(None, ctypes.POINTER(_NOTIF), ctypes.c_void_p)
+_ACM, _SCAN_DONE, _SCAN_FAIL = 8, 7, 8  # WLAN_NOTIFICATION_SOURCE_ACM, wlan_notification_acm_scan_complete/_fail
+
+
+def trigger_scan(guid, wait=0.0):
+    """Ask the adapter for a fresh scan (netsh only shows Windows' cached list). With wait, return once Windows
+    says the scan finished (about 1.5 s) or after wait seconds."""
     wlan = ctypes.WinDLL("wlanapi")
     handle, version = wintypes.HANDLE(), wintypes.DWORD()
     if wlan.WlanOpenHandle(2, None, ctypes.byref(version), ctypes.byref(handle)):
         raise WifiError("Couldn't start a Wi-Fi scan.")
+    g = (ctypes.c_ubyte * 16).from_buffer_copy(uuid.UUID(guid).bytes_le)
+    done = threading.Event()
+
+    @_NOTIFY
+    def on_note(n, _ctx):
+        if n.contents.source == _ACM and n.contents.code in (_SCAN_DONE, _SCAN_FAIL) and bytes(n.contents.guid) == bytes(g):
+            done.set()
     try:
-        g = (ctypes.c_ubyte * 16).from_buffer_copy(uuid.UUID(guid).bytes_le)
+        if wait:
+            wlan.WlanRegisterNotification(handle, _ACM, False, on_note, None, None, None)
         rc = wlan.WlanScan(handle, ctypes.byref(g), None, None, None)
         if rc:
             raise WifiError(f"Couldn't start a Wi-Fi scan (error {rc}).")
+        done.wait(wait)
     finally:
-        wlan.WlanCloseHandle(handle, None)
+        wlan.WlanCloseHandle(handle, None)  # also drops the notification, after any running callback
 
 
-def scan(iface, guid, *, wait=4.0, sleep=time.sleep):
-    trigger_scan(guid)
-    sleep(wait)  # results arrive asynchronously; then show whatever netsh has
+def scan(iface, guid, *, wait=4.0):
+    trigger_scan(guid, wait)
     return networks(iface)
 
 

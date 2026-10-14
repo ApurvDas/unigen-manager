@@ -260,6 +260,7 @@ class Api:
         if self._window is not None:
             self._window.show()
             self._window.restore()
+            self._window.evaluate_js("window.onMainShown && window.onMainShown()")  # hidden, it stopped polling
 
     def _toggle_widget(self):
         if self._widget is None:
