@@ -255,6 +255,16 @@ def test_bt_search_pair_remove(open_page):
     expect(pg.locator("#paired .row")).to_have_count(6)
 
 
+def test_bt_pair_twin_shows_once(open_page):
+    # a dual-mode device paired while the list refreshed showed up twice ("Master Buds Max" on the real PC)
+    pg = bt_page(open_page, "window.MOCK_PAIR_TWIN = true;")
+    pg.locator("#btSearch").click()
+    nearby(pg, "Galaxy Buds2 Pro").locator(".pair").click()
+    expect(pg.locator("#btMsg")).to_have_text("Paired with Galaxy Buds2 Pro.")
+    expect(pg.locator("#paired .row").filter(has=pg.get_by_text("Galaxy Buds2 Pro", exact=True))).to_have_count(1)
+    expect(pg.locator("#pairedCount")).to_have_text("7")
+
+
 def test_bt_pair_confirm_pin(open_page):
     pg = bt_page(open_page)
     pg.locator("#btSearch").click()

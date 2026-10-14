@@ -2,7 +2,7 @@
 // Same method names and data shapes as the Python Api; tests/test_api.py checks that the names match.
 // Test hooks (set before the page loads): MOCK_FAST (no delays), MOCK_FAIL = { method: "message" },
 // MOCK_UNPLUG = "unigen" | "builtin", MOCK_ADMIN = false, MOCK_HOSTILE (adds a network, saved profile and paired device named like an HTML tag),
-// MOCK_SEARCH_HOLD (the Bluetooth search never finishes), MOCK_BT_OFF (Bluetooth starts off),
+// MOCK_SEARCH_HOLD (the Bluetooth search never finishes), MOCK_PAIR_TWIN (pairing races a paired-list refresh), MOCK_BT_OFF (Bluetooth starts off),
 // MOCK_BOTH_ON (neither adapter is switched off, like before the first switch). window.mockApi._setUsing(key) changes the adapter in use.
 // Mock nearby devices carry ceremony null | "confirm" | "display" | "provide"; the PIN shown is 482913 and the right provide PIN is 0000.
 window.mockApi = (() => {
@@ -135,7 +135,7 @@ window.mockApi = (() => {
   def("bt_radio", 100, () => ({ active: using(), can_switch: window.MOCK_ADMIN !== false, power: POWER,
     radios: plugged().map(a => ({ key: a.key, name: a.name, ok: a.key === using(), disabled: a.key !== using(), version: a.bt })) }));
   def("bt_power", 600, on => { POWER = on ? "on" : "off"; return { power: POWER }; });
-  def("bt_paired", 200, () => PAIRED.map(d => ({ ...d, ids: [d.id] })));
+  def("bt_paired", 200, () => PAIRED.map(d => ({ ...d, ids: d.ids || [d.id] })));
   def("bt_search_start", 100, () => {
     if (POWER === "off") throw new Error("Bluetooth is off. Turn it on first.");
     searchTimers.forEach(clearTimeout); searchTimers = [];
@@ -158,6 +158,13 @@ window.mockApi = (() => {
       } else { answer = null; await new Promise(r => setTimeout(r, 300)); } // real delay even under MOCK_FAST: the prompt must stay up long enough to see
     }
     const p = { ...row(d), connected: ["Headphones", "Speaker", "Audio"].includes(d.kind) };
+    if (window.MOCK_PAIR_TWIN) {
+      // a dual-mode device: Windows lists it under its classic id, the page refreshes mid-pairing, and the answer
+      // still carries the LE id the search found (Windows hadn't listed the classic record yet when it was read)
+      PAIRED.push({ ...p, id: `${d.id}-classic`, ids: [`${d.id}-classic`, d.id] });
+      if (window.loadBt) await window.loadBt();
+      return p;
+    }
     PAIRED.push(p);
     return p;
   });

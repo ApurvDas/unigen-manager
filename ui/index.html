@@ -707,7 +707,7 @@ $("#pwForm").addEventListener("submit", e => {
 });
 
 // ================= Bluetooth =================
-const pairedRow = d => `<div class="row" data-id="${esc(d.id)}" data-kind="${esc(d.kind)}">
+const pairedRow = d => `<div class="row" data-id="${esc(d.id)}" data-ids="${esc((d.ids || [d.id]).join(" "))}" data-kind="${esc(d.kind)}">
   <span class="title">${esc(d.name)}</span>
   <span class="st ${d.connected ? "state ok" : "muted"}">${d.connected ? "Connected" : esc(d.kind)}</span>
   <span class="ops">
@@ -832,7 +832,11 @@ $("#nearby").addEventListener("click", async e => {
   setMsg($("#btMsg"), `Paired with ${r.dataset.name}.`);
   removeEl(r);
   d = d || { id: r.dataset.id, ids: [r.dataset.id], name: r.dataset.name, kind: r.dataset.kind, connected: false };
-  const old = $$("#paired .row").find(x => x.dataset.id === d.id); if (old) old.remove();
+  // a dual-mode device has a classic and an LE id, and the list may have refreshed while it paired:
+  // replace any row of the same device (shared id, or the same name, as bt.devices merges them) instead of adding a twin
+  const ids = new Set([...(d.ids || [d.id]), r.dataset.id]);
+  $$("#paired .row").filter(x => (x.dataset.ids || x.dataset.id).split(" ").some(i => ids.has(i))
+    || $(".title", x).textContent === d.name).forEach(x => x.remove());
   addEl($("#paired"), pairedRow(d)); countPaired();
 });
 
