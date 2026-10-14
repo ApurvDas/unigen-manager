@@ -57,7 +57,7 @@ def test_opens_from_tray_and_shows_live_status(widget):
     expect(pg.locator("#usesLbl")).to_have_text("Using")
     expect(pg.locator("#nets .net")).to_have_count(2)  # saved networks in range on the Unigen dongle
     expect(pg.locator("#btVer")).to_have_text("Bluetooth 5.4")
-    expect(pg.locator("#btDev")).to_have_text("Den Beats Pill")
+    expect(pg.locator("#btDev")).to_have_text("Den Beats Pill · 90%")
     pg.mouse.click(100, 100)
     expect(pg.locator("#w")).to_be_hidden()  # like Windows flyouts: clicking elsewhere closes it
 
@@ -143,3 +143,8 @@ def test_widget_bluetooth_power(widget):
     expect(pg.locator("#btDev")).to_have_text("Bluetooth is off")
     sw.click()
     expect(sw).to_have_attribute("aria-checked", "true")
+
+
+def test_widget_shows_connected_device_battery(widget):
+    pg = widget()
+    expect(pg.locator("#btDev")).to_have_text("Den Beats Pill · 90%")

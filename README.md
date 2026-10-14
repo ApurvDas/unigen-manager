@@ -10,7 +10,7 @@
 ![Python 3.10](https://img.shields.io/badge/Python-3.10-0E151D?style=flat-square&logo=python&logoColor=4FB3C8)
 ![pywebview](https://img.shields.io/badge/UI-pywebview%20%2B%20WebView2-0E151D?style=flat-square)
 ![anime.js](https://img.shields.io/badge/motion-anime.js%204-0E151D?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-220%20passing-5CC08A?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-226%20passing-5CC08A?style=flat-square)
 
 <a href="https://github.com/ApurvDas/unigen-manager/releases/latest/download/UnigenManager.exe"><img src="https://img.shields.io/badge/Download-UnigenManager.exe%20%C2%B7%2033%20MB-4FB3C8?style=for-the-badge&logo=windows&logoColor=white" alt="Download UnigenManager.exe" height="44"></a>
 
@@ -60,6 +60,7 @@ Older versions and checksums are on the [releases page](https://github.com/Apurv
 - **One row per device:** earbuds and speakers that Windows lists twice (classic Bluetooth and Bluetooth LE) show once, and Remove clears both.
 - Remove devices, and connect or disconnect audio devices.
 - **Fast:** the paired list loads in a few hundredths of a second.
+- **Battery levels** of connected headphones and speakers (🔋 90%, amber at 20% or less), on the Bluetooth page and in the tray widget, updated every minute. Shown for devices that report battery to Windows over their hands-free connection, on either adapter.
 - Bluetooth follows the **Using** switch below, so it always runs on the adapter you picked (dongle 5.4, built-in 5.2).
 
 </td>
@@ -202,7 +203,7 @@ Then open:
 
 ```powershell
 py -3.10 -m pip install -r requirements-dev.txt
-py -3.10 -m pytest                 # 220 unit, contract and UI tests (UI tests drive the installed Microsoft Edge)
+py -3.10 -m pytest                 # 226 unit, contract and UI tests (UI tests drive the installed Microsoft Edge)
 py -3.10 -m pytest -m hardware     # read-only checks against the real adapters (changes nothing)
 ```
 
@@ -252,7 +253,7 @@ flowchart LR
 | `api.py` | Everything the pages call, with plain-language errors |
 | `wifi.py` | `netsh` parsing, connect and disconnect, saved profiles, Windows scan request |
 | `hw.py`, `hw.ps1` | The Using switch: Wi-Fi and Bluetooth switched together with rollback, saved choice, unplug/replug watchdog. `hw.ps1` only turns devices on and off |
-| `pnp.py` | Reads Device Manager (status, disabled, Bluetooth version) through SetupAPI, in milliseconds |
+| `pnp.py` | Reads Device Manager (status, disabled, Bluetooth version, device battery levels) through SetupAPI, in milliseconds |
 | `bt.py`, `bt.ps1` | Bluetooth radio switching and audio connect. `bt.ps1` only turns radios on and off |
 | `btwinrt.py` | Bluetooth through Windows' WinRT device APIs: paired list, live search, pairing with PIN prompts, unpair, radio power |
 | `speed.py` | Ping and per-adapter sampled download and upload |
@@ -278,6 +279,7 @@ flowchart LR
   - If that fails it toggles the device's audio services, and if Windows still refuses, it opens Windows Bluetooth settings instead.
   - Which of the three works is still to be confirmed on real hardware (checklist row 24).
 - Pairing a device that isn't in pairing mode times out after about a minute.
+- Battery levels of Bluetooth LE-only devices (most mice and keyboards) aren't shown yet.
 - An adapter plugged in after the app starts appears after the app restarts.
 
 ## Built with

@@ -338,7 +338,7 @@ def test_bt_connect_toggles(open_page):
     pg.keyboard.press("Control+2")
     jbl = pg.locator("#paired .row").filter(has=pg.get_by_text("JBL Go 3", exact=True))
     jbl.locator(".conn").click()
-    expect(jbl.locator(".st")).to_have_text("Connected")
+    expect(jbl.locator(".st")).to_contain_text("Connected")
     expect(jbl.locator(".conn .label")).to_have_text("Disconnect")
 
 
@@ -390,3 +390,23 @@ def test_start_runs_a_real_scan(open_page):
 def test_rail_shows_app_version(open_page):
     pg = open_page()
     pg.wait_for_function("document.querySelector('#ver').textContent.includes('v0.0.0-mock')")
+
+
+def paired_row(pg, name):
+    return pg.locator("#paired .row").filter(has=pg.get_by_text(name, exact=True))
+
+
+def test_bt_battery_for_connected_devices(open_page):
+    pg = bt_page(open_page)
+    expect(paired_row(pg, "Den Beats Pill").locator(".st")).to_contain_text("Connected")
+    expect(paired_row(pg, "Den Beats Pill").locator(".batt")).to_have_text("90%")
+    expect(paired_row(pg, "Den Beats Pill").locator(".batt")).not_to_have_class(re.compile(r"\blow\b"))
+    expect(paired_row(pg, "OnePlus Nord Buds 3r").locator(".batt")).to_have_count(0)  # not connected
+
+
+def test_bt_battery_after_connect_and_low(open_page):
+    pg = bt_page(open_page)
+    jbl = paired_row(pg, "JBL Go 3")
+    jbl.locator(".conn").click()
+    expect(jbl.locator(".batt")).to_have_text("15%")
+    expect(jbl.locator(".batt")).to_have_class(re.compile(r"\blow\b"))

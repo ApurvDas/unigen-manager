@@ -43,9 +43,9 @@ window.mockApi = (() => {
   let USING = "unigen"; // the adapter in use; the other one's Wi-Fi is switched off (unless MOCK_BOTH_ON)
   let POWER = window.MOCK_BT_OFF ? "off" : "on", searchTimers = [], answer = null;
   const PAIRED = [
-    { id: "BT-beats", name: "Den Beats Pill", connected: true, kind: "Speaker", address: "A1B2C3D4E5F1" },
+    { id: "BT-beats", name: "Den Beats Pill", connected: true, kind: "Speaker", address: "A1B2C3D4E5F1", lastBattery: 90 },
     { id: "BT-nord", name: "OnePlus Nord Buds 3r", connected: false, kind: "Headphones", address: "A1B2C3D4E5F2" },
-    { id: "BT-jbl", name: "JBL Go 3", connected: false, kind: "Speaker", address: "A1B2C3D4E5F3" },
+    { id: "BT-jbl", name: "JBL Go 3", connected: false, kind: "Speaker", address: "A1B2C3D4E5F3", lastBattery: 15 },
     { id: "BT-tribit", name: "Tribit StormBox Mini+", connected: false, kind: "Speaker", address: "A1B2C3D4E5F4" },
     { id: "BT-mhx", name: "MHX-BT88", connected: false, kind: "Audio", address: "A1B2C3D4E5F5" },
     { id: "BT-dualsense", name: "DualSense Wireless Controller", connected: false, kind: "Controller", address: "A1B2C3D4E5F6" },
@@ -135,7 +135,7 @@ window.mockApi = (() => {
   def("bt_radio", 100, () => ({ active: using(), can_switch: window.MOCK_ADMIN !== false, power: POWER,
     radios: plugged().map(a => ({ key: a.key, name: a.name, ok: a.key === using(), disabled: a.key !== using(), version: a.bt })) }));
   def("bt_power", 600, on => { POWER = on ? "on" : "off"; return { power: POWER }; });
-  def("bt_paired", 200, () => PAIRED.map(d => ({ ...d, ids: d.ids || [d.id] })));
+  def("bt_paired", 200, () => PAIRED.map(({ lastBattery, ...d }) => ({ ...d, ids: d.ids || [d.id], battery: d.connected ? lastBattery ?? null : null })));
   def("bt_search_start", 100, () => {
     if (POWER === "off") throw new Error("Bluetooth is off. Turn it on first.");
     searchTimers.forEach(clearTimeout); searchTimers = [];

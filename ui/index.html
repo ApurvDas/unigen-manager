@@ -143,6 +143,10 @@
   .chip.b24 { color: var(--b24); border-color: color-mix(in srgb, var(--b24) 45%, transparent); }
   .chip.b5 { color: var(--b5); border-color: color-mix(in srgb, var(--b5) 45%, transparent); }
   .state.ok { color: var(--ok); }
+  .batt { margin-left: 10px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .batt svg { width: 16px; height: 9px; margin-right: 4px; vertical-align: -0.5px; fill: none; stroke: currentColor; }
+  .batt svg .lvl, .batt svg .tip { fill: currentColor; stroke: none; }
+  .batt.low { color: var(--warn); }
 
   /* actions */
   .actions { display: flex; gap: 10px; align-items: center; margin-top: auto; padding-top: 6px; }
@@ -707,9 +711,12 @@ $("#pwForm").addEventListener("submit", e => {
 });
 
 // ================= Bluetooth =================
+// battery: the % Windows last heard from a connected device (None when it doesn't report one); amber at 20% or less
+const battery = b => b == null ? "" : `<span class="batt${b <= 20 ? " low" : ""}"><svg viewBox="0 0 16 9" aria-hidden="true"><rect x="0.5" y="0.5" width="13" height="8" rx="1.5"/><rect class="lvl" x="2" y="2" width="${(10 * b / 100).toFixed(1)}" height="5" rx="0.5"/><rect class="tip" x="14" y="3" width="1.5" height="3" rx="0.5"/></svg>${b}%</span>`;
+const stHtml = d => d.connected ? `Connected${battery(d.battery)}` : esc(d.kind);
 const pairedRow = d => `<div class="row" data-id="${esc(d.id)}" data-ids="${esc((d.ids || [d.id]).join(" "))}" data-kind="${esc(d.kind)}">
   <span class="title">${esc(d.name)}</span>
-  <span class="st ${d.connected ? "state ok" : "muted"}">${d.connected ? "Connected" : esc(d.kind)}</span>
+  <span class="st ${d.connected ? "state ok" : "muted"}" data-v="${d.connected}|${d.battery ?? ""}">${stHtml(d)}</span>
   <span class="ops">
     <button class="btn small conn"><span class="label">${d.connected ? "Disconnect" : "Connect"}</span></button>
     <button class="btn small hold"><span class="label">Hold to remove</span><span class="fill"></span></button>
@@ -745,8 +752,21 @@ $("#paired").addEventListener("click", async e => {
     const st = $(".st", r);
     st.className = `st ${on ? "muted" : "state ok"}`;
     setText(st, on ? r.dataset.kind : "Connected");
+    st.dataset.v = "";
+    refreshPaired().catch(() => {});  // picks up the battery level once Windows has it
   } catch (err) { setMsg($("#btMsg"), err.message, true); }
 });
+// connected state and battery of the rows already shown, updated in place (no re-render: a hold or a pairing may be running)
+async function refreshPaired() {
+  const rows = $$("#paired .row");
+  for (const d of await call("bt_paired")) {
+    const r = rows.find(x => x.dataset.id === d.id); if (!r) continue;
+    const st = $(".st", r), v = `${d.connected}|${d.battery ?? ""}`;
+    if (st.dataset.v === v) continue;
+    st.dataset.v = v; st.className = `st ${d.connected ? "state ok" : "muted"}`; st.innerHTML = stHtml(d); arrive(st);
+    const b = $(".conn", r); if (!b.disabled) swap(b, d.connected ? "Disconnect" : "Connect");
+  }
+}
 let searching = false, pairingRow = null;
 const fmtPin = p => p && p.length === 6 ? `${p.slice(0, 3)} ${p.slice(3)}` : (p || "");
 function renderPower() {
@@ -1180,6 +1200,7 @@ setTimeout(() => { if (!INFO && !MOCK && !window.pywebview) setMsg($("#wifiMsg")
   const visible = () => call("is_visible", "main").catch(() => true);  // a hidden window stops polling
   setInterval(async () => { if (await visible()) poll(); }, 2000);
   setInterval(tickAge, 1000);
+  setInterval(async () => { if (!$("#bt").hidden && !pairingRow && await visible()) refreshPaired().catch(() => {}); }, 60000);
   setInterval(async () => { if (nearbyShown() && !pw.open && await visible()) loadNetworks(false).catch(e => setMsg($("#wifiMsg"), e.message, true)); }, 10000);
 })();
 </script>

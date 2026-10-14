@@ -179,3 +179,20 @@ def test_second_concurrent_switch_is_refused(monkeypatch):
         bt._switch_lock.release()
     with pytest.raises(bt.BtError, match="isn't connected"):  # and the lock is free again afterwards
         bt.switch("nothing")
+
+
+def test_devices_add_battery_only_while_connected(monkeypatch):
+    rows = [{"id": "C", "ids": ["C"], "name": "Test Speaker", "kind": "Speaker", "connected": True, "address": "020000000013"},
+            {"id": "D", "ids": ["D"], "name": "Test Buds", "kind": "Headphones", "connected": False, "address": "020000000014"},
+            {"id": "E", "ids": ["E"], "name": "Test Mouse", "kind": "Mouse", "connected": True, "address": "020000000015"}]
+    monkeypatch.setattr(bt.btwinrt, "paired", lambda: [dict(r) for r in rows])
+    monkeypatch.setattr(bt.pnp, "battery_levels", lambda: {"020000000013": 90, "020000000014": 40})
+    assert [d["battery"] for d in bt.devices()] == [90, None, None]  # disconnected: Windows' value is stale
+
+
+def test_devices_survive_battery_read_failure(monkeypatch):
+    monkeypatch.setattr(bt.btwinrt, "paired", lambda: [{"id": "C", "ids": ["C"], "name": "S", "kind": "Speaker",
+                                                       "connected": True, "address": "020000000013"}])
+    def boom(): raise OSError("setupapi")
+    monkeypatch.setattr(bt.pnp, "battery_levels", boom)
+    assert bt.devices()[0]["battery"] is None

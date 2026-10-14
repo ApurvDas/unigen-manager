@@ -88,7 +88,21 @@ def _switch(target, *, wait=10.0, clock=time.monotonic, sleep=time.sleep):
     raise BtError(f"The {_label(target)} radio didn't start.{back}")
 
 
-devices, pair, power, set_power = btwinrt.paired, btwinrt.pair, btwinrt.power, btwinrt.set_power
+pair, power, set_power = btwinrt.pair, btwinrt.power, btwinrt.set_power
+
+
+def devices():
+    """Paired devices; connected ones get the battery % Windows last heard (None when the device doesn't report it).
+    Disconnected ones never do: Windows keeps the old value."""
+    rows = btwinrt.paired()
+    try:
+        levels = pnp.battery_levels()
+    except OSError as e:
+        logging.getLogger("unigen").warning("battery read failed: %s", e)
+        levels = {}
+    for r in rows:
+        r["battery"] = levels.get(r["address"]) if r["connected"] else None
+    return rows
 search_start, search_stop = btwinrt.search_start, btwinrt.search_stop
 
 

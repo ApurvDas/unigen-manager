@@ -251,7 +251,8 @@ async function loadBt() {
   const act = BT.radios.find(r => r.key === BT.active);
   const dev = paired.find(d => d.connected);
   setText($("#btVer"), act && act.version ? `Bluetooth ${act.version}` : "Bluetooth");
-  setText($("#btDev"), on ? (dev ? dev.name : "No device connected") : "Bluetooth is off");
+  const level = dev && dev.battery != null ? ` · ${dev.battery}%` : "";
+  setText($("#btDev"), on ? (dev ? dev.name + level : "No device connected") : "Bluetooth is off");
 }
 
 $("#btPower").addEventListener("click", async function () {
@@ -336,6 +337,7 @@ if (!MOCK) {
   new ResizeObserver(() => { if (shown) call("widget_fit", Math.ceil(W.getBoundingClientRect().height)).catch(() => {}); }).observe(W);
 }
 setInterval(async () => { if (shown && await call("is_visible", "widget").catch(() => true)) { poll().catch(fail($("#wifiMsg"))); loadNets().catch(fail($("#netMsg"))); } }, 3000);
+setInterval(async () => { if (shown && await call("is_visible", "widget").catch(() => true)) loadBt().catch(() => {}); }, 60000);  // battery
 
 // ================= ?mock preview: fake taskbar with the ^ overflow =================
 if (MOCK) {

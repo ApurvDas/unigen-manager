@@ -39,13 +39,14 @@ def test_trigger_scan_accepted():
 
 def test_bluetooth_radios_and_versions():
     rs = {r["key"]: r for r in bt.radios()}
-    assert rs["unigen"]["version"] == "5.4" and rs["builtin"]["version"] == "5.2"
+    assert rs["builtin"]["version"] == "5.2"
+    assert "unigen" not in rs or rs["unigen"]["version"] == "5.4"  # the dongle may be unplugged
     assert any(r["ok"] for r in rs.values())
 
 
 def test_paired_devices_list():
     devs = bt.devices()
-    assert all(set(d) == {"id", "ids", "name", "connected", "kind", "address"} for d in devs)
+    assert all(set(d) == {"id", "ids", "name", "connected", "kind", "address", "battery"} for d in devs)
 
 
 def test_ping_router_from_connected_adapter():
@@ -58,7 +59,8 @@ def test_ping_router_from_connected_adapter():
 
 def test_api_end_to_end_reads():
     a = api.Api()
-    for name, args in [("app_info", ()), ("adapters", ()), ("saved", ()), ("bt_radio", ()), ("networks", ("unigen",))]:
+    key = a.adapters()["data"][0]["key"]  # the adapter in use; the other one is off
+    for name, args in [("app_info", ()), ("adapters", ()), ("saved", ()), ("bt_radio", ()), ("bt_paired", ()), ("networks", (key,))]:
         r = getattr(a, name)(*args)
         assert r["ok"], (name, r)
 
@@ -105,3 +107,9 @@ def test_device_reads_are_fast():
     t = time.perf_counter()
     hw.devices(); bt.radios()
     assert time.perf_counter() - t < 0.3
+
+
+def test_battery_levels_read():
+    import pnp
+    levels = pnp.battery_levels()
+    assert all(len(a) == 12 and 0 <= v <= 100 for a, v in levels.items())
