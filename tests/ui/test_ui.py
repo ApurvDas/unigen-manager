@@ -256,7 +256,7 @@ def test_bt_search_pair_remove(open_page):
 
 
 def test_bt_pair_twin_shows_once(open_page):
-    # a dual-mode device paired while the list refreshed showed up twice ("Master Buds Max" on the real PC)
+    # a dual-mode device paired while the list refreshed showed up twice on a real PC
     pg = bt_page(open_page, "window.MOCK_PAIR_TWIN = true;")
     pg.locator("#btSearch").click()
     nearby(pg, "Galaxy Buds2 Pro").locator(".pair").click()

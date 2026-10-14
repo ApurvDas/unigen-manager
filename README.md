@@ -10,7 +10,7 @@
 ![Python 3.10](https://img.shields.io/badge/Python-3.10-0E151D?style=flat-square&logo=python&logoColor=4FB3C8)
 ![pywebview](https://img.shields.io/badge/UI-pywebview%20%2B%20WebView2-0E151D?style=flat-square)
 ![anime.js](https://img.shields.io/badge/motion-anime.js%204-0E151D?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-219%20passing-5CC08A?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-220%20passing-5CC08A?style=flat-square)
 
 <a href="https://github.com/ApurvDas/unigen-manager/releases/latest/download/UnigenManager.exe"><img src="https://img.shields.io/badge/Download-UnigenManager.exe%20%C2%B7%2033%20MB-4FB3C8?style=for-the-badge&logo=windows&logoColor=white" alt="Download UnigenManager.exe" height="44"></a>
 
@@ -57,7 +57,9 @@ Older versions and checksums are on the [releases page](https://github.com/Apurv
 - **Live search:** nearby devices appear as Windows finds them, and the search stops when you leave the page.
 - **Pairing with PIN prompts:** confirm a code, type the code the device shows, or enter the device's PIN, right in the app.
 - Bluetooth **on/off switch**, here and in the tray widget.
+- **One row per device:** earbuds and speakers that Windows lists twice (classic Bluetooth and Bluetooth LE) show once, and Remove clears both.
 - Remove devices, and connect or disconnect audio devices.
+- **Fast:** the paired list loads in a few hundredths of a second.
 - Bluetooth follows the **Using** switch below, so it always runs on the adapter you picked (dongle 5.4, built-in 5.2).
 
 </td>
@@ -90,6 +92,7 @@ Older versions and checksums are on the [releases page](https://github.com/Apurv
 - **It follows the dongle:** unplug it and the built-in adapter turns back on; plug it in again and the app switches back to it. A tray notification tells you.
 - If any step fails, the old adapter is turned back on and the message says where you stand.
 - Needs administrator rights. Without them the switch is disabled and the app changes nothing.
+- **Light on the PC:** adapter and radio status are read straight from Windows (SetupAPI) in milliseconds, so the always-on watchdog doesn't start a PowerShell process every few seconds.
 
 </td>
 </tr>
@@ -199,7 +202,7 @@ Then open:
 
 ```powershell
 py -3.10 -m pip install -r requirements-dev.txt
-py -3.10 -m pytest                 # 219 unit, contract and UI tests (UI tests drive the installed Microsoft Edge)
+py -3.10 -m pytest                 # 220 unit, contract and UI tests (UI tests drive the installed Microsoft Edge)
 py -3.10 -m pytest -m hardware     # read-only checks against the real adapters (changes nothing)
 ```
 
@@ -233,6 +236,8 @@ flowchart LR
     api --> wifi["wifi.py<br/>netsh, wlanapi"]
     api --> bt["bt.py + btwinrt.py + bt.ps1<br/>WinRT, KS audio, bthprops"]
     api --> hw["hw.py + hw.ps1<br/>Using switch, watchdog"]
+    hw --> pnp["pnp.py<br/>SetupAPI device reads"]
+    bt --> pnp
     api --> speed["speed.py<br/>ping, sampled HTTP"]
     hw --> winrun
     wifi --> winrun["winrun.py<br/>argument lists only, no shell"]
@@ -246,8 +251,9 @@ flowchart LR
 | `app.py` | Administrator prompt, single instance, main and widget windows, tray |
 | `api.py` | Everything the pages call, with plain-language errors |
 | `wifi.py` | `netsh` parsing, connect and disconnect, saved profiles, Windows scan request |
-| `hw.py`, `hw.ps1` | The Using switch: device list, Wi-Fi and Bluetooth switched together with rollback, saved choice, unplug/replug watchdog |
-| `bt.py`, `bt.ps1` | Bluetooth radio switching and audio connect |
+| `hw.py`, `hw.ps1` | The Using switch: Wi-Fi and Bluetooth switched together with rollback, saved choice, unplug/replug watchdog. `hw.ps1` only turns devices on and off |
+| `pnp.py` | Reads Device Manager (status, disabled, Bluetooth version) through SetupAPI, in milliseconds |
+| `bt.py`, `bt.ps1` | Bluetooth radio switching and audio connect. `bt.ps1` only turns radios on and off |
 | `btwinrt.py` | Bluetooth through Windows' WinRT device APIs: paired list, live search, pairing with PIN prompts, unpair, radio power |
 | `speed.py` | Ping and per-adapter sampled download and upload |
 | `tray.py` | Tray icon, widget placement, Start with Windows, single instance |
