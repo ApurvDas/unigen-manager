@@ -3,7 +3,8 @@
 // Test hooks (set before the page loads): MOCK_FAST (no delays), MOCK_FAIL = { method: "message" },
 // MOCK_UNPLUG = "unigen" | "builtin", MOCK_ADMIN = false, MOCK_HOSTILE (adds a network, saved profile and paired device named like an HTML tag),
 // MOCK_SEARCH_HOLD (the Bluetooth search never finishes), MOCK_PAIR_TWIN (pairing races a paired-list refresh), MOCK_BT_OFF (Bluetooth starts off),
-// MOCK_BOTH_ON (neither adapter is switched off, like before the first switch). window.mockApi._setUsing(key) changes the adapter in use.
+// MOCK_BOTH_ON (neither adapter is switched off, like before the first switch). window.mockApi._setUsing(key) changes the adapter in use;
+// mockApi._setConnected(id, on) connects a paired device behind the app's back (as Windows Settings would).
 // Mock nearby devices carry ceremony null | "confirm" | "display" | "provide"; the PIN shown is 482913 and the right provide PIN is 0000.
 window.mockApi = (() => {
   const wait = ms => new Promise(r => setTimeout(r, window.MOCK_FAST ? 0 : ms));
@@ -204,5 +205,6 @@ window.mockApi = (() => {
   def("hide_widget", 0, () => null);
   def("widget_fit", 0, () => null);
   api._setUsing = key => { USING = key; }; // test hook
+  api._setConnected = (id, on) => { PAIRED.find(d => d.id === id).connected = on; }; // test hook
   return api;
 })();

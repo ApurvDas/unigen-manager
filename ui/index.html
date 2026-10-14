@@ -169,7 +169,8 @@
 
   /* bluetooth / saved */
   .group h2 { font: 600 15px var(--display); margin: 0 0 8px; }
-  .group h2 span { color: var(--muted); font-weight: 400; }
+  .group h2 > span { color: var(--muted); font-weight: 400; }
+  .group h2 .btn { margin-left: 8px; vertical-align: 1px; }
   .bt .row { grid-template-columns: 1.4fr 1fr 240px; }
   .saved .row { grid-template-columns: minmax(160px, 1fr) 150px 120px 250px; }
   .row .ops { display: flex; gap: 8px; justify-content: flex-end; }
@@ -349,7 +350,7 @@
       </div>
     </div>
     <div class="group">
-      <h2>Paired devices <span id="pairedCount"></span></h2>
+      <h2>Paired devices <span id="pairedCount"></span><button class="btn small" id="btRefresh" title="Check again which devices are connected"><span class="label">Refresh</span></button></h2>
       <div class="list" id="paired"></div>
     </div>
     <div class="group">
@@ -767,6 +768,8 @@ async function refreshPaired() {
     const b = $(".conn", r); if (!b.disabled) swap(b, d.connected ? "Disconnect" : "Connect");
   }
 }
+// a full reload also lists devices paired in Windows Settings; while pairing, only states update
+$("#btRefresh").addEventListener("click", e => busy(e.currentTarget, "Refreshing…", pairingRow ? refreshPaired() : loadBt()).catch(() => {}));
 let searching = false, pairingRow = null;
 const fmtPin = p => p && p.length === 6 ? `${p.slice(0, 3)} ${p.slice(3)}` : (p || "");
 function renderPower() {
@@ -1200,7 +1203,7 @@ setTimeout(() => { if (!INFO && !MOCK && !window.pywebview) setMsg($("#wifiMsg")
   const visible = () => call("is_visible", "main").catch(() => true);  // a hidden window stops polling
   setInterval(async () => { if (await visible()) poll(); }, 2000);
   setInterval(tickAge, 1000);
-  setInterval(async () => { if (!$("#bt").hidden && !pairingRow && await visible()) refreshPaired().catch(() => {}); }, 60000);
+  setInterval(async () => { if (!$("#bt").hidden && !pairingRow && await visible()) refreshPaired().catch(() => {}); }, 5000);  // a check takes ~50 ms
   setInterval(async () => { if (nearbyShown() && !pw.open && await visible()) loadNetworks(false).catch(e => setMsg($("#wifiMsg"), e.message, true)); }, 10000);
 })();
 </script>

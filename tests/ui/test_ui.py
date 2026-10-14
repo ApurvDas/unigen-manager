@@ -404,6 +404,18 @@ def test_bt_battery_for_connected_devices(open_page):
     expect(paired_row(pg, "OnePlus Nord Buds 3r").locator(".batt")).to_have_count(0)  # not connected
 
 
+def test_bt_refresh_shows_device_connected_elsewhere(open_page):
+    # connected from Windows Settings: the list only re-checked every minute, so the row still said Connect
+    pg = bt_page(open_page)
+    nord = paired_row(pg, "OnePlus Nord Buds 3r")
+    expect(nord.locator(".conn")).to_have_text("Connect")
+    pg.evaluate("mockApi._setConnected('BT-nord', true)")
+    pg.locator("#btRefresh").click()
+    expect(nord.locator(".st")).to_have_text("Connected")
+    expect(nord.locator(".conn")).to_have_text("Disconnect")
+    expect(pg.locator("#btRefresh")).to_have_text("Refresh")
+
+
 def test_bt_battery_after_connect_and_low(open_page):
     pg = bt_page(open_page)
     jbl = paired_row(pg, "JBL Go 3")
