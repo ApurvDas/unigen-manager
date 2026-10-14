@@ -279,6 +279,7 @@ flowchart LR
   - If that fails it toggles the device's audio services, and if Windows still refuses, it opens Windows Bluetooth settings instead.
   - Which of the three works is still to be confirmed on real hardware (checklist row 24).
 - Pairing a device that isn't in pairing mode times out after about a minute.
+- **Two Bluetooth radios, two sets of pairings:** a device paired with only one radio shows **Re-pair** on the other. Each pairing needs the device in pairing mode while that radio is on, so the app can't pair a device with both radios in one go. **Hold to remove** on such a row unpairs it from the other radio too, which can fail while that radio is off.
 - Battery levels of Bluetooth LE-only devices (most mice and keyboards) aren't shown yet.
 - An adapter plugged in after the app starts appears after the app restarts.
 

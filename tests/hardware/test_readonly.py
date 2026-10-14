@@ -1,5 +1,5 @@
 """Read-only checks against this PC's real adapters. Run: py -3.10 -m pytest -m hardware"""
-import os
+import os, re
 from pathlib import Path
 
 import pytest
@@ -55,7 +55,8 @@ def test_bluetooth_radios_and_versions():
 
 def test_paired_devices_list():
     devs = bt.devices()
-    assert all(set(d) == {"id", "ids", "name", "connected", "kind", "address", "battery"} for d in devs)
+    assert all(set(d) == {"id", "ids", "name", "connected", "kind", "address", "battery", "here"} for d in devs)
+    assert all(isinstance(d["here"], bool) for d in devs)
 
 
 def test_ping_router_from_connected_adapter():
@@ -91,6 +92,8 @@ def test_winrt_bluetooth_reads():
     assert btwinrt.power() in ("on", "off")
     rows = btwinrt.paired()
     assert all({"id", "ids", "name", "kind", "connected", "address"} <= set(r) for r in rows)
+    local = btwinrt.local_address()
+    assert re.fullmatch(r"[0-9a-f]{12}", local or "")
 
 
 def test_hw_devices_finds_both_adapters():

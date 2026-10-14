@@ -429,3 +429,85 @@ def test_bt_battery_after_connect_and_low(open_page):
     jbl.locator(".conn").click()
     expect(jbl.locator(".batt")).to_have_text("15%")
     expect(jbl.locator(".batt")).to_have_class(re.compile(r"\blow\b"))
+
+
+OTHER = "window.MOCK_OTHER_RADIO = true;"
+
+
+def test_bt_row_from_other_radio_offers_repair(open_page):
+    pg = bt_page(open_page, OTHER)
+    nord = paired_row(pg, "OnePlus Nord Buds 3r")
+    expect(nord.locator(".st")).to_have_text("Not paired with the dongle")
+    expect(nord.locator(".pair .label")).to_have_text("Re-pair")
+    expect(nord.locator(".conn")).to_have_count(0)
+    expect(paired_row(pg, "Tribit StormBox Mini+").locator(".conn")).to_have_count(1)
+    expect(pg.locator("#btAway")).to_have_text("2 devices aren't paired with the dongle yet. "
+                                               "They were paired with the Built-in MediaTek; re-pair each once to use it here.")
+
+
+def test_bt_repair_explains_then_pairs_in_place(open_page):
+    pg = bt_page(open_page, OTHER)
+    nord = paired_row(pg, "OnePlus Nord Buds 3r")
+    nord.locator(".pair").click()
+    box = pg.locator(".pairbox.explain")
+    expect(box).to_contain_text("OnePlus Nord Buds 3r isn't connected to the Unigen dongle.")
+    expect(box).to_contain_text("It was paired with the Built-in MediaTek.")
+    expect(box).to_contain_text("Your pairing with the built-in radio stays.")
+    expect(box.locator("li")).to_have_count(3)
+    box.get_by_role("button", name="Pair now").click()
+    expect(pg.locator(".pairbox")).to_have_count(0)
+    expect(pg.locator("#btMsg")).to_have_text("Paired with OnePlus Nord Buds 3r. It now works on both radios.")
+    expect(nord.locator(".st")).to_have_text("Connected")
+    expect(nord.locator(".conn .label")).to_have_text("Disconnect")
+    expect(pg.locator("#paired .row")).to_have_count(6)
+    expect(pg.locator("#paired .row").nth(1).locator(".title")).to_have_text("OnePlus Nord Buds 3r")  # same place in the list
+    expect(pg.locator("#btAway")).to_contain_text("1 device isn't paired with the dongle yet.")
+
+
+def test_bt_repair_status_opens_box_and_cancel_closes(open_page):
+    pg = bt_page(open_page, OTHER)
+    jbl = paired_row(pg, "JBL Go 3")
+    jbl.locator(".why").click()
+    expect(pg.locator(".pairbox.explain")).to_have_count(1)
+    pg.get_by_role("button", name="Cancel").click()
+    expect(pg.locator(".pairbox")).to_have_count(0)
+    expect(jbl.locator(".st")).to_have_text("Not paired with the dongle")
+
+
+def test_bt_note_follows_the_radio_in_use(open_page):
+    pg = bt_page(open_page, OTHER)
+    pg.evaluate("mockApi._setUsing('builtin'); window.onUsingChanged()")
+    expect(pg.locator("#btRadio")).to_have_text("Built-in MediaTek")
+    expect(paired_row(pg, "JBL Go 3").locator(".st")).to_have_text("Not paired with the built-in radio")
+    expect(pg.locator("#btAway")).to_contain_text("2 devices aren't paired with the built-in radio yet.")
+
+
+def test_bt_stale_connect_explains_and_opens_the_box(open_page):
+    pg = bt_page(open_page)
+    tribit = paired_row(pg, "Tribit StormBox Mini+")
+    expect(tribit.locator(".conn")).to_have_text("Connect")
+    pg.evaluate("mockApi.is_visible = async () => ({ ok: true, data: false })")  # no poll may refresh the row first
+    pg.evaluate("mockApi._setHere('BT-tribit', false)")  # moved behind the app's back
+    tribit.locator(".conn").click()
+    expect(pg.locator("#btMsg")).to_have_text("Tribit StormBox Mini+ is paired with the Built-in MediaTek, not this one. "
+                                               "Put it in pairing mode, then press Re-pair.")
+    expect(paired_row(pg, "Tribit StormBox Mini+").locator(".st")).to_have_text("Not paired with the dongle")
+    expect(pg.locator(".pairbox.explain")).to_have_count(1)
+
+
+def test_bt_refresh_rebuilds_a_row_whose_radio_changed(open_page):
+    pg = bt_page(open_page, OTHER)
+    pg.evaluate("mockApi._setHere('BT-nord', true)")  # paired here from Windows Settings
+    pg.locator("#btRefresh").click()
+    expect(paired_row(pg, "OnePlus Nord Buds 3r").locator(".conn")).to_have_count(1)
+    expect(pg.locator("#btAway")).to_contain_text("1 device isn't paired with the dongle yet.")
+
+
+def test_hostile_name_in_repair_box_is_text(open_page):
+    pg = bt_page(open_page, OTHER + "window.MOCK_HOSTILE = true;")
+    pg.evaluate("mockApi._setHere('BT-evil', false)")
+    pg.locator("#btRefresh").click()
+    row = paired_row(pg, "<img src=x onerror=alert(1)>")
+    row.locator(".pair").click()
+    expect(pg.locator(".pairbox.explain")).to_contain_text("<img src=x onerror=alert(1)> isn't connected")
+    assert pg.locator("img").count() == 0

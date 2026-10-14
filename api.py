@@ -175,8 +175,23 @@ class Api:
         if self._window is not None:
             self._window.evaluate_js(script)
 
+    def _rows(self):
+        """bt.devices(); a row paired only on the other radio also names that radio and the one in use."""
+        rows = bt.devices()
+        if all(d.get("here", True) for d in rows):
+            return rows
+        rs = bt.radios()
+        act = next((r for r in rs if r["ok"]), None)
+        other = next((r for r in rs if r is not act), None)  # ponytail: assumes two radios; a third would need the address map
+        here = self._name(act["key"], act["name"]) if act else "this radio"
+        away = self._name(other["key"], other["name"]) if other else "other radio"
+        for d in rows:
+            if not d.get("here", True):
+                d["radio_name"], d["here_name"] = away, here
+        return rows
+
     def _row(self, dev_id):
-        return next((d for d in bt.devices() if dev_id in d["ids"]), None)
+        return next((d for d in self._rows() if dev_id in d["ids"]), None)
 
     def _device(self, dev_id):
         d = self._row(dev_id)
@@ -198,7 +213,7 @@ class Api:
 
     @_envelope
     def bt_paired(self):
-        return bt.devices()
+        return self._rows()
 
     def _push_nearby(self, rows, done):
         self._eval_main("window.onBtNearby && window.onBtNearby(" + json.dumps({"devices": rows, "done": done}) + ")")
@@ -229,7 +244,9 @@ class Api:
 
     @_envelope
     def bt_pair(self, dev_id):
-        bt.pair(dev_id, self._ask)
+        d = self._row(dev_id)
+        # paired on the other radio only: pair it again through the radio in use
+        bt.pair(bt.here_id(d["address"]) if d and not d.get("here", True) else dev_id, self._ask)
         d = self._row(dev_id)
         if d and d["kind"] in ("Headphones", "Speaker", "Audio") and not d["connected"]:
             try:  # ready to play: Windows doesn't always connect audio after pairing
@@ -247,6 +264,8 @@ class Api:
     @_envelope
     def bt_connect(self, dev_id):
         d = self._device(dev_id)
+        if not d.get("here", True):  # no audio driver on this radio: Connect can't work, Settings can't either
+            raise bt.BtError(f"{d['name']} is paired with the {d['radio_name']}, not this one. Put it in pairing mode, then press Re-pair.")
         bt.connect(d["address"], d["name"])
 
     @_envelope

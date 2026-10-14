@@ -1,10 +1,10 @@
 """Bluetooth through Windows' device APIs (WinRT): paired devices, live search, pairing with PIN prompts,
 unpairing and the radio's on/off switch. bt.py is the only caller. The pure helpers at the top test without hardware."""
-import asyncio, logging, threading
+import asyncio, logging, re, threading
 
 from winrt.windows.devices.enumeration import (DeviceInformation, DeviceInformationKind, DevicePairingKinds,
                                                DevicePairingProtectionLevel)
-from winrt.windows.devices.bluetooth import BluetoothDevice, BluetoothLEDevice
+from winrt.windows.devices.bluetooth import BluetoothAdapter, BluetoothDevice, BluetoothLEDevice
 from winrt.windows.devices.radios import Radio, RadioAccessStatus, RadioKind, RadioState
 from winrt.windows.foundation import IPropertyValue, PropertyType
 
@@ -43,21 +43,31 @@ def record_kind(r):
     return kind(r["major"], r["minor"]) if r["major"] is not None else le_kind(r["appearance"])
 
 
-def merge(records):
+def radio_of(dev_id):
+    """The address (12 lowercase hex) of the PC's radio a paired device's id belongs to, or None.
+    Ids look like Bluetooth#Bluetooth<radio>-<device> and BluetoothLE#BluetoothLE<radio>-<device>."""
+    m = re.match(r"Bluetooth(?:LE)?#Bluetooth(?:LE)?([0-9A-Fa-f:]{17})-", dev_id)
+    return m.group(1).replace(":", "").lower() if m else None
+
+
+def merge(records, local=None):
     """One row per device. A device's classic and LE records (same name) become one row that keeps every id;
-    the classic, connected record leads, because pairing and audio go through it.
+    the record on the radio in use (local), then the classic, connected one, leads, because pairing and audio go through it.
+    A row is "here" when any of its records is on local; with no local radio every row is.
     ponytail: matching by name merges two different devices that share a name; random LE addresses leave nothing better."""
     rows = {}
-    for r in sorted(records, key=lambda r: (r["le"], not r["connected"])):
+    for r in sorted(records, key=lambda r: (local is not None and r["radio"] != local, r["le"], not r["connected"])):
         key = r["name"] or r["id"]
         k = record_kind(r)
         row = rows.get(key)
         if row is None:
             rows[key] = {"id": r["id"], "ids": [r["id"]], "name": r["name"] or f"Unknown device {r['address'][-4:]}",
-                         "kind": k, "connected": r["connected"], "address": r["address"]}
+                         "kind": k, "connected": r["connected"], "address": r["address"],
+                         "here": local is None or r["radio"] == local}
         else:
             row["ids"].append(r["id"])
             row["connected"] = row["connected"] or r["connected"]
+            row["here"] = row["here"] or r["radio"] == local
             if row["kind"] == "Device":
                 row["kind"] = k
     return sorted(rows.values(), key=lambda row: row["name"].lower())
@@ -138,8 +148,33 @@ def record(di):
     v = lambda n: _value(props.lookup(_P + n)) if props.has_key(_P + n) else None
     return {"id": di.id, "name": (di.name or "").strip(), "le": di.id.startswith("BluetoothLE#"),
             "present": bool(v("IsPresent")), "connected": bool(v("IsConnected")),
-            "address": (v("DeviceAddress") or "").replace(":", "").upper(),
+            "address": (v("DeviceAddress") or "").replace(":", "").upper(), "radio": radio_of(di.id),
             "major": v("Bluetooth.Cod.Major"), "minor": v("Bluetooth.Cod.Minor"), "appearance": v("Bluetooth.Le.Appearance")}
+
+
+def local_address():
+    """The radio in use, as 12 lowercase hex digits (None when there is none)."""
+    async def go():
+        a = await BluetoothAdapter.get_default_async()
+        return a and format(a.bluetooth_address, "012x")
+    try:
+        return asyncio.run(go())
+    except OSError:
+        return None
+
+
+def here_id(address_hex):
+    """The id of a device as the radio in use sees it: what pair() needs to pair it with this radio."""
+    async def go():
+        d = await BluetoothDevice.from_bluetooth_address_async(int(address_hex, 16))
+        return d and d.device_information.id
+    try:
+        dev_id = asyncio.run(go())
+    except OSError:
+        dev_id = None
+    if not dev_id:
+        raise BtError("Windows can't find that device on this radio.")
+    return dev_id
 
 
 def paired():
@@ -151,7 +186,7 @@ def paired():
             out += [record(d) for d in await DeviceInformation.find_all_async_aqs_filter_and_additional_properties(sel, PROPS)]
         return out
     try:
-        return merge(asyncio.run(go()))
+        return merge(asyncio.run(go()), local_address())
     except OSError as e:
         log.warning("paired list failed: %s", e)
         raise BtError("Couldn't read the paired devices. Is Bluetooth on?")

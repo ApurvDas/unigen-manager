@@ -2,9 +2,10 @@ import pytest
 import btwinrt as w
 
 
-def rec(id, name, le=False, present=True, connected=False, address="020000000010", major=None, minor=None, appearance=None):
+def rec(id, name, le=False, present=True, connected=False, address="020000000010", major=None, minor=None, appearance=None,
+        radio=None):
     return {"id": id, "name": name, "le": le, "present": present, "connected": connected, "address": address,
-            "major": major, "minor": minor, "appearance": appearance}
+            "major": major, "minor": minor, "appearance": appearance, "radio": radio}
 
 
 def test_classic_kinds():
@@ -24,7 +25,7 @@ def test_merge_twins_keeps_classic_id_and_every_id():
     rows = w.merge([rec("BluetoothLE#le-1", "Galaxy Buds2 Pro", le=True, appearance=0x0941, address="7A0000000001"),
                     rec("Bluetooth#c-1", "Galaxy Buds2 Pro", major=4, minor=6, address="020000000011")])
     assert rows == [{"id": "Bluetooth#c-1", "ids": ["Bluetooth#c-1", "BluetoothLE#le-1"], "name": "Galaxy Buds2 Pro",
-                     "kind": "Headphones", "connected": False, "address": "020000000011"}]
+                     "kind": "Headphones", "connected": False, "address": "020000000011", "here": True}]
 
 
 def test_merge_prefers_connected_record_and_sorts_by_name():
@@ -38,6 +39,34 @@ def test_merge_prefers_connected_record_and_sorts_by_name():
 def test_le_only_row_and_unnamed_label():
     (row,) = w.merge([rec("BluetoothLE#m", "", le=True, appearance=0x03C2, address="7A0000006A44")])
     assert row["kind"] == "Mouse" and row["name"] == "Unknown device 6A44"
+
+
+def test_radio_parsed_from_classic_and_le_ids():
+    assert w.radio_of("Bluetooth#Bluetooth02:00:00:00:00:a1-02:00:00:00:00:b2") == "0200000000a1"
+    assert w.radio_of("BluetoothLE#BluetoothLE02:00:00:00:00:A1-02:00:00:00:00:b2") == "0200000000a1"
+    assert w.radio_of("Bluetooth#nonsense") is None
+
+
+A, B = "0200000000a1", "0200000000a2"  # the PC's two radios
+
+
+def test_merge_marks_devices_paired_only_on_the_other_radio():
+    rows = w.merge([rec("Bluetooth#b-buds", "Test Buds", major=4, minor=6, radio=B),
+                    rec("Bluetooth#a-pill", "Test Pill", major=4, minor=5, radio=A)], local=A)
+    assert {r["name"]: r["here"] for r in rows} == {"Test Buds": False, "Test Pill": True}
+
+
+def test_merge_leads_with_the_record_on_this_radio():
+    rows = w.merge([rec("Bluetooth#b-pill", "Test Pill", major=4, minor=5, connected=True, radio=B),
+                    rec("Bluetooth#a-pill", "Test Pill", major=4, minor=5, radio=A)], local=A)
+    assert len(rows) == 1 and rows[0]["here"] is True
+    assert rows[0]["id"] == "Bluetooth#a-pill" and rows[0]["ids"] == ["Bluetooth#a-pill", "Bluetooth#b-pill"]
+
+
+def test_merge_without_a_local_radio_counts_every_row_here():
+    rows = w.merge([rec("Bluetooth#b-buds", "Test Buds", major=4, minor=6, radio=B),
+                    rec("Bluetooth#x", "Test Pill", major=4, minor=5, radio=None)])
+    assert [r["here"] for r in rows] == [True, True]
 
 
 def test_nearby_rows_drop_absent_and_unnamed():
@@ -162,6 +191,16 @@ def test_second_pairing_is_refused(monkeypatch):
             w.pair("Bluetooth#2", None)
     finally:
         w._pair_lock.release()
+
+
+def test_here_id_needs_the_device_on_this_radio(monkeypatch):
+    class Dev:
+        device_information = type("DI", (), {"id": "Bluetooth#a-buds"})()
+    async def found(addr): return Dev() if addr == 0x020000000011 else None
+    monkeypatch.setattr(w.BluetoothDevice, "from_bluetooth_address_async", found, raising=False)
+    assert w.here_id("020000000011") == "Bluetooth#a-buds"
+    with pytest.raises(w.BtError, match="can't find that device on this radio"):
+        w.here_id("020000000099")
 
 
 def test_power_is_unknown_when_windows_refuses(monkeypatch):

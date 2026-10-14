@@ -305,6 +305,28 @@ def test_bt_connect_uses_classic_address_of_twin(monkeypatch):
     assert seen == [("020000000011", "Galaxy Buds2 Pro")]
 
 
+AWAY = [dict(ROWS[0], here=False)]
+
+
+def test_bt_pair_on_a_row_from_the_other_radio_pairs_it_here(hw, monkeypatch):
+    paired = []
+    monkeypatch.setattr(bt, "devices", lambda: [dict(r) for r in AWAY])
+    monkeypatch.setattr(bt, "here_id", lambda addr: f"here-{addr}")
+    monkeypatch.setattr(bt, "pair", lambda dev_id, ask: paired.append(dev_id))
+    monkeypatch.setattr(bt, "connect", lambda *a, **k: None)
+    r = api.Api().bt_pair("Bluetooth#c")
+    assert paired == ["here-020000000011"]
+    assert r["data"]["radio_name"] == "Built-in MediaTek" and r["data"]["here_name"] == "Unigen dongle"
+
+
+def test_bt_connect_on_a_row_from_the_other_radio_explains(hw, monkeypatch):
+    monkeypatch.setattr(bt, "devices", lambda: [dict(r) for r in AWAY])
+    monkeypatch.setattr(bt, "connect", lambda *a, **k: pytest.fail("must not try the audio ways"))
+    assert api.Api().bt_connect("Bluetooth#c") == {"ok": False, "error":
+        "Galaxy Buds2 Pro is paired with the Built-in MediaTek, not this one. Put it in pairing mode, then press Re-pair."}
+    assert api.Api().bt_paired()["data"][0]["here_name"] == "Unigen dongle"
+
+
 def test_bt_search_pushes_rows_to_main_window(monkeypatch):
     a = api.Api()
     a._window = Win()

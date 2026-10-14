@@ -88,7 +88,7 @@ def _switch(target, *, wait=10.0, clock=time.monotonic, sleep=time.sleep):
     raise BtError(f"The {_label(target)} radio didn't start.{back}")
 
 
-pair, power, set_power = btwinrt.pair, btwinrt.power, btwinrt.set_power
+pair, power, set_power, here_id = btwinrt.pair, btwinrt.power, btwinrt.set_power, btwinrt.here_id
 
 
 def devices():

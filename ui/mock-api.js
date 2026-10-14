@@ -3,8 +3,10 @@
 // Test hooks (set before the page loads): MOCK_FAST (no delays), MOCK_FAIL = { method: "message" },
 // MOCK_UNPLUG = "unigen" | "builtin", MOCK_ADMIN = false, MOCK_HOSTILE (adds a network, saved profile and paired device named like an HTML tag),
 // MOCK_SEARCH_HOLD (the Bluetooth search never finishes), MOCK_PAIR_TWIN (pairing races a paired-list refresh), MOCK_BT_OFF (Bluetooth starts off),
-// MOCK_BOTH_ON (neither adapter is switched off, like before the first switch). window.mockApi._setUsing(key) changes the adapter in use;
-// mockApi._setConnected(id, on) connects a paired device behind the app's back (as Windows Settings would).
+// MOCK_BOTH_ON (neither adapter is switched off, like before the first switch), MOCK_OTHER_RADIO (two paired devices are paired
+// only with the other radio: Re-pair instead of Connect). window.mockApi._setUsing(key) changes the adapter in use;
+// mockApi._setConnected(id, on) connects a paired device behind the app's back (as Windows Settings would);
+// mockApi._setHere(id, on) moves a paired device to / from the other radio behind the app's back.
 // Mock nearby devices carry ceremony null | "confirm" | "display" | "provide"; the PIN shown is 482913 and the right provide PIN is 0000.
 window.mockApi = (() => {
   const wait = ms => new Promise(r => setTimeout(r, window.MOCK_FAST ? 0 : ms));
@@ -61,6 +63,7 @@ window.mockApi = (() => {
   ];
   if (window.MOCK_HOSTILE) NEARBY.push({ id: "BT-evil2", name: "<img src=x onerror=alert(2)>", kind: "Device", address: "B1B2C3D4E5F7", ceremony: "confirm" });
 
+  if (window.MOCK_OTHER_RADIO) PAIRED.filter(d => d.id === "BT-nord" || d.id === "BT-jbl").forEach(d => { d.here = false; });
   if (window.MOCK_HOSTILE) {
     PROFILES.unigen.add("<img src=x onerror=alert(1)>");
     PAIRED.push({ id: "BT-evil", name: "<img src=x onerror=alert(1)>", connected: false, kind: "Audio", address: "A1B2C3D4E5F7" });
@@ -131,12 +134,16 @@ window.mockApi = (() => {
   });
   def("copy_profile", 1200, (ssid, src, dst) => { adapter(src); adapter(dst); PROFILES[dst].add(ssid); });
   def("delete_profile", 300, ssid => { Object.values(PROFILES).forEach(p => p.delete(ssid)); });
-  const row = d => ({ id: d.id, ids: [d.id], name: d.name, kind: d.kind, connected: !!d.connected, address: d.address });
+  const row = d => ({ id: d.id, ids: [d.id], name: d.name, kind: d.kind, connected: !!d.connected, address: d.address, here: true });
+  const otherName = () => NAMES[using() === "unigen" ? "builtin" : "unigen"];
+  // a paired device as bt_paired lists it; one paired only on the other radio also names both radios
+  const view = ({ lastBattery, here, ...d }) => ({ ...d, ids: d.ids || [d.id], battery: d.connected ? lastBattery ?? null : null, here: here !== false,
+    ...(here === false && { radio_name: otherName(), here_name: NAMES[using()] }) });
   const push = (devices, done) => window.onBtNearby && window.onBtNearby({ devices: devices.map(row), done });
   def("bt_radio", 100, () => ({ active: using(), can_switch: window.MOCK_ADMIN !== false, power: POWER,
     radios: plugged().map(a => ({ key: a.key, name: a.name, ok: a.key === using(), disabled: a.key !== using(), version: a.bt })) }));
   def("bt_power", 600, on => { POWER = on ? "on" : "off"; return { power: POWER }; });
-  def("bt_paired", 200, () => PAIRED.map(({ lastBattery, ...d }) => ({ ...d, ids: d.ids || [d.id], battery: d.connected ? lastBattery ?? null : null })));
+  def("bt_paired", 200, () => PAIRED.map(view));
   def("bt_search_start", 100, () => {
     if (POWER === "off") throw new Error("Bluetooth is off. Turn it on first.");
     searchTimers.forEach(clearTimeout); searchTimers = [];
@@ -147,6 +154,11 @@ window.mockApi = (() => {
   def("bt_search_stop", 0, () => { searchTimers.forEach(clearTimeout); searchTimers = []; });
   def("bt_pair_answer", 0, (accept, pin) => { if (answer) answer({ accept, pin }); });
   def("bt_pair", 1400, async id => {
+    const away = PAIRED.find(x => x.id === id && x.here === false);
+    if (away) { // paired on the other radio only: pairing again through this one, then it connects
+      away.here = true; away.connected = ["Headphones", "Speaker", "Audio"].includes(away.kind);
+      return view(away);
+    }
     const d = NEARBY.find(x => x.id === id);
     if (!d) throw new Error("The device didn't answer. Bring it closer and make sure it's in pairing mode.");
     if (d.ceremony) {
@@ -170,7 +182,12 @@ window.mockApi = (() => {
     return p;
   });
   def("bt_remove", 500, id => { const i = PAIRED.findIndex(d => d.id === id); if (i >= 0) PAIRED.splice(i, 1); });
-  def("bt_connect", 1400, id => { const d = PAIRED.find(x => x.id === id); if (!d) throw new Error("That device isn't paired any more."); d.connected = true; });
+  def("bt_connect", 1400, id => {
+    const d = PAIRED.find(x => x.id === id);
+    if (!d) throw new Error("That device isn't paired any more.");
+    if (d.here === false) throw new Error(`${d.name} is paired with the ${otherName()}, not this one. Put it in pairing mode, then press Re-pair.`);
+    d.connected = true;
+  });
   def("bt_disconnect", 1000, id => { const d = PAIRED.find(x => x.id === id); if (!d) throw new Error("That device isn't paired any more."); d.connected = false; });
   def("speed_test", 0, async key => {
     const a = adapter(key);
@@ -206,5 +223,6 @@ window.mockApi = (() => {
   def("widget_fit", 0, () => null);
   api._setUsing = key => { USING = key; }; // test hook
   api._setConnected = (id, on) => { PAIRED.find(d => d.id === id).connected = on; }; // test hook
+  api._setHere = (id, on) => { PAIRED.find(d => d.id === id).here = on; }; // test hook
   return api;
 })();

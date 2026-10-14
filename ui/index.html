@@ -192,6 +192,11 @@
   .pairbox .pin { font: 600 18px/1 var(--display); letter-spacing: .08em; }
   .pairbox input { width: 120px; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line);
     background: var(--panel); color: inherit; font: inherit; }
+  .st.away, .link.why { color: var(--warn); text-align: left; }
+  .pairbox.explain { display: block; }
+  .pairbox.explain p { margin: 0 0 6px; }
+  .pairbox.explain ol { margin: 0 0 10px; padding-left: 20px; }
+  .pairbox .btns { display: flex; gap: 8px; }
   .empty { color: var(--muted); padding: 14px 12px; display: flex; gap: 14px; align-items: center; }
 
   .progress { width: 140px; height: 3px; background: var(--line); border-radius: 2px; overflow: hidden; position: relative; }
@@ -344,7 +349,7 @@
       <button class="switch on" id="btPower" role="switch" aria-checked="true" aria-label="Bluetooth"><i></i></button></div>
     <div class="radio-note">
       <div class="note-text">
-        <p id="btRunNote">Bluetooth is running on the <b id="btRadio">…</b>. <span id="btOther"></span></p>
+        <p id="btRunNote">Bluetooth is running on the <b id="btRadio">…</b>. <span id="btOther"></span> <span id="btAway"></span></p>
         <p id="btOnNote" hidden>Bluetooth is off. <button class="btn small" id="btOn"><span class="label">Turn on</span></button></p>
         <span class="msg" id="btMsg"></span>
       </div>
@@ -715,11 +720,18 @@ $("#pwForm").addEventListener("submit", e => {
 // battery: the % Windows last heard from a connected device (None when it doesn't report one); amber at 20% or less
 const battery = b => b == null ? "" : `<span class="batt${b <= 20 ? " low" : ""}"><svg viewBox="0 0 16 9" aria-hidden="true"><rect x="0.5" y="0.5" width="13" height="8" rx="1.5"/><rect class="lvl" x="2" y="2" width="${(10 * b / 100).toFixed(1)}" height="5" rx="0.5"/><rect class="tip" x="14" y="3" width="1.5" height="3" rx="0.5"/></svg>${b}%</span>`;
 const stHtml = d => d.connected ? `Connected${battery(d.battery)}` : esc(d.kind);
-const pairedRow = d => `<div class="row" data-id="${esc(d.id)}" data-ids="${esc((d.ids || [d.id]).join(" "))}" data-kind="${esc(d.kind)}">
+// a device paired only with the other radio can't connect here: amber status, Re-pair instead of Connect
+const HERE = { unigen: "the dongle", builtin: "the built-in radio" };
+const hereWord = () => HERE[BT && BT.active] || "this radio";
+const pairedRow = d => `<div class="row" data-id="${esc(d.id)}" data-ids="${esc((d.ids || [d.id]).join(" "))}" data-kind="${esc(d.kind)}" data-here="${d.here === false ? 0 : 1}" data-radio="${esc(d.radio_name)}" data-here-name="${esc(d.here_name)}">
   <span class="title">${esc(d.name)}</span>
-  <span class="st ${d.connected ? "state ok" : "muted"}" data-v="${d.connected}|${d.battery ?? ""}">${stHtml(d)}</span>
+  ${d.here === false
+    ? `<span class="st away" data-v="away"><button class="link why">Not paired with ${hereWord()}</button></span>`
+    : `<span class="st ${d.connected ? "state ok" : "muted"}" data-v="${d.connected}|${d.battery ?? ""}">${stHtml(d)}</span>`}
   <span class="ops">
-    <button class="btn small conn"><span class="label">${d.connected ? "Disconnect" : "Connect"}</span></button>
+    ${d.here === false
+      ? `<button class="btn small pair"><span class="label">Re-pair</span></button>`
+      : `<button class="btn small conn"><span class="label">${d.connected ? "Disconnect" : "Connect"}</span></button>`}
     <button class="btn small hold"><span class="label">Hold to remove</span><span class="fill"></span></button>
   </span></div>`;
 const nearbyRow = d => `<div class="row" data-id="${esc(d.id)}" data-name="${esc(d.name)}" data-kind="${esc(d.kind)}">
@@ -735,7 +747,7 @@ async function loadBt() {
     const [radio, paired] = await Promise.all([call("bt_radio"), call("bt_paired")]);
     BT = radio; renderRadio(); renderPower();
     $("#paired").innerHTML = paired.map(pairedRow).join("");
-    countPaired();
+    countPaired(); renderAway();
   } catch (e) { setMsg($("#btMsg"), e.message, true); }
 }
 // the Bluetooth tab label follows whichever radio is in use
@@ -755,18 +767,39 @@ $("#paired").addEventListener("click", async e => {
     setText(st, on ? r.dataset.kind : "Connected");
     st.dataset.v = "";
     refreshPaired().catch(() => {});  // picks up the battery level once Windows has it
-  } catch (err) { setMsg($("#btMsg"), err.message, true); }
+  } catch (err) {
+    setMsg($("#btMsg"), err.message, true);
+    // a stale row: the refresh turns it into a Re-pair row, and the box says what to do
+    await refreshPaired().catch(() => {});
+    const now = $$("#paired .row").find(x => x.dataset.id === r.dataset.id);
+    if (now && now.dataset.here === "0") openWhy(now);
+  }
 });
 // connected state and battery of the rows already shown, updated in place (no re-render: a hold or a pairing may be running)
 async function refreshPaired() {
   const rows = $$("#paired .row");
   for (const d of await call("bt_paired")) {
-    const r = rows.find(x => x.dataset.id === d.id); if (!r) continue;
+    // a device paired on the radio now in use leads with that id, so match on any shared id
+    const r = rows.find(x => (d.ids || [d.id]).some(i => x.dataset.ids.split(" ").includes(i))); if (!r) continue;
+    if ((r.dataset.here === "0") !== (d.here === false)) {  // its buttons differ: rebuild it
+      if (r === pairingRow) continue;
+      if (r.nextElementSibling?.classList.contains("explain")) r.nextElementSibling.remove();
+      r.outerHTML = pairedRow(d);
+      continue;
+    }
+    if (d.here === false) continue;
     const st = $(".st", r), v = `${d.connected}|${d.battery ?? ""}`;
     if (st.dataset.v === v) continue;
     st.dataset.v = v; st.className = `st ${d.connected ? "state ok" : "muted"}`; st.innerHTML = stHtml(d); arrive(st);
     const b = $(".conn", r); if (!b.disabled) swap(b, d.connected ? "Disconnect" : "Connect");
   }
+  renderAway();
+}
+// one line in the radio note while some devices are paired only with the other radio
+function renderAway() {
+  const away = $$("#paired .row").filter(r => r.dataset.here === "0" && r.style.display !== "none"), n = away.length;
+  setText($("#btAway"), !n ? "" : `${n === 1 ? "1 device isn't" : `${n} devices aren't`} paired with ${hereWord()} yet. `
+    + `${n === 1 ? "It was" : "They were"} paired with the ${away[0].dataset.radio}; re-pair ${n === 1 ? "it" : "each"} once to use it here.`);
 }
 // a full reload also lists devices paired in Windows Settings; while pairing, only states update
 $("#btRefresh").addEventListener("click", e => busy(e.currentTarget, "Refreshing…", pairingRow ? refreshPaired() : loadBt()).catch(() => {}));
@@ -822,7 +855,7 @@ window.onBtNearby = ({ devices, done }) => {
   if (done) endSearch(devices.length > 0);
 };
 
-function closePrompt() { const box = $("#nearby .pairbox"); if (box) box.remove(); }
+function closePrompt() { const box = $("#bt .pairbox"); if (box) box.remove(); }
 window.onPairPrompt = ({ kind, pin }) => {
   const r = pairingRow; if (!r) return;
   closePrompt();
@@ -842,25 +875,48 @@ window.onPairPrompt = ({ kind, pin }) => {
   $(".no", box)?.addEventListener("click", () => reply(false));
 };
 
-// pairing moves the device from Nearby into Paired
-$("#nearby").addEventListener("click", async e => {
-  const b = e.target.closest(".pair"); if (!b || b.disabled || pairingRow) return;
-  const r = b.closest(".row");
+// Re-pair: say why the device can't connect here, and what to do (the same box shape as the PIN prompts)
+function openWhy(r) {
+  const was = r.nextElementSibling?.classList.contains("explain");
+  $$("#bt .explain").forEach(x => x.remove());
+  if (was) return;
+  const name = $(".title", r).textContent, other = HERE[BT && BT.active === "unigen" ? "builtin" : "unigen"];
+  r.insertAdjacentHTML("afterend", `<div class="pairbox explain"><p><b>${esc(name)} isn't connected to the ${esc(r.dataset.hereName)}.</b> It was paired with the ${esc(r.dataset.radio)}. `
+    + `Each Bluetooth radio keeps its own pairings, so ${esc(hereWord())} can't connect it until you pair it once more. Your pairing with ${esc(other)} stays.</p>`
+    + `<ol><li>Disconnect it from your phone or other devices.</li><li>Put it in pairing mode (earbuds: usually hold the case button until the light flashes).</li><li>Press <b>Pair now</b>.</li></ol>`
+    + `<div class="btns"><button class="btn small go"><span class="label">Pair now</span></button><button class="btn small no"><span class="label">Cancel</span></button></div></div>`);
+  const box = r.nextElementSibling;
+  arrive(box);
+  $(".go", box).addEventListener("click", () => { box.remove(); pairRow(r, $(".pair", r)); });
+  $(".no", box).addEventListener("click", () => box.remove());
+}
+
+// pairing moves a nearby device into Paired; a Re-pair row is replaced in place
+async function pairRow(r, b) {
+  const away = r.dataset.here === "0", name = away ? $(".title", r).textContent : r.dataset.name;
   pairingRow = r; stopSearch();
   setMsg($("#btMsg"), "Pairing. This can take up to a minute.");
   let d;
   try { d = await busy(b, "Pairing…", call("bt_pair", r.dataset.id)); }
   catch (err) { closePrompt(); pairingRow = null; return setMsg($("#btMsg"), err.message, true); }
   closePrompt(); pairingRow = null;
-  setMsg($("#btMsg"), `Paired with ${r.dataset.name}.`);
-  removeEl(r);
-  d = d || { id: r.dataset.id, ids: [r.dataset.id], name: r.dataset.name, kind: r.dataset.kind, connected: false };
+  setMsg($("#btMsg"), away ? `Paired with ${name}. It now works on both radios.` : `Paired with ${name}.`);
+  if (!away) removeEl(r);
+  d = d || { id: r.dataset.id, ids: [r.dataset.id], name, kind: r.dataset.kind, connected: false };
   // a dual-mode device has a classic and an LE id, and the list may have refreshed while it paired:
   // replace any row of the same device (shared id, or the same name, as bt.devices merges them) instead of adding a twin
   const ids = new Set([...(d.ids || [d.id]), r.dataset.id]);
-  $$("#paired .row").filter(x => (x.dataset.ids || x.dataset.id).split(" ").some(i => ids.has(i))
-    || $(".title", x).textContent === d.name).forEach(x => x.remove());
-  addEl($("#paired"), pairedRow(d)); countPaired();
+  const twins = $$("#paired .row").filter(x => (x.dataset.ids || x.dataset.id).split(" ").some(i => ids.has(i))
+    || $(".title", x).textContent === d.name);
+  if (away) { r.insertAdjacentHTML("beforebegin", pairedRow(d)); arrive(r.previousElementSibling); }
+  else addEl($("#paired"), pairedRow(d));
+  twins.forEach(x => x.remove());
+  countPaired(); renderAway();
+}
+$("#bt").addEventListener("click", e => {
+  const b = e.target.closest(".pair, .why"); if (!b || b.disabled || pairingRow) return;
+  const r = b.closest(".row");
+  if (r.dataset.here === "0") openWhy(r); else pairRow(r, b);
 });
 
 // ================= Saved =================
@@ -929,7 +985,7 @@ async function confirmHold(b) {
     anime.waapi.animate($(".fill", b), { clipPath: "inset(0 100% 0 0)", duration: 200, ease });
     return setMsg(msg, e.message, true);
   }
-  removeEl(row, () => { countPaired(); countSaved(); });
+  removeEl(row, () => { countPaired(); countSaved(); renderAway(); });
   setMsg(msg, saved ? `Deleted ${label}.` : `Removed ${label}.`);
 }
 
