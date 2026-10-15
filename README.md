@@ -87,13 +87,14 @@ Older versions and checksums are on the [releases page](https://github.com/Apurv
 <td colspan="2" valign="top">
 
 ### 🔀 One switch: Using Dongle | Built-in
-- **One control moves Wi-Fi and Bluetooth together.** The adapter you leave is turned off in Device Manager, so Windows can't fall back to it, even after a restart.
+- **One control moves Wi-Fi and Bluetooth together.** Wi-Fi works on the new adapter in about 3 seconds: the app turns each adapter's Wi-Fi radio on or off (the per-adapter Wi-Fi switch in Windows), so no driver has to restart. If Windows' Wi-Fi button turns the unused adapter back on, the app turns it off again.
+- **Bluetooth moves right after, in the background.** Windows runs one Bluetooth radio at a time, so the old one is turned off in Device Manager. That is usually quick, but Windows can take up to a minute while its audio engine lets go of a paired speaker or headphones. The app tells you when Bluetooth has moved.
 - It joins the same network on the new adapter (copying the saved profile if needed) and shows each step while it runs.
 - **Your choice is remembered** across restarts.
 - **It follows the dongle:** unplug it and the built-in adapter turns back on; plug it in again and the app switches back to it. A tray notification tells you.
-- If the Wi-Fi step fails, the old adapter is turned back on and the message says where you stand. Bluetooth moves at the same time as Wi-Fi; if only Bluetooth can't move, Wi-Fi stays switched and the app says so (switch again to retry).
+- If the Wi-Fi step fails, the old adapter keeps working and the message says where you stand. If only Bluetooth can't move, Wi-Fi stays switched and the app says so (switch again to retry). If a Bluetooth driver hangs, Wi-Fi switching keeps working and the app asks you to re-plug the dongle.
 - Needs administrator rights. Without them the switch is disabled and the app changes nothing.
-- **Light on the PC:** adapter and radio status are read straight from Windows (SetupAPI) in milliseconds, so the always-on watchdog doesn't start a PowerShell process every few seconds. Turning devices on and off uses the same Windows call as Device Manager, not PowerShell, and waits for the device to really change state.
+- **Light on the PC:** adapter and radio status are read straight from Windows (SetupAPI) in milliseconds, so the always-on watchdog doesn't start a PowerShell process every few seconds. Wi-Fi radios are read and switched through the Windows Wi-Fi API (wlanapi); Bluetooth radios use the same Windows call as Device Manager, not PowerShell, and the app waits for the device to really change state.
 
 </td>
 </tr>
@@ -252,7 +253,7 @@ flowchart LR
 | `app.py` | Administrator prompt, single instance, main and widget windows, tray |
 | `api.py` | Everything the pages call, with plain-language errors |
 | `wifi.py` | `netsh` parsing, connect and disconnect, saved profiles, Windows scan request |
-| `hw.py` | The Using switch: Wi-Fi and Bluetooth switched together (Bluetooth in parallel), Wi-Fi rollback, saved choice, unplug/replug watchdog |
+| `hw.py` | The Using switch: Wi-Fi by radio, then Bluetooth in the background, Wi-Fi rollback, saved choice, unplug/replug watchdog |
 | `pnp.py` | Reads Device Manager (status, disabled, Bluetooth version, device battery levels) through SetupAPI, in milliseconds, and turns devices on and off (verified by their state) |
 | `bt.py` | Bluetooth radio switching and audio connect |
 | `btwinrt.py` | Bluetooth through Windows' WinRT device APIs: paired list, live search, pairing with PIN prompts, unpair, radio power |

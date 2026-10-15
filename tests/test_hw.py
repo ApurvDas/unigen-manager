@@ -32,16 +32,38 @@ def test_device_key_maps_known_ids():
 
 def test_devices_groups_by_adapter(monkeypatch):
     monkeypatch.setattr(hw, "_rows", lambda: ALL)
+    monkeypatch.setattr(hw, "_radios", lambda: {"unigen": {"guid": "g", "on": True}})
     d = hw.devices()
     assert set(d) == {"unigen", "builtin"}
-    assert d["unigen"] == {"present": True, "wifi": {"id": UNI_WIFI, "ok": True, "disabled": False},
-                           "bt": {"id": UNI_BT, "ok": True, "disabled": False}}
+    assert d["unigen"] == {"present": True, "wifi": {"id": UNI_WIFI, "ok": True, "disabled": False, "pnp_off": False},
+                           "bt": {"id": UNI_BT, "ok": True, "disabled": False, "pnp_off": False}}
     assert d["builtin"]["wifi"]["ok"] is True
-    assert d["builtin"]["bt"] == {"id": MT_BT, "ok": False, "disabled": True}
+    assert d["builtin"]["bt"] == {"id": MT_BT, "ok": False, "disabled": True, "pnp_off": True}
+
+
+def test_devices_radio_off_counts_as_off(monkeypatch):
+    monkeypatch.setattr(hw, "_rows", lambda: ALL)
+    monkeypatch.setattr(hw, "_radios", lambda: {"builtin": {"guid": "g", "on": False}})
+    assert hw.devices()["builtin"]["wifi"] == {"id": MT_WIFI, "ok": False, "disabled": True, "pnp_off": False}
+
+
+def test_wifi_on_uses_the_radio_and_device_manager_only_when_disabled_there(monkeypatch):
+    calls, radios = [], {}
+    monkeypatch.setattr(hw, "enable", lambda i: (calls.append(("enable", i)), radios.update(builtin={"guid": "g", "on": False})))
+    monkeypatch.setattr(hw, "_radios", lambda: dict(radios))
+    monkeypatch.setattr(hw, "set_radio", lambda g, on: calls.append(("radio", g, on)))
+    d = {"id": MT_WIFI, "ok": False, "disabled": True, "pnp_off": True}
+    assert hw.wifi_on("builtin", d, sleep=lambda s: None) is True
+    assert calls == [("enable", MT_WIFI), ("radio", "g", True)] and d["pnp_off"] is False
+    calls.clear()
+    assert hw.wifi_on("builtin", d) is True and calls == [("radio", "g", True)]  # next time: the radio only
+    hw.wifi_off("builtin", d)
+    assert calls[-1] == ("radio", "g", False)
 
 
 def test_devices_without_dongle(monkeypatch):
     monkeypatch.setattr(hw, "_rows", lambda: ALL[2:])
+    monkeypatch.setattr(hw, "_radios", lambda: {})
     assert "unigen" not in hw.devices()
 
 
@@ -84,7 +106,7 @@ DONGLE_IF = {"name": "Wi-Fi 2", "description": "AIC8800D80 USB WiFi", "state": "
 
 
 def dev(i, ok=True):
-    return {"id": i, "ok": ok, "disabled": not ok}
+    return {"id": i, "ok": ok, "disabled": not ok, "pnp_off": not ok}
 
 
 class World:
@@ -100,12 +122,14 @@ class World:
         self.bt_calls = []
         self.scans, self.visible_after = 0, 0  # the dongle sees HOME-5G only after this many scans
         mp = monkeypatch
-        mp.setattr(wifi, "trigger_scan", lambda guid: setattr(self, "scans", self.scans + 1))
+        mp.setattr(wifi, "trigger_scan", lambda guid, **kw: setattr(self, "scans", self.scans + 1))
         mp.setattr(wifi, "networks", lambda iface: [{"ssid": "HOME-5G", "auth": "WPA2-Personal", "aps": []}]
                    if iface != "Wi-Fi 2" or self.scans >= self.visible_after else [])
         mp.setattr(hw, "devices", self.devices)
         mp.setattr(hw, "enable", self.enable)
         mp.setattr(hw, "disable", self.disable)
+        mp.setattr(hw, "wifi_on", lambda key, d, sleep=None, **kw: hw._settled(hw.enable, d["id"], sleep) or True)  # radio as on/off
+        mp.setattr(hw, "wifi_off", lambda key, d: hw.disable(d["id"]))
         mp.setattr(wifi, "interfaces", lambda: [dict(i) for i in self.ifaces])
         mp.setattr(wifi, "profiles", lambda: {"Wi-Fi": ["HOME-5G"], "Wi-Fi 2": ["HOME-5G"] if dongle_profile else []})
         mp.setattr(wifi, "copy_profile", lambda *a: self.calls.append(("copy",) + a))
@@ -219,6 +243,20 @@ def test_use_connect_fails_rolls_back(world):
     assert world.bt_calls == []  # Bluetooth moves only after Wi-Fi works
 
 
+def test_use_bt_hung_in_a_driver_frees_the_switch_and_says_replug(world, monkeypatch):
+    stuck = threading.Event()
+    monkeypatch.setattr(bt, "switch", lambda key: stuck.wait(5))
+    monkeypatch.setattr(hw, "BT_STUCK", 0.05)
+    try:
+        assert world.use() == "unigen"
+        (text, ok), = world.later_notes
+        assert not ok and text.startswith("Bluetooth is stuck") and "Unplug the dongle" in text
+        assert hw._lock.acquire(blocking=False)  # Wi-Fi switching works again
+        hw._lock.release()
+    finally:
+        stuck.set()
+
+
 def test_use_bt_fails_keeps_wifi_and_warns(world):
     world.fail_bt = True
     assert world.use() == "unigen"
@@ -286,7 +324,9 @@ class Pc:
             hw.save_choice(self.path, choice)
         monkeypatch.setattr(hw, "devices", self.devices)
         monkeypatch.setattr(hw, "enable", self.enable)
-        self.used, self.notes, self.fail = [], [], None
+        monkeypatch.setattr(hw, "wifi_on", lambda key, d, **kw: hw.enable(d["id"]) or True)
+        monkeypatch.setattr(hw, "wifi_off", lambda key, d: (self.offs.append(key), self.state.update({key: False})))
+        self.used, self.notes, self.fail, self.offs = [], [], None, []
 
     def enable(self, dev_id):
         self.enabled.append(dev_id)
@@ -459,3 +499,18 @@ def test_use_retries_enable_while_the_device_settles(world, monkeypatch):
         real(i)
     monkeypatch.setattr(hw, "enable", busy_once)
     assert world.use() == "unigen" and tries[:2] == [UNI_WIFI, UNI_WIFI]
+
+
+def test_follow_turns_the_other_radio_off_quietly_when_both_are_on(monkeypatch, tmp_path):
+    pc = Pc(monkeypatch, tmp_path)
+    f = pc.follower()
+    f.step()
+    pc.state["builtin"] = True  # Windows' Wi-Fi switch turned the built-in radio back on
+    assert hw._lock.acquire(blocking=False)
+    try:
+        f.step()  # a switch is running: hands off
+    finally:
+        hw._lock.release()
+    assert pc.offs == []
+    f.step()
+    assert pc.offs == ["builtin"] and pc.used == [] and pc.notes == []

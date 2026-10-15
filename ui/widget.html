@@ -175,7 +175,7 @@ function updateAdapters() {
     pop($(".dot", row), on);
     const ssid = $(".ssid", row), off = INFO.adapters.find(a => a.key === row.dataset.k).off;
     ssid.classList.toggle("off", !on);
-    setText(ssid, !d ? (off ? "Off" : "Unplugged") : on ? d.ssid : "Not connected");
+    setText(ssid, !d || off ? (off ? "Off" : "Unplugged") : on ? d.ssid : "Not connected");
     setText($(".pct", row), on ? `${d.signal}%` : "–");
     setText($(".rate", row), on ? `${d.rate} Mbps` : "No link");
     $(".bars", row).outerHTML = bars(on ? d.signal : null);

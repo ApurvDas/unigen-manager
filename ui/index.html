@@ -599,7 +599,7 @@ function renderRail() {
 function updateRail() {
   $$(".adapter").forEach(a => {
     const d = ADS.find(x => x.key === a.dataset.adapter), on = !!d && d.state === "connected", off = a.classList.contains("off");
-    setText($(".meta b", a), !d ? (off ? "Off" : "Unplugged") : on ? d.ssid : "Not connected");
+    setText($(".meta b", a), !d || off ? (off ? "Off" : "Unplugged") : on ? d.ssid : "Not connected");
     setText($(".rate", a), on ? `${d.rate} Mbps link` : "No link");
     const dot = $(".dot", a);
     if (dot.classList.contains("on") !== on) pop(dot, on);

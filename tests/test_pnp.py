@@ -50,9 +50,15 @@ def test_reached_states():
 
 
 def test_set_enabled_returns_as_soon_as_the_state_is_reached(monkeypatch):
-    d = Dev(monkeypatch, [OFF, OFF, ON])
+    d = Dev(monkeypatch, [OFF, OFF, OFF, ON])  # the first read is the check before changing anything
     d.set(True)
-    assert d.changes == [(DEV, True)] and d.reads == 3 and d.now == 0.5  # polled every 0.25 s
+    assert d.changes == [(DEV, True)] and d.reads == 4 and d.now == 0.5  # polled every 0.25 s
+
+
+def test_set_enabled_leaves_a_device_already_in_that_state_alone(monkeypatch):
+    d = Dev(monkeypatch, [ON])
+    d.set(True)
+    assert d.changes == []
 
 
 def test_set_enabled_trusts_the_state_when_the_call_fails(monkeypatch):

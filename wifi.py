@@ -232,6 +232,78 @@ def trigger_scan(guid, wait=0.0):
         wlan.WlanCloseHandle(handle, None)  # also drops the notification, after any running callback
 
 
+class _IFINFO(ctypes.Structure):  # WLAN_INTERFACE_INFO
+    _fields_ = [("guid", ctypes.c_ubyte * 16), ("desc", ctypes.c_wchar * 256), ("state", wintypes.DWORD)]
+
+
+class _PHY(ctypes.Structure):  # WLAN_PHY_RADIO_STATE
+    _fields_ = [("phy", wintypes.DWORD), ("sw", wintypes.DWORD), ("hw", wintypes.DWORD)]
+
+
+_RADIO_STATE, _ON, _OFF = 4, 1, 2  # wlan_intf_opcode_radio_state, dot11_radio_state_on/_off
+
+
+def _phys(wlan, handle, g):
+    size, data = wintypes.DWORD(), ctypes.c_void_p()
+    if wlan.WlanQueryInterface(handle, ctypes.byref(g), _RADIO_STATE, None, ctypes.byref(size), ctypes.byref(data), None):
+        return []
+    try:
+        n = wintypes.DWORD.from_address(data.value).value
+        return [(p.phy, p.sw) for p in (_PHY * n).from_address(data.value + 4)]
+    finally:
+        wlan.WlanFreeMemory(data)
+
+
+def _wlan():
+    wlan, handle, version = ctypes.WinDLL("wlanapi"), wintypes.HANDLE(), wintypes.DWORD()
+    if wlan.WlanOpenHandle(2, None, ctypes.byref(version), ctypes.byref(handle)):
+        raise WifiError("Windows' Wi-Fi service isn't running.")
+    return wlan, handle
+
+
+def radios():
+    """{adapter key: {"guid", "on"}} per Wi-Fi interface, read straight from Windows (milliseconds, unlike netsh).
+    "on" is the adapter's software radio: the Wi-Fi switch in Windows settings, per adapter."""
+    wlan, handle = _wlan()
+    try:
+        p = ctypes.c_void_p()
+        if wlan.WlanEnumInterfaces(handle, None, ctypes.byref(p)):
+            raise WifiError("Couldn't list the Wi-Fi adapters.")
+        try:
+            n = wintypes.DWORD.from_address(p.value).value
+            out = {}
+            for it in (_IFINFO * n).from_address(p.value + 8):
+                phys = _phys(wlan, handle, it.guid)
+                out[adapter_key(it.desc)] = {"guid": str(uuid.UUID(bytes_le=bytes(it.guid))),
+                                             "on": bool(phys) and all(sw != _OFF for _, sw in phys)}
+            return out
+        finally:
+            wlan.WlanFreeMemory(p)
+    finally:
+        wlan.WlanCloseHandle(handle, None)
+
+
+def set_radio(guid, on):
+    """Turn an adapter's Wi-Fi radio on or off (0.02-0.7 s; the device stays enabled, so turning it back on is
+    instant). Some drivers switch every PHY with the first call, so one goes first and the rest only if needed."""
+    wlan, handle = _wlan()
+    want = _ON if on else _OFF
+    g = (ctypes.c_ubyte * 16).from_buffer_copy(uuid.UUID(guid).bytes_le)
+    try:
+        for first in (True, False):
+            todo = [phy for phy, sw in _phys(wlan, handle, g) if sw != want]
+            for phy in todo[:1] if first else todo:
+                st = _PHY(phy, want, 0)
+                wlan.WlanSetInterface(handle, ctypes.byref(g), _RADIO_STATE, ctypes.sizeof(st), ctypes.byref(st), None)
+        for _ in range(30):  # the driver reports the new state a moment later
+            if all(sw == want for _, sw in _phys(wlan, handle, g)):
+                return
+            time.sleep(0.1)
+        raise WifiError(f"The Wi-Fi radio didn't turn {'on' if on else 'off'}.")
+    finally:
+        wlan.WlanCloseHandle(handle, None)
+
+
 def scan(iface, guid, *, wait=4.0):
     trigger_scan(guid, wait)
     return networks(iface)
@@ -261,7 +333,7 @@ def connect(iface, ssid, *, auth=None, password=None, saved=False, timeout=15.0,
             st = _state(iface)
             if st.get("state") == "connected" and st.get("ssid") == ssid:
                 return st
-            sleep(1)
+            sleep(0.25)
     except winrun.CmdError:
         if created:
             delete_profile(name, [iface])
