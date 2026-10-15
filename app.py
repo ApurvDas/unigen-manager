@@ -1,9 +1,10 @@
 """Start Unigen Manager: elevate (radio switching needs it), log to app.log, open the window."""
-import ctypes, logging, subprocess, sys, threading
+import ctypes, logging, logging.handlers, platform, subprocess, sys, threading
 from pathlib import Path
 
 import hw, tray
 from api import Api, DATA_DIR
+from version import VERSION
 
 ROOT = Path(__file__).resolve().parent
 UI = ROOT / "ui" / "index.html"
@@ -39,10 +40,19 @@ def relaunch_as_admin(argv, *, shell_execute=None, frozen=None):
     return shell_execute(None, "runas", sys.executable, params, None, 1) > 32
 
 
-def setup_logging():
+def setup_logging(argv=(), admin=False):
+    """app.log: every action the page asks for, every failure with where it happened. 1 MB, then app.log.1 … .3.
+    --debug also logs the calls the page polls every few seconds."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    logging.basicConfig(filename=DATA_DIR / "app.log", level=logging.INFO,
-                        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    handler = logging.handlers.RotatingFileHandler(DATA_DIR / "app.log", maxBytes=1_000_000, backupCount=3, encoding="utf-8")
+    logging.basicConfig(handlers=[handler], level=logging.DEBUG if "--debug" in argv else logging.INFO,
+                        format="%(asctime)s %(levelname)s [%(threadName)s] %(module)s:%(lineno)d: %(message)s")
+    log = logging.getLogger("unigen")
+    sys.excepthook = lambda *exc: log.critical("unhandled error", exc_info=exc)
+    threading.excepthook = lambda a: log.critical("unhandled error in thread %s", a.thread and a.thread.name,
+                                                  exc_info=(a.exc_type, a.exc_value, a.exc_traceback))
+    log.info("==== start: version %s, %s, admin=%s, args=%s, Windows %s", VERSION,
+             "exe" if getattr(sys, "frozen", False) else "source", admin, argv, platform.version())
 
 
 def install_shortcut(run=None, **target):
@@ -67,7 +77,7 @@ def main(argv=None):
         if relaunch_as_admin(argv):
             return 0
         instance = tray.claim_instance()  # declined: carry on without admin
-    setup_logging()
+    setup_logging(argv, admin)
     import webview
     api = Api(admin=admin)
     main_win = webview.create_window("Unigen Manager", url=str(UI), js_api=api, width=1180, height=780,

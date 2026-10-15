@@ -72,7 +72,7 @@ def test_main_opens_window_and_widget(monkeypatch, single):
     fake = FakeWebview()
     monkeypatch.setitem(sys.modules, "webview", fake)
     monkeypatch.setattr(app, "is_admin", lambda: True)
-    monkeypatch.setattr(app, "setup_logging", lambda: None)
+    monkeypatch.setattr(app, "setup_logging", lambda *a: None)
     assert app.main(["--tray"]) == 0
     main_win, widget = fake.windows
     assert main_win.kw["url"].endswith("index.html") and main_win.kw["hidden"] is True  # --tray: start hidden
@@ -85,7 +85,7 @@ def test_closing_main_window_hides_it(monkeypatch, single):
     fake = FakeWebview()
     monkeypatch.setitem(sys.modules, "webview", fake)
     monkeypatch.setattr(app, "is_admin", lambda: True)
-    monkeypatch.setattr(app, "setup_logging", lambda: None)
+    monkeypatch.setattr(app, "setup_logging", lambda *a: None)
     app.main([])
     main_win = fake.windows[0]
     hidden = []
@@ -99,7 +99,7 @@ def test_tray_start_is_not_visible_and_normal_start_is(monkeypatch, single):
         fake = FakeWebview()
         monkeypatch.setitem(sys.modules, "webview", fake)
         monkeypatch.setattr(app, "is_admin", lambda: True)
-        monkeypatch.setattr(app, "setup_logging", lambda: None)
+        monkeypatch.setattr(app, "setup_logging", lambda *a: None)
         app.main(argv)
         assert fake.windows[0].kw["js_api"]._main_visible is visible
 
@@ -108,7 +108,7 @@ def test_closing_widget_hides_it(monkeypatch, single):
     fake = FakeWebview()
     monkeypatch.setitem(sys.modules, "webview", fake)
     monkeypatch.setattr(app, "is_admin", lambda: True)
-    monkeypatch.setattr(app, "setup_logging", lambda: None)
+    monkeypatch.setattr(app, "setup_logging", lambda *a: None)
     app.main([])
     widget = fake.windows[1]
     api = widget.kw["js_api"]
@@ -139,7 +139,7 @@ def test_watchdog_runs_a_pass_at_start_and_notifies_through_the_tray(monkeypatch
     fake, steps, got = FakeWebview(), threading.Event(), {}
     monkeypatch.setitem(sys.modules, "webview", fake)
     monkeypatch.setattr(app, "is_admin", lambda: True)
-    monkeypatch.setattr(app, "setup_logging", lambda: None)
+    monkeypatch.setattr(app, "setup_logging", lambda *a: None)
     monkeypatch.setattr(app.tray, "watch_show", lambda *a: None)
 
     class FakeTray:

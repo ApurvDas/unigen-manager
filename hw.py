@@ -158,7 +158,7 @@ def _finish(target, old, wifi_dev, move_bt, on_later):
             try:
                 wifi_off(old, wifi_dev)
             except _FAIL as e:
-                log.warning("turning off %s failed: %s", old, e)
+                log.warning("turning off %s failed: %s", old, e, exc_info=True)
                 notes.append(f"The {_name(old)} couldn't be turned off; Windows may still use it.")
                 ok = False
         if move_bt:
@@ -179,7 +179,7 @@ def _finish(target, old, wifi_dev, move_bt, on_later):
                              "plug it back in (or restart the PC), then switch again.")
                 ok = False
             elif result[0]:
-                log.warning("moving Bluetooth to %s failed: %s", target, result[0])
+                log.warning("moving Bluetooth to %s failed: %s", target, result[0], exc_info=result[0])
                 notes.append(str(result[0]) if isinstance(result[0], bt.StuckRadio)
                              else f"Bluetooth couldn't move and stays on the {_name(old)}. Switch again to retry.")
                 ok = False
@@ -218,7 +218,7 @@ def _use(target, on_step, path, wait, clock, sleep):
                 bail()
                 raise HwError(f"The {_name(target)}'s Wi-Fi didn't start.{back}")
     except _FAIL as e:
-        log.warning("turning on %s failed: %s", target, e)
+        log.warning("turning on %s failed: %s", target, e, exc_info=True)
         bail()
         raise HwError(f"Couldn't turn on the {_name(target)}.{back}") from None
     try:
@@ -235,7 +235,7 @@ def _use(target, on_step, path, wait, clock, sleep):
                 raise HwError(f"The {_name(target)} can't see any Wi-Fi network. {fix}, then switch again.{back}")
             wifi.connect(ti["name"], ssid, saved=True)
     except _FAIL as e:
-        log.warning("switch to %s failed: %s", target, e)
+        log.warning("switch to %s failed: %s", target, e, exc_info=True)
         bail()
         raise HwError(f"Couldn't finish switching to the {_name(target)}.{back}") from None
     save_choice(path, target)  # Wi-Fi works: the rest happens in the background
@@ -298,9 +298,11 @@ class Follower:
             log.exception("watchdog pass failed")
 
     def _switch(self, choice, ok_text):
+        log.info("watchdog: switching to %s", choice)
         try:
             self._use(choice, path=self._path, on_later=lambda text, ok: ok or self._notify(text, False))
         except HwError as e:
+            log.warning("watchdog: switch to %s failed: %s", choice, e)
             self._notify(str(e), False)
         else:
             self._notify(ok_text, True)
@@ -318,6 +320,7 @@ class Follower:
         if first and choice in devs and other_on:  # after a restart: make the saved choice true again
             return self._switch(choice, f"Using the {_name(choice)}.")
         if choice in devs and other_on and (devs[choice]["wifi"] or {}).get("ok") and not (choice == "unigen" and was is False):
+            log.info("watchdog: both Wi-Fi adapters on, turning off %s", key)
             return wifi_off(key, other["wifi"])  # both on (Windows' Wi-Fi switch): quietly turn the other off
         if choice != "unigen":
             return

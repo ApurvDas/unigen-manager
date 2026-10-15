@@ -1,6 +1,6 @@
 """What the page calls (window.pywebview.api). Every public method returns {"ok", "data"} or {"ok", "error"}.
 pywebview runs each call on its own thread, so slow work never blocks the window."""
-import functools, json, logging, os, threading, time
+import functools, json, logging, os, threading, time, traceback
 from pathlib import Path
 
 import bt, hw, speed, tray, wifi, winrun
@@ -13,16 +13,42 @@ _KNOWN = (wifi.WifiError, wifi.ParseError, bt.BtError, hw.HwError, speed.SpeedEr
 _SEC = {"WPA2-Personal": "WPA2", "WPA3-Personal": "WPA3", "Open": "Open", "WPA-Personal": "WPA", "WPA2-Enterprise": "WPA2-Ent"}
 
 
+# The page polls these every few seconds: logged only with --debug, or when slow or failing
+_POLLED = {"app_info", "adapters", "networks", "saved", "bt_radio", "bt_paired", "is_visible", "widget_fit", "speed_results"}
+_SECRET = {"connect": 2, "bt_pair_answer": 1}  # argument index never written to app.log (return values never are)
+SLOW = 3.0  # seconds; a polled call taking longer is logged as a warning
+
+
+def _args(name, args):
+    hide = _SECRET.get(name)
+    return ", ".join("***" if i == hide and a is not None else repr(a) for i, a in enumerate(args))
+
+
+def _where(e):
+    """Where an error was raised: the last few frames, innermost last, e.g. 'hw.py:236 _use > wifi.py:88 connect'."""
+    frames = traceback.extract_tb(e.__traceback__)[1:][-4:]  # [1:] drops this wrapper's own frame
+    return " > ".join(f"{Path(f.filename).name}:{f.lineno} {f.name}" for f in frames)
+
+
 def _envelope(fn):
+    name = fn.__name__
+
     @functools.wraps(fn)
     def wrapper(self, *args):
+        call, t0 = f"{name}({_args(name, args)})", time.monotonic()
         try:
-            return {"ok": True, "data": fn(self, *args)}
+            data = fn(self, *args)
         except _KNOWN as e:
+            log.warning("%s failed after %.2fs: %s: %s [at %s]", call, time.monotonic() - t0, type(e).__name__, e, _where(e))
             return {"ok": False, "error": str(e)}
         except Exception:
-            log.exception("%s failed", fn.__name__)  # traceback only: argument values (passwords) are never logged
+            log.exception("%s crashed after %.2fs", call, time.monotonic() - t0)  # values, not secrets: see _SECRET
             return {"ok": False, "error": "Something went wrong. Details are in app.log."}
+        took = time.monotonic() - t0
+        slow = name in _POLLED and took > SLOW
+        level = logging.WARNING if slow else logging.DEBUG if name in _POLLED else logging.INFO
+        log.log(level, "%s ok in %.2fs%s", call, took, " (slow)" if slow else "")
+        return {"ok": True, "data": data}
     return wrapper
 
 

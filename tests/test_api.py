@@ -39,6 +39,18 @@ def test_envelopes(hw, monkeypatch, caplog):
     assert "ZeroDivisionError" in caplog.text
 
 
+def test_report_log(hw, monkeypatch, caplog):
+    """app.log: actions with their arguments, failures with where they happened, never a password."""
+    caplog.set_level("DEBUG", logger="unigen")
+    a = api.Api()
+    monkeypatch.setattr(wifi, "connect", raising(wifi.WifiError("Couldn't connect to HOME-5G.")))
+    a.connect("builtin", "HOME-5G", "hunter2-secret")
+    assert "connect('builtin', 'HOME-5G', ***) failed" in caplog.text and "[at " in caplog.text
+    assert "hunter2-secret" not in caplog.text
+    a.adapters()  # polled: DEBUG, not INFO
+    assert any(r.levelname == "DEBUG" and r.getMessage().startswith("adapters() ok") for r in caplog.records)
+
+
 def test_app_info_versions(hw):
     info = api.Api(admin=True).app_info()["data"]
     assert info["admin"] is True and info["version"] == version.VERSION
