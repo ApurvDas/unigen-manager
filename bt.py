@@ -42,6 +42,10 @@ def _label(key):
     return ADAPTER_NAMES.get(key, key)
 
 
+class StuckRadio(BtError):
+    """The old radio didn't finish turning off; str(e) says what to do."""
+
+
 def switch(target, **kw):
     if not _switch_lock.acquire(blocking=False):
         raise BtError("A radio switch is already running.")
@@ -62,6 +66,10 @@ def _switch(target, *, wait=20.0, clock=time.monotonic, sleep=time.sleep):
     try:
         for r in others:  # Windows runs one Bluetooth radio at a time
             _set(r["id"], False, wait=_OFF_WAIT)
+    except winrun.CmdError:  # it's mid-teardown: turning it back on is what hung the dongle's driver, so leave it
+        raise StuckRadio(f"Windows didn't finish turning off the {_label(others[0]['key'])} radio. Switch again in a "
+                         "minute; if Bluetooth stays off, re-plug the dongle or restart the PC.") from None
+    try:
         _set(tgt["id"], True)
         deadline = clock() + wait
         while clock() < deadline:

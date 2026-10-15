@@ -257,6 +257,14 @@ def test_use_bt_hung_in_a_driver_frees_the_switch_and_says_replug(world, monkeyp
         stuck.set()
 
 
+def test_use_bt_old_radio_stuck_passes_on_what_to_do(world, monkeypatch):
+    def stuck(key):
+        raise bt.StuckRadio("Windows didn't finish turning off the Built-in MediaTek radio. Switch again in a minute.")
+    monkeypatch.setattr(bt, "switch", stuck)
+    assert world.use() == "unigen"
+    assert world.later_notes == [("Windows didn't finish turning off the Built-in MediaTek radio. Switch again in a minute.", False)]
+
+
 def test_use_bt_fails_keeps_wifi_and_warns(world):
     world.fail_bt = True
     assert world.use() == "unigen"

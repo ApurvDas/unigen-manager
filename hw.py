@@ -180,7 +180,8 @@ def _finish(target, old, wifi_dev, move_bt, on_later):
                 ok = False
             elif result[0]:
                 log.warning("moving Bluetooth to %s failed: %s", target, result[0])
-                notes.append(f"Bluetooth couldn't move and stays on the {_name(old)}. Switch again to retry.")
+                notes.append(str(result[0]) if isinstance(result[0], bt.StuckRadio)
+                             else f"Bluetooth couldn't move and stays on the {_name(old)}. Switch again to retry.")
                 ok = False
             else:
                 notes.append(f"Bluetooth moved to the {_name(target)}.")

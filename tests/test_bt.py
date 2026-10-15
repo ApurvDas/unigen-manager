@@ -88,17 +88,17 @@ def test_switch_rolls_back_when_enable_raises(monkeypatch):
     assert [(a, i[:21]) for a, i, w in fake.calls][-1] == ("enable", "USB\\VID_368B&PID_8D81")
 
 
-def test_switch_rolls_back_when_old_radio_wont_disable(monkeypatch):
+def test_switch_leaves_an_old_radio_that_wont_finish_turning_off_alone(monkeypatch):
     fake = use_fake(monkeypatch, FakePs([RADIOS_OK_UNIGEN]))
 
     def stuck(dev_id, on, wait=30.0):
         fake.calls.append(("enable" if on else "disable", dev_id, wait))
-        if not on and "368B" in dev_id and len(fake.calls) == 1:
+        if not on and "368B" in dev_id:
             raise CmdError("The device didn't turn off.")
     monkeypatch.setattr(bt, "_set", stuck)
-    with pytest.raises(bt.BtError, match="Switched back to the Unigen dongle"):
+    with pytest.raises(bt.StuckRadio, match="didn't finish turning off the Unigen dongle radio.*re-plug the dongle"):
         bt.switch("builtin", sleep=lambda s: None)
-    assert [a for a, i, w in fake.calls] == ["disable", "disable", "enable"]  # the target was never enabled
+    assert [a for a, i, w in fake.calls] == ["disable"]  # no re-enable of a radio mid-teardown, target untouched
 
 
 def test_service_changed():

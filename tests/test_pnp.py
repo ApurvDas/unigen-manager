@@ -101,6 +101,13 @@ def test_set_enabled_asks_again_when_windows_refused(monkeypatch):
     assert d.changes == [(DEV, False), (DEV, False)] and d.now == 3.0  # asked again after the 3 s retry window
 
 
+def test_set_enabled_asks_twice_at_most_then_only_waits(monkeypatch):
+    d = Dev(monkeypatch, [ON], CmdError("The data is invalid."))  # the radio never finishes turning off
+    with pytest.raises(CmdError):
+        d.set(False, wait=45)
+    assert len(d.changes) == 2 and d.now == 45
+
+
 def test_set_enabled_waits_for_a_device_windows_cant_find_yet(monkeypatch):
     d = Dev(monkeypatch, [None, None, ON])
     d.set(True)
