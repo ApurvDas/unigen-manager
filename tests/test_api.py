@@ -313,8 +313,40 @@ def test_bt_connect_uses_classic_address_of_twin(monkeypatch):
     seen = []
     monkeypatch.setattr(bt, "devices", lambda: [dict(r) for r in ROWS])
     monkeypatch.setattr(bt, "connect", lambda addr, name: seen.append((addr, name)))
+    monkeypatch.setattr(bt, "power", lambda: "on")
     api.Api().bt_connect("BluetoothLE#l")
     assert seen == [("020000000011", "Galaxy Buds2 Pro")]
+
+
+@pytest.mark.parametrize("state, error", [
+    ("off", "Bluetooth is off. Turn it on, then connect."),
+    ("unknown", "Bluetooth isn't ready yet. If you just switched adapters, it's still moving: try again in a moment.")])
+def test_bt_connect_with_bluetooth_off_or_moving_says_so(monkeypatch, state, error):
+    monkeypatch.setattr(bt, "devices", lambda: [dict(r) for r in ROWS])
+    monkeypatch.setattr(bt, "power", lambda: state)
+    monkeypatch.setattr(bt, "connect", lambda *a, **k: pytest.fail("must not try, nor open Settings"))
+    assert api.Api().bt_connect("Bluetooth#c") == {"ok": False, "error": error}
+
+
+def test_app_info_reads_drivers_once_until_an_adapter_changes(hw, monkeypatch):
+    calls = []
+    real = wifi.drivers
+    monkeypatch.setattr(wifi, "drivers", lambda: calls.append(1) or real())
+    a = api.Api()
+    a.app_info(), a.app_info()
+    assert len(calls) == 1
+    monkeypatch.setattr(wifi, "interfaces", lambda: wifi.parse_interfaces(fixture("interfaces.txt"))[:1])  # one unplugged
+    a.app_info()
+    assert len(calls) == 2
+
+
+def test_push_to_a_closing_window_is_skipped(monkeypatch):
+    class Gone:
+        def evaluate_js(self, s): raise RuntimeError("ObjectDisposedException")
+    a = api.Api()
+    a._window, a._widget = Gone(), Win()
+    a._push("x()")  # must not raise
+    assert a._widget.scripts == ["x()"]
 
 
 AWAY = [dict(ROWS[0], here=False)]

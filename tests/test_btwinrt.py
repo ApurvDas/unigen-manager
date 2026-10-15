@@ -63,6 +63,21 @@ def test_merge_leads_with_the_record_on_this_radio():
     assert rows[0]["id"] == "Bluetooth#a-pill" and rows[0]["ids"] == ["Bluetooth#a-pill", "Bluetooth#b-pill"]
 
 
+def test_merge_earbuds_with_only_their_le_record_here_need_a_re_pair():
+    """The app.log case: LE record on the radio in use, classic (audio) record on the other one."""
+    rows = w.merge([rec("BluetoothLE#a-buds", "Test Buds", le=True, appearance=0x0941, address="7A0000000001", radio=A),
+                    rec("Bluetooth#b-buds", "Test Buds", major=4, minor=6, address="020000000011", radio=B)], local=A)
+    assert rows[0]["here"] is False
+    assert rows[0]["id"] == "Bluetooth#b-buds" and rows[0]["address"] == "020000000011"  # re-pair/connect use the classic one
+
+
+def test_merge_classic_on_this_radio_is_here_and_le_only_devices_count_any_record():
+    rows = w.merge([rec("BluetoothLE#b-buds", "Test Buds", le=True, address="7A0000000001", radio=B),
+                    rec("Bluetooth#a-buds", "Test Buds", major=4, minor=6, address="020000000011", radio=A),
+                    rec("BluetoothLE#a-mouse", "Test Mouse", le=True, appearance=0x03C2, radio=A)], local=A)
+    assert {r["name"]: r["here"] for r in rows} == {"Test Buds": True, "Test Mouse": True}
+
+
 def test_merge_without_a_local_radio_counts_every_row_here():
     rows = w.merge([rec("Bluetooth#b-buds", "Test Buds", major=4, minor=6, radio=B),
                     rec("Bluetooth#x", "Test Pill", major=4, minor=5, radio=None)])

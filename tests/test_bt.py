@@ -168,6 +168,16 @@ def test_connect_tries_ks_then_services_then_settings(monkeypatch, caplog):
     assert "audio connect failed" in caplog.text
 
 
+def test_connect_to_a_device_this_radio_doesnt_know_says_re_pair_not_settings(monkeypatch):
+    """The app.log case: no audio driver on this radio, and Windows doesn't know the device: Settings can't help."""
+    monkeypatch.setattr(bt, "_ks_oneshot", lambda a, on: (_ for _ in ()).throw(bt.BtError("no driver")))
+    monkeypatch.setattr(bt, "_set_audio", lambda a, f: (_ for _ in ()).throw(bt.NotPairedHere("unknown")))
+    opened = []
+    with pytest.raises(bt.NotPairedHere, match="doesn't know Test Buds. Put it in pairing mode, then press Re-pair."):
+        bt.connect("020000000011", "Test Buds", open_settings=opened.append)
+    assert opened == []
+
+
 def test_connect_stops_at_first_method_that_works(monkeypatch):
     order = []
     monkeypatch.setattr(bt, "_ks_oneshot", lambda addr, on: order.append(("ks", on)))

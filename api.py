@@ -61,6 +61,7 @@ class Api:
         self._widget, self._widget_shown, self._hid_at, self._widget_h = None, False, 0.0, 480
         self._pair_evt, self._pair_answer = threading.Event(), (False, None)
         self._main_visible = True  # app.py sets False for a --tray start and on close
+        self._drivers = None  # (interface names, wifi.drivers()) cached by app_info
 
     # ---- helpers (underscore: pywebview does not expose these) ----
     def _ifaces(self):
@@ -97,8 +98,17 @@ class Api:
 
     def _push(self, script):
         for w in (self._window, self._widget):
-            if w is not None:
-                w.evaluate_js(script)
+            self._eval(w, script)
+
+    @staticmethod
+    def _eval(w, script):
+        """evaluate_js on a window that may be closing (pywebview then raises ObjectDisposedException): skip it."""
+        if w is None:
+            return
+        try:
+            w.evaluate_js(script)
+        except Exception as e:
+            log.debug("window gone, skipped a push: %s", type(e).__name__)
 
     def _push_step(self, text, done=False, error=False):
         self._push("window.onSwitchStep && window.onSwitchStep(" + json.dumps({"text": text, "done": done, "error": error}) + ")")
@@ -112,7 +122,12 @@ class Api:
     # ---- app ----
     @_envelope
     def app_info(self):
-        ifs, drv = self._ifaces(), wifi.drivers()
+        ifs = self._ifaces()
+        names = frozenset(i["name"] for i in ifs.values())
+        if self._drivers is None or self._drivers[0] != names:  # netsh takes seconds; drivers change only on (un)plug
+            # ponytail: a driver update without re-plugging shows the old version until the app restarts
+            self._drivers = (names, wifi.drivers())
+        drv = self._drivers[1]
         try:
             radios = {r["key"]: r for r in bt.radios()}
         except _KNOWN:  # Bluetooth trouble must not stop the Wi-Fi page loading
@@ -198,8 +213,7 @@ class Api:
 
     # ---- Bluetooth ----
     def _eval_main(self, script):
-        if self._window is not None:
-            self._window.evaluate_js(script)
+        self._eval(self._window, script)
 
     def _rows(self):
         """bt.devices(); a row paired only on the other radio also names that radio and the one in use."""
@@ -292,6 +306,11 @@ class Api:
         d = self._device(dev_id)
         if not d.get("here", True):  # no audio driver on this radio: Connect can't work, Settings can't either
             raise bt.BtError(f"{d['name']} is paired with the {d['radio_name']}, not this one. Put it in pairing mode, then press Re-pair.")
+        state = bt.power()
+        if state == "off":
+            raise bt.BtError("Bluetooth is off. Turn it on, then connect.")
+        if state != "on":  # no radio yet: after a switch Bluetooth moves in the background
+            raise bt.BtError("Bluetooth isn't ready yet. If you just switched adapters, it's still moving: try again in a moment.")
         bt.connect(d["address"], d["name"])
 
     @_envelope

@@ -46,6 +46,10 @@ class StuckRadio(BtError):
     """The old radio didn't finish turning off; str(e) says what to do."""
 
 
+class NotPairedHere(BtError):
+    """The radio in use doesn't know the device: re-pairing fixes it, Windows Settings can't."""
+
+
 def switch(target, **kw):
     if not _switch_lock.acquire(blocking=False):
         raise BtError("A radio switch is already running.")
@@ -151,7 +155,7 @@ def _set_audio(address_hex, flags):
     try:
         info = BLUETOOTH_DEVICE_INFO(dwSize=ctypes.sizeof(BLUETOOTH_DEVICE_INFO), Address=int(address_hex, 16))
         if lib.BluetoothGetDeviceInfo(radio, ctypes.byref(info)):
-            raise BtError("Windows doesn't know that device.")
+            raise NotPairedHere("Windows doesn't know that device.")
         def set_state(g, flag):
             guid = (ctypes.c_ubyte * 16).from_buffer_copy(uuid.UUID(g).bytes_le)
             return lib.BluetoothSetServiceState(radio, ctypes.byref(info), ctypes.byref(guid), flag)
@@ -285,12 +289,16 @@ def _toggle(address_hex, name, connect, open_settings):
     ways = [lambda: _ks_oneshot(address_hex, connect)]
     if SERVICE_TOGGLE:
         ways.append(lambda: _set_audio(address_hex, [0, 1] if connect else [0]))
+    unknown = False
     for way in ways:
         try:
             way()
             return
         except (BtError, OSError, ValueError, ctypes.ArgumentError, AttributeError) as e:
             logging.getLogger("unigen").warning("audio connect failed: %s: %s", type(e).__name__, e)
+            unknown = unknown or isinstance(e, NotPairedHere)
+    if unknown:
+        raise NotPairedHere(f"This Bluetooth radio doesn't know {name}. Put it in pairing mode, then press Re-pair.")
     verb = "connect" if connect else "disconnect"
     if open_settings is None:
         raise BtError(f"Windows didn't let the app {verb} {name}.")

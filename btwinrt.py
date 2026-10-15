@@ -52,24 +52,30 @@ def radio_of(dev_id):
 
 def merge(records, local=None):
     """One row per device. A device's classic and LE records (same name) become one row that keeps every id;
-    the record on the radio in use (local), then the classic, connected one, leads, because pairing and audio go through it.
-    A row is "here" when any of its records is on local; with no local radio every row is.
+    the classic record leads (audio and re-pairing need its address), the one on the radio in use (local) first,
+    then the connected one.
+    A row is "here" when audio can work on local: its classic record is on local, or, for an LE-only device, any record
+    is. Earbuds whose LE record is on local but classic record on the other radio are not here: they need a re-pair.
+    With no local radio every row is here.
     ponytail: matching by name merges two different devices that share a name; random LE addresses leave nothing better."""
-    rows = {}
-    for r in sorted(records, key=lambda r: (local is not None and r["radio"] != local, r["le"], not r["connected"])):
+    rows, on_local = {}, {}  # on_local[key] = {False: classic on local, True: LE on local} as seen so far
+    for r in sorted(records, key=lambda r: (r["le"], local is not None and r["radio"] != local, not r["connected"])):
         key = r["name"] or r["id"]
         k = record_kind(r)
         row = rows.get(key)
         if row is None:
-            rows[key] = {"id": r["id"], "ids": [r["id"]], "name": r["name"] or f"Unknown device {r['address'][-4:]}",
-                         "kind": k, "connected": r["connected"], "address": r["address"],
-                         "here": local is None or r["radio"] == local}
+            row = rows[key] = {"id": r["id"], "ids": [r["id"]], "name": r["name"] or f"Unknown device {r['address'][-4:]}",
+                               "kind": k, "connected": r["connected"], "address": r["address"], "classic": not r["le"]}
         else:
             row["ids"].append(r["id"])
             row["connected"] = row["connected"] or r["connected"]
-            row["here"] = row["here"] or r["radio"] == local
             if row["kind"] == "Device":
                 row["kind"] = k
+        seen = on_local.setdefault(key, {False: False, True: False})
+        seen[r["le"]] = seen[r["le"]] or r["radio"] == local
+    for key, row in rows.items():
+        seen, classic = on_local[key], row.pop("classic")
+        row["here"] = local is None or (seen[False] if classic else seen[True])
     return sorted(rows.values(), key=lambda row: row["name"].lower())
 
 
