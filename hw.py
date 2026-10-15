@@ -228,7 +228,10 @@ def _use(target, on_step, path, wait, clock, sleep):
             names = wifi.profiles().get(ti["name"], [])
             if ssid not in names and wifi.profile_name(ssid) not in names:
                 wifi.copy_profile(old_iface.get("profile") or ssid, old_iface["name"], ti["name"])
-            _wait_visible(ti, ssid, wait, clock, sleep)
+            if not _wait_visible(ti, ssid, wait, clock, sleep):
+                bail()
+                fix = "Unplug it and plug it back in" if target == "unigen" else "Restart the PC"
+                raise HwError(f"The {_name(target)} can't see any Wi-Fi network. {fix}, then switch again.{back}")
             wifi.connect(ti["name"], ssid, saved=True)
     except _FAIL as e:
         log.warning("switch to %s failed: %s", target, e)
@@ -252,15 +255,19 @@ def _settled(action, dev_id, sleep, tries=3):
 
 
 def _wait_visible(iface, ssid, wait, clock, sleep):
-    """A freshly enabled adapter hasn't scanned yet, and netsh can't connect to a network it hasn't seen."""
-    deadline = clock() + wait
+    """A freshly enabled adapter hasn't scanned yet, and netsh can't connect to a network it hasn't seen.
+    False if it saw no network at all: the adapter is wedged (the dongle after its Bluetooth driver hung)."""
+    deadline, seen = clock() + wait, False
     while clock() < deadline:
-        if any(n["ssid"] == ssid for n in wifi.networks(iface["name"])):
-            return
+        nets = wifi.networks(iface["name"])
+        if any(n["ssid"] == ssid for n in nets):
+            return True
+        seen = seen or bool(nets)
         try:
             wifi.trigger_scan(iface["guid"], wait=3.0)  # returns when the scan is done (~1.5 s)
         except (wifi.WifiError, KeyError, OSError):
             sleep(2)  # Windows scans on its own too; connect still gets its chance after the wait
+    return seen
 
 
 def _undo(t, key):

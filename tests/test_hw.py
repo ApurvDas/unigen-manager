@@ -479,6 +479,15 @@ def test_use_waits_until_the_new_adapter_sees_the_network(world):
     assert world.scans >= 3 and ("connect", "Wi-Fi 2", "HOME-5G") in world.calls
 
 
+def test_use_wedged_adapter_that_sees_nothing_says_replug(world):
+    world.visible_after = 10**6  # the dongle's chip is stuck: scans never find a network
+    with pytest.raises(hw.HwError) as e:
+        world.use()
+    assert str(e.value) == ("The Unigen dongle can't see any Wi-Fi network. Unplug it and plug it back in, then switch "
+                            "again. You're still on the Built-in MediaTek.")
+    assert world.calls[-1] == ("disable", UNI_WIFI) and not any(c[0] == "connect" for c in world.calls)
+
+
 def test_use_waits_out_netsh_errors_while_the_adapter_starts(world, monkeypatch):
     real, n = wifi.interfaces, []
     def flaky():
