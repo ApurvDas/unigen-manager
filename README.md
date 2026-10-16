@@ -10,7 +10,7 @@
 ![Python 3.10](https://img.shields.io/badge/Python-3.10-0E151D?style=flat-square&logo=python&logoColor=4FB3C8)
 ![pywebview](https://img.shields.io/badge/UI-pywebview%20%2B%20WebView2-0E151D?style=flat-square)
 ![anime.js](https://img.shields.io/badge/motion-anime.js%204-0E151D?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-226%20passing-5CC08A?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-288%20passing-5CC08A?style=flat-square)
 
 <a href="https://github.com/ApurvDas/unigen-manager/releases/latest/download/UnigenManager.exe"><img src="https://img.shields.io/badge/Download-UnigenManager.exe%20%C2%B7%2033%20MB-4FB3C8?style=for-the-badge&logo=windows&logoColor=white" alt="Download UnigenManager.exe" height="44"></a>
 
@@ -92,6 +92,7 @@ Older versions and checksums are on the [releases page](https://github.com/Apurv
 - It joins the same network on the new adapter (copying the saved profile if needed) and shows each step while it runs.
 - **Your choice is remembered** across restarts.
 - **It follows the dongle:** unplug it and the built-in adapter turns back on; plug it in again and the app switches back to it. A tray notification tells you.
+- **It notices a crashed dongle:** if the dongle stops responding (Windows still lists it, but it has no Wi-Fi or Bluetooth), the app moves to the built-in adapter and asks you to unplug the dongle and plug it back in. A switch never waits on a device that has stopped answering.
 - If the Wi-Fi step fails, the old adapter keeps working and the message says where you stand. If only Bluetooth can't move, Wi-Fi stays switched and the app says so (switch again to retry). If a Bluetooth driver hangs, Wi-Fi switching keeps working and the app asks you to re-plug the dongle.
 - Needs administrator rights. Without them the switch is disabled and the app changes nothing.
 - **Light on the PC:** adapter and radio status are read straight from Windows (SetupAPI) in milliseconds, so the always-on watchdog doesn't start a PowerShell process every few seconds. Wi-Fi radios are read and switched through the Windows Wi-Fi API (wlanapi); Bluetooth radios use the same Windows call as Device Manager, not PowerShell, and the app waits for the device to really change state.
@@ -204,7 +205,7 @@ Then open:
 
 ```powershell
 py -3.10 -m pip install -r requirements-dev.txt
-py -3.10 -m pytest                 # 226 unit, contract and UI tests (UI tests drive the installed Microsoft Edge)
+py -3.10 -m pytest                 # 288 unit, contract and UI tests (UI tests drive the installed Microsoft Edge)
 py -3.10 -m pytest -m hardware     # read-only checks against the real adapters (changes nothing)
 ```
 
