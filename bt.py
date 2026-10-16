@@ -30,12 +30,26 @@ def radio_key(instance_id, name):
 
 def radios():
     return [{"key": radio_key(r["id"], r["name"]), "id": r["id"], "name": r["name"], "ok": r["status"] == "OK",
-             "disabled": r["problem"] in ("CM_PROB_DISABLED", "22"), "version": version(r["lmp"])} for r in _radio_rows()]
+             "disabled": r["problem"] in ("CM_PROB_DISABLED", "22"), "version": version(r["lmp"]),
+             "failed": r["problem"] not in ("CM_PROB_NONE", "CM_PROB_DISABLED", "22")} for r in _radio_rows()]
 
 
 def _radio_rows():
     """Bluetooth radios (devices that report an LMP version), from SetupAPI: milliseconds, no PowerShell."""
     return [r for r in pnp.list_devices() if r["lmp"] is not None]
+
+
+def _radio_up():
+    """Windows has a working radio. Device Manager says "OK" for a crashed one too; this tells them apart. Tests replace it."""
+    lib, k32 = ctypes.WinDLL("bthprops.cpl"), ctypes.WinDLL("kernel32")
+    lib.BluetoothFindFirstRadio.restype = wintypes.HANDLE
+    radio, params = wintypes.HANDLE(), _RADIO_PARAMS(ctypes.sizeof(_RADIO_PARAMS))
+    find = lib.BluetoothFindFirstRadio(ctypes.byref(params), ctypes.byref(radio))
+    if not find:
+        return False
+    lib.BluetoothFindRadioClose(wintypes.HANDLE(find))
+    k32.CloseHandle(radio)
+    return True
 
 
 def _label(key):
@@ -65,7 +79,7 @@ def _switch(target, *, wait=20.0, clock=time.monotonic, sleep=time.sleep):
     if tgt is None:
         raise BtError("That Bluetooth radio isn't connected to this PC.")
     others = [r for r in rs if r["ok"] and r["key"] != target]
-    if tgt["ok"] and not others:
+    if tgt["ok"] and not others and _radio_up():
         return target
     try:
         for r in others:  # Windows runs one Bluetooth radio at a time
@@ -74,23 +88,27 @@ def _switch(target, *, wait=20.0, clock=time.monotonic, sleep=time.sleep):
         raise StuckRadio(f"Windows didn't finish turning off the {_label(others[0]['key'])} radio. Switch again in a "
                          "minute; if Bluetooth stays off, re-plug the dongle or restart the PC.") from None
     try:
+        if tgt["failed"]:  # never started (e.g. code 10): restart it. A stopping radio has no problem code and is left alone
+            _set(tgt["id"], False)
         _set(tgt["id"], True)
         deadline = clock() + wait
         while clock() < deadline:
-            if any(r["key"] == target and r["ok"] for r in radios()):
+            if any(r["key"] == target and r["ok"] for r in radios()) and _radio_up():  # one radio runs at a time
                 return target
             sleep(1)
     except winrun.CmdError:
         pass
-    try:  # never leave the user without Bluetooth: best-effort restore, each step on its own
-        _set(tgt["id"], False, wait=_OFF_WAIT)
-    except winrun.CmdError:
-        pass
+    if others:  # never leave the user without Bluetooth: best-effort restore, each step on its own
+        try:
+            _set(tgt["id"], False, wait=_OFF_WAIT)
+        except winrun.CmdError:
+            pass
     for r in others:
         try:
             _set(r["id"], True)
         except winrun.CmdError:
             pass
+    logging.getLogger("unigen").warning("radio %s didn't start; radios now: %s", target, radios())
     back = f" Switched back to the {_label(others[0]['key'])}." if others else ""
     raise BtError(f"The {_label(target)} radio didn't start.{back}")
 
@@ -286,6 +304,9 @@ def _ks_oneshot(address_hex, connect):
 
 # ---- audio connect: way 1, then way 2 (service toggle), then Windows settings ----
 def _toggle(address_hex, name, connect, open_settings):
+    verb = "connect" if connect else "disconnect"
+    if not _radio_up():
+        raise BtError(f"No Bluetooth radio is working, so {name} can't {verb}. Switch adapters again, or re-plug the dongle.")
     ways = [lambda: _ks_oneshot(address_hex, connect)]
     if SERVICE_TOGGLE:
         ways.append(lambda: _set_audio(address_hex, [0, 1] if connect else [0]))
@@ -295,11 +316,10 @@ def _toggle(address_hex, name, connect, open_settings):
             way()
             return
         except (BtError, OSError, ValueError, ctypes.ArgumentError, AttributeError) as e:
-            logging.getLogger("unigen").warning("audio connect failed: %s: %s", type(e).__name__, e)
+            logging.getLogger("unigen").warning("audio %s failed: %s: %s", verb, type(e).__name__, e)
             unknown = unknown or isinstance(e, NotPairedHere)
     if unknown:
         raise NotPairedHere(f"This Bluetooth radio doesn't know {name}. Put it in pairing mode, then press Re-pair.")
-    verb = "connect" if connect else "disconnect"
     if open_settings is None:
         raise BtError(f"Windows didn't let the app {verb} {name}.")
     open_settings("ms-settings:bluetooth")

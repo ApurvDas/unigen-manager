@@ -22,6 +22,11 @@ class FakePs:
         self.calls.append(("enable" if on else "disable", dev_id, wait))
 
 
+@pytest.fixture(autouse=True)
+def radio_up(monkeypatch):
+    monkeypatch.setattr(bt, "_radio_up", lambda: True)  # Windows has a working radio unless a test says otherwise
+
+
 def use_fake(monkeypatch, fake):
     monkeypatch.setattr(bt, "_set", fake.set)
     monkeypatch.setattr(bt, "_radio_rows", fake.rows)
@@ -65,6 +70,43 @@ def test_switch_rolls_back_when_target_never_starts(monkeypatch):
     assert [(a, i[:21]) for a, i, w in fake.calls] == [
         ("disable", "USB\\VID_368B&PID_8D81"), ("enable", "USB\\VID_13D3&PID_3563"),
         ("disable", "USB\\VID_13D3&PID_3563"), ("enable", "USB\\VID_368B&PID_8D81")]
+
+
+def test_switch_rolls_back_when_target_is_pnp_ok_but_windows_has_no_radio(monkeypatch):
+    """A crashed dongle: Device Manager says OK, Windows finds no radio."""
+    fake = use_fake(monkeypatch, FakePs([RADIOS_OK_UNIGEN, flipped(False, True)]))
+    monkeypatch.setattr(bt, "_radio_up", lambda: False)
+    t = iter(range(100))
+    with pytest.raises(bt.BtError, match="Built-in MediaTek radio didn't start. Switched back to the Unigen dongle."):
+        bt.switch("builtin", wait=10, clock=lambda: next(t), sleep=lambda s: None)
+    assert [(a, i[:21]) for a, i, w in fake.calls] == [
+        ("disable", "USB\\VID_368B&PID_8D81"), ("enable", "USB\\VID_13D3&PID_3563"),
+        ("disable", "USB\\VID_13D3&PID_3563"), ("enable", "USB\\VID_368B&PID_8D81")]
+
+
+def test_switch_pnp_ok_target_without_a_radio_isnt_done_and_is_never_disabled(monkeypatch):
+    fake = use_fake(monkeypatch, FakePs([flipped(True, False)]))
+    monkeypatch.setattr(bt, "_radio_up", lambda: False)
+    t = iter(range(100))
+    with pytest.raises(bt.BtError, match="Unigen dongle radio didn't start."):
+        bt.switch("unigen", wait=10, clock=lambda: next(t), sleep=lambda s: None)
+    assert [(a, i[:21]) for a, i, w in fake.calls] == [("enable", "USB\\VID_368B&PID_8D81")]  # disabling a crashed radio can hang
+
+
+def test_switch_restarts_a_target_that_failed_to_start(monkeypatch):
+    a, b = (dict(r) for r in RADIOS_OK_UNIGEN)
+    b["problem"] = "10"  # started and failed while the dongle ran
+    fake = use_fake(monkeypatch, FakePs([[a, b], flipped(False, True)]))
+    assert bt.switch("builtin", sleep=lambda s: None) == "builtin"
+    assert [(a, i[:21]) for a, i, w in fake.calls] == [("disable", "USB\\VID_368B&PID_8D81"), ("disable", "USB\\VID_13D3&PID_3563"), ("enable", "USB\\VID_13D3&PID_3563")]
+
+
+def test_switch_never_restarts_a_stopped_target_without_a_problem(monkeypatch):
+    a, b = (dict(r) for r in RADIOS_OK_UNIGEN)
+    b["problem"] = "CM_PROB_NONE"  # status Error but no problem code: Windows is still stopping it
+    fake = use_fake(monkeypatch, FakePs([[a, b], flipped(False, True)]))
+    bt.switch("builtin", sleep=lambda s: None)
+    assert [(a, i[:21]) for a, i, w in fake.calls] == [("disable", "USB\\VID_368B&PID_8D81"), ("enable", "USB\\VID_13D3&PID_3563")]
 
 
 def test_switch_waits_20_s_for_the_target_by_default(monkeypatch):
@@ -175,6 +217,15 @@ def test_connect_to_a_device_this_radio_doesnt_know_says_re_pair_not_settings(mo
     opened = []
     with pytest.raises(bt.NotPairedHere, match="doesn't know Test Buds. Put it in pairing mode, then press Re-pair."):
         bt.connect("020000000011", "Test Buds", open_settings=opened.append)
+    assert opened == []
+
+
+def test_connect_without_a_working_radio_says_so_and_skips_settings(monkeypatch):
+    monkeypatch.setattr(bt, "_radio_up", lambda: False)
+    monkeypatch.setattr(bt, "_ks_oneshot", lambda a, on: pytest.fail("no radio, nothing to try"))
+    opened = []
+    with pytest.raises(bt.BtError, match="No Bluetooth radio is working, so Test Speaker can't connect."):
+        bt.connect("020000000013", "Test Speaker", open_settings=opened.append)
     assert opened == []
 
 

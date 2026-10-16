@@ -37,8 +37,12 @@ def devices():
     radios = _radios()
     for key, entry in out.items():
         w, r = entry["wifi"], radios.get(key)
-        if w and r and not r["on"]:
-            w["ok"], w["disabled"] = False, True
+        if w:
+            w["lost"] = False
+            if r and not r["on"]:
+                w["ok"], w["disabled"] = False, True
+            elif radios and not r and not w["pnp_off"]:  # started but Windows has no WLAN interface: crashed
+                w["ok"], w["lost"] = False, True
     return out
 
 
@@ -77,12 +81,10 @@ def wifi_on(key, dev, *, wait=20.0, clock=time.monotonic, sleep=time.sleep):
 
 
 def wifi_off(key, dev):
-    """Radio off: the adapter stays enabled, so switching back is instant."""
+    """Radio off: the adapter stays enabled, so switching back is instant. No WLAN interface: nothing to turn off."""
     r = _radios().get(key)
     if r:
         set_radio(r["guid"], False)
-    elif not dev["pnp_off"]:
-        disable(dev["id"])
 
 
 def load_choice(path):
@@ -107,11 +109,29 @@ def save_choice(path, key):
 # ---- the switch ----
 _lock = threading.Lock()
 BT_STUCK = 120  # s: a Bluetooth move this long has hung in a driver (tests lower it)
+RESTART_LIMIT = 30  # s: restarting a half-started Wi-Fi driver; longer means it's not answering (tests lower it)
+LOST_PASSES = 3  # watchdog passes (a few seconds each) the dongle's Wi-Fi may lack its WLAN interface before it counts as crashed
 _FAIL = (wifi.WifiError, wifi.ParseError, bt.BtError, winrun.CmdError)
 
 
 def _name(k):
     return wifi.ADAPTER_NAMES.get(k, k)
+
+
+def _bounded(fn, seconds):
+    """Run fn in a daemon thread for at most `seconds`: (finished, error). A driver hung in the kernel can't be ended
+    from user mode, but it mustn't hold the switch lock."""
+    err = []
+
+    def run():
+        try:
+            fn()
+        except Exception as e:
+            err.append(e)
+    t = threading.Thread(target=run, name="bt-switch", daemon=True)
+    t.start()
+    t.join(seconds)
+    return not t.is_alive(), err[0] if err else None
 
 
 def _iface(key):
@@ -153,7 +173,9 @@ def use(target, *, on_step=lambda text: None, on_later=lambda text, ok: None, pa
 def _finish(target, old, wifi_dev, move_bt, on_later):
     """The tail of a switch, once Wi-Fi works: turn the old adapter's Wi-Fi off, then move Bluetooth (the slow part)."""
     notes, ok = [], True
-    try:
+
+    def tail():  # both steps are bounded together: a driver hung in the kernel must not hold the lock
+        nonlocal ok
         if wifi_dev:
             try:
                 wifi_off(old, wifi_dev)
@@ -162,30 +184,28 @@ def _finish(target, old, wifi_dev, move_bt, on_later):
                 notes.append(f"The {_name(old)} couldn't be turned off; Windows may still use it.")
                 ok = False
         if move_bt:
-            result = []
-
-            def move():
-                try:
-                    bt.switch(target)
-                    result.append(None)
-                except Exception as e:  # bt.switch put the old radio back
-                    result.append(e)
-            mover = threading.Thread(target=move, name="bt-switch", daemon=True)
-            mover.start()
-            mover.join(BT_STUCK)
-            if not result:  # a driver hung in the kernel; nothing in user mode can end it, but Wi-Fi stays usable
-                log.warning("moving Bluetooth to %s still hasn't finished after %d s", target, BT_STUCK)
-                notes.append("Bluetooth is stuck: Windows hasn't finished turning a radio off. Unplug the dongle and "
-                             "plug it back in (or restart the PC), then switch again.")
-                ok = False
-            elif result[0]:
-                log.warning("moving Bluetooth to %s failed: %s", target, result[0], exc_info=result[0])
-                notes.append(str(result[0]) if isinstance(result[0], bt.StuckRadio)
+            try:
+                bt.switch(target)
+                notes.append(f"Bluetooth moved to the {_name(target)}.")
+            except Exception as e:  # bt.switch put the old radio back
+                log.warning("moving Bluetooth to %s failed: %s", target, e, exc_info=True)
+                notes.append(str(e) if isinstance(e, bt.StuckRadio)
                              else f"Bluetooth couldn't move and stays on the {_name(old)}. Switch again to retry.")
                 ok = False
-            else:
-                notes.append(f"Bluetooth moved to the {_name(target)}.")
-        on_later(" ".join(notes) or f"The {_name(old)} is off.", ok)
+    try:
+        finished, err = _bounded(tail, BT_STUCK)
+        if err:
+            log.error("finishing the switch to %s failed", target, exc_info=err)
+            notes.append("Something went wrong finishing the switch; switch again to retry.")
+            ok = False
+        elif not finished:  # Wi-Fi stays usable
+            log.warning("switch to %s: turning off %s / moving Bluetooth still hasn't finished after %d s", target, old, BT_STUCK)
+            notes.append("Bluetooth is stuck: Windows hasn't finished turning a radio off. Unplug the dongle and "
+                         "plug it back in (or restart the PC), then switch again.")
+            ok = False
+        text = " ".join(notes) or f"The {_name(old)} is off."
+        log.info("switch to %s finished: %s", target, text)
+        on_later(text, ok)
     finally:
         _lock.release()
 
@@ -212,7 +232,11 @@ def _use(target, on_step, path, wait, clock, sleep):
     on_step(f"Turning on the {_name(target)}…")
     try:
         if not up():
-            _settled(disable, t["wifi"]["id"], sleep)  # restart once: clears a half-started driver
+            finished, err = _bounded(lambda: _settled(disable, t["wifi"]["id"], sleep), RESTART_LIMIT)  # restart once: clears a half-started driver
+            if err:
+                raise err
+            if not finished:  # blocked in the driver: don't touch the device again
+                raise HwError(f"The {_name(target)} isn't responding. Unplug it and plug it back in.{back}")
             t["wifi"]["pnp_off"] = True
             if not up():
                 bail()
@@ -287,7 +311,7 @@ class Follower:
 
     def __init__(self, path, notify, *, admin, use=use):
         self._path, self._notify, self._admin, self._use = path, notify, admin, use
-        self._first, self._was_present, self._told = True, None, False
+        self._first, self._was_present, self._told, self._lost = True, None, False, 0
 
     def step(self):
         if not self._admin:
@@ -312,7 +336,10 @@ class Follower:
         if choice is None or _lock.locked():  # a switch is running: both adapters are on for a moment
             return
         devs = devices()
-        present = "unigen" in devs
+        lost = ((devs.get("unigen") or {}).get("wifi") or {}).get("lost")
+        self._lost = self._lost + 1 if lost else 0
+        crashed = self._lost >= LOST_PASSES  # a dongle that just came up has no WLAN interface for a second or two
+        present = "unigen" in devs and not crashed
         first, was = self._first, self._was_present
         self._first, self._was_present = False, present
         key, other = next(((k, d) for k, d in devs.items() if k != choice), (None, None))
@@ -322,8 +349,6 @@ class Follower:
         if choice in devs and other_on and (devs[choice]["wifi"] or {}).get("ok") and not (choice == "unigen" and was is False):
             log.info("watchdog: both Wi-Fi adapters on, turning off %s", key)
             return wifi_off(key, other["wifi"])  # both on (Windows' Wi-Fi switch): quietly turn the other off
-        if choice != "unigen":
-            return
         if not present:
             turned_on = False
             for kind in ("wifi", "bt"):  # every pass while it's gone: never leave the PC without Wi-Fi
@@ -333,8 +358,11 @@ class Follower:
                     turned_on = True
             if (turned_on or was) and not self._told:
                 self._told = True
-                self._notify("The dongle was unplugged. Using the built-in adapter.", True)
+                self._notify("The dongle stopped responding. Using the built-in adapter. Unplug it and plug it back in."
+                             if crashed else "The dongle was unplugged. Using the built-in adapter.", True)
             return
         self._told = False
+        if choice != "unigen":
+            return
         if was is False:
             self._switch("unigen", "Dongle plugged in. Using the dongle.")

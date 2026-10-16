@@ -78,8 +78,14 @@ def test_networks_states_order_and_hidden(hw):
 
 
 def test_unplugged_adapter_message(hw, monkeypatch):
+    monkeypatch.setattr(hwm, "devices", lambda: {"builtin": {"present": True}})
     monkeypatch.setattr(wifi, "interfaces", lambda: [i for i in wifi.parse_interfaces(fixture("interfaces.txt")) if i["name"] == "Wi-Fi"])
     assert api.Api().networks("unigen") == {"ok": False, "error": "The Unigen dongle isn't plugged in."}
+
+
+def test_iface_of_crashed_dongle_says_replug(hw, monkeypatch):
+    monkeypatch.setattr(wifi, "interfaces", lambda: [i for i in wifi.parse_interfaces(fixture("interfaces.txt")) if i["name"] == "Wi-Fi"])
+    assert api.Api().networks("unigen") == {"ok": False, "error": "The Unigen dongle isn't responding. Unplug it and plug it back in."}
 
 
 def test_connect_new_network_uses_scanned_auth(hw, monkeypatch):

@@ -70,7 +70,13 @@ class Api:
     def _iface(self, key):
         i = self._ifaces().get(key)
         if i is None:
-            raise wifi.WifiError(f"The {wifi.ADAPTER_NAMES.get(key, key)} isn't plugged in.")
+            name = wifi.ADAPTER_NAMES.get(key, key)
+            try:
+                here = key in hw.devices()
+            except _KNOWN:
+                here = False
+            raise wifi.WifiError(f"The {name} isn't responding. Unplug it and plug it back in." if here
+                                 else f"The {name} isn't plugged in.")
         return i
 
     @staticmethod

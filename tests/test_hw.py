@@ -32,10 +32,10 @@ def test_device_key_maps_known_ids():
 
 def test_devices_groups_by_adapter(monkeypatch):
     monkeypatch.setattr(hw, "_rows", lambda: ALL)
-    monkeypatch.setattr(hw, "_radios", lambda: {"unigen": {"guid": "g", "on": True}})
+    monkeypatch.setattr(hw, "_radios", lambda: {k: {"guid": "g", "on": True} for k in ("unigen", "builtin")})
     d = hw.devices()
     assert set(d) == {"unigen", "builtin"}
-    assert d["unigen"] == {"present": True, "wifi": {"id": UNI_WIFI, "ok": True, "disabled": False, "pnp_off": False},
+    assert d["unigen"] == {"present": True, "wifi": {"id": UNI_WIFI, "ok": True, "disabled": False, "pnp_off": False, "lost": False},
                            "bt": {"id": UNI_BT, "ok": True, "disabled": False, "pnp_off": False}}
     assert d["builtin"]["wifi"]["ok"] is True
     assert d["builtin"]["bt"] == {"id": MT_BT, "ok": False, "disabled": True, "pnp_off": True}
@@ -44,7 +44,27 @@ def test_devices_groups_by_adapter(monkeypatch):
 def test_devices_radio_off_counts_as_off(monkeypatch):
     monkeypatch.setattr(hw, "_rows", lambda: ALL)
     monkeypatch.setattr(hw, "_radios", lambda: {"builtin": {"guid": "g", "on": False}})
-    assert hw.devices()["builtin"]["wifi"] == {"id": MT_WIFI, "ok": False, "disabled": True, "pnp_off": False}
+    assert hw.devices()["builtin"]["wifi"] == {"id": MT_WIFI, "ok": False, "disabled": True, "pnp_off": False, "lost": False}
+
+
+def test_devices_started_wifi_without_a_wlan_interface_isnt_working(monkeypatch):
+    """A crashed dongle: Device Manager says OK, Windows has no WLAN interface for it."""
+    monkeypatch.setattr(hw, "_rows", lambda: ALL)
+    monkeypatch.setattr(hw, "_radios", lambda: {"builtin": {"guid": "g", "on": True}})
+    d = hw.devices()
+    assert d["unigen"]["wifi"] == {"id": UNI_WIFI, "ok": False, "disabled": False, "pnp_off": False, "lost": True}
+    assert d["builtin"]["wifi"]["ok"] is True
+    monkeypatch.setattr(hw, "_radios", lambda: {})  # the read failed: trust Device Manager
+    assert hw.devices()["unigen"]["wifi"]["ok"] is True
+
+
+def test_wifi_off_without_a_wlan_interface_has_nothing_to_turn_off(monkeypatch):
+    calls = []
+    monkeypatch.setattr(hw, "_radios", lambda: {})
+    monkeypatch.setattr(hw, "disable", lambda i: calls.append(("disable", i)))
+    monkeypatch.setattr(hw, "set_radio", lambda g, on: calls.append(("radio", g, on)))
+    hw.wifi_off("unigen", {"id": UNI_WIFI, "ok": True, "disabled": False, "pnp_off": False})
+    assert calls == []
 
 
 def test_wifi_on_uses_the_radio_and_device_manager_only_when_disabled_there(monkeypatch):
@@ -257,6 +277,52 @@ def test_use_bt_hung_in_a_driver_frees_the_switch_and_says_replug(world, monkeyp
         stuck.set()
 
 
+def test_finish_wifi_off_hung_in_a_driver_still_frees_the_lock(monkeypatch):
+    stuck, later = threading.Event(), []
+    monkeypatch.setattr(hw, "wifi_off", lambda key, d: stuck.wait(5))
+    monkeypatch.setattr(hw, "BT_STUCK", 0.05)
+    assert hw._lock.acquire(blocking=False)  # use() holds it for _finish
+    try:
+        hw._finish("unigen", "builtin", dev(MT_WIFI), True, lambda text, ok: later.append((text, ok)))
+        (text, ok), = later
+        assert not ok and text.startswith("Bluetooth is stuck")
+        assert hw._lock.acquire(blocking=False)
+        hw._lock.release()
+    finally:
+        stuck.set()
+
+
+def test_finish_logs_the_outcome(world, caplog):
+    caplog.set_level("INFO", logger="unigen")
+    world.use()
+    assert "switch to unigen finished: Bluetooth moved to the Unigen dongle." in caplog.text
+
+
+def test_finish_unexpected_error_is_reported_not_called_stuck(monkeypatch):
+    later = []
+    def boom(key, d): raise RuntimeError("boom")
+    monkeypatch.setattr(hw, "wifi_off", boom)
+    assert hw._lock.acquire(blocking=False)
+    hw._finish("unigen", "builtin", dev(MT_WIFI), True, lambda text, ok: later.append((text, ok)))  # BT_STUCK left at 120: must not wait
+    assert later == [("Something went wrong finishing the switch; switch again to retry.", False)]
+    assert hw._lock.acquire(blocking=False)
+    hw._lock.release()
+
+
+def test_switch_to_unresponsive_dongle_says_replug(monkeypatch, tmp_path):
+    w = World(monkeypatch, tmp_path, appear=False)
+    stuck = threading.Event()
+    monkeypatch.setattr(hw, "disable", lambda i: stuck.wait(5))
+    monkeypatch.setattr(hw, "RESTART_LIMIT", 0.1)
+    try:
+        with pytest.raises(hw.HwError, match="isn't responding. Unplug it and plug it back in"):
+            w.use()
+        assert hw._lock.acquire(blocking=False)
+        hw._lock.release()
+    finally:
+        stuck.set()
+
+
 def test_use_bt_old_radio_stuck_passes_on_what_to_do(world, monkeypatch):
     def stuck(key):
         raise bt.StuckRadio("Windows didn't finish turning off the Built-in MediaTek radio. Switch again in a minute.")
@@ -340,9 +406,12 @@ class Pc:
         self.enabled.append(dev_id)
         self.state["builtin"] = True
 
+    lost = False  # the dongle's Wi-Fi is started but has no WLAN interface
+
     def devices(self):
         ids = {"unigen": (UNI_WIFI, UNI_BT), "builtin": (MT_WIFI, MT_BT)}
-        return {k: {"present": True, "wifi": dev(w, self.state[k]), "bt": dev(b, self.state[k])}
+        return {k: {"present": True, "wifi": {**dev(w, self.state[k] and not (self.lost and k == "unigen")),
+                                              "lost": self.lost and k == "unigen"}, "bt": dev(b, self.state[k])}
                 for k, (w, b) in ids.items() if k != "unigen" or self.plugged}
 
     def use(self, target, **kw):
@@ -366,6 +435,73 @@ def test_follow_unplug_enables_builtin_once(monkeypatch, tmp_path):
     assert pc.enabled == [MT_WIFI, MT_BT]
     assert pc.notes == [("The dongle was unplugged. Using the built-in adapter.", True)]
     assert hw.load_choice(pc.path) == "unigen"  # the choice stays
+
+
+def test_follow_unplug_with_builtin_chosen_turns_a_disabled_builtin_bt_back_on(monkeypatch, tmp_path):
+    pc = Pc(monkeypatch, tmp_path, choice="builtin", plugged=False, unigen_on=False)
+    devices = pc.devices
+    monkeypatch.setattr(hw, "devices", lambda: {"builtin": {**devices()["builtin"], "bt": dev(MT_BT, False)}})
+    pc.follower().step()
+    assert pc.enabled == [MT_BT]
+
+
+def test_follow_second_unplug_notifies_again_with_builtin_chosen(monkeypatch, tmp_path):
+    pc = Pc(monkeypatch, tmp_path, choice="builtin", unigen_on=False)
+    base = pc.devices
+    monkeypatch.setattr(hw, "devices", lambda: (lambda d: {**d, "builtin": {**d["builtin"], "bt": dev(MT_BT, False)}})(base()))
+    f = pc.follower()
+    f.step()
+    for _ in range(2):
+        pc.plugged = False
+        f.step()
+        pc.plugged = True
+        f.step()
+    assert pc.enabled == [MT_BT, MT_BT] and len(pc.notes) == 2
+
+
+def test_watchdog_moves_off_a_crashed_dongle(monkeypatch, tmp_path):
+    pc = Pc(monkeypatch, tmp_path)
+    f = pc.follower()
+    f.step()
+    pc.lost = True
+    f.step()
+    f.step()
+    assert pc.enabled == [] and pc.notes == []  # two passes: maybe just starting up
+    f.step()
+    assert pc.enabled == [MT_WIFI, MT_BT]
+    (text, changed), = pc.notes
+    assert "stopped responding" in text and "plug it back in" in text and changed
+    f.step()
+    assert len(pc.notes) == 1
+
+
+def test_watchdog_returns_to_the_dongle_after_replug(monkeypatch, tmp_path):
+    pc = Pc(monkeypatch, tmp_path)
+    f = pc.follower()
+    f.step()
+    pc.lost = True
+    for _ in range(hw.LOST_PASSES):
+        f.step()
+    pc.lost, pc.plugged = False, False
+    f.step()
+    assert pc.used == []
+    pc.plugged = True
+    f.step()
+    f.step()
+    assert pc.used == ["unigen"]
+
+
+def test_brief_missing_interface_is_not_a_crash(monkeypatch, tmp_path):
+    pc = Pc(monkeypatch, tmp_path)
+    f = pc.follower()
+    f.step()
+    pc.lost = True
+    f.step()
+    f.step()
+    pc.lost = False
+    f.step()
+    f.step()
+    assert pc.enabled == [] and pc.notes == [] and pc.used == []
 
 
 def test_follow_replug_switches_back_once(monkeypatch, tmp_path):
