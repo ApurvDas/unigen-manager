@@ -350,16 +350,15 @@ class Follower:
             log.info("watchdog: both Wi-Fi adapters on, turning off %s", key)
             return wifi_off(key, other["wifi"])  # both on (Windows' Wi-Fi switch): quietly turn the other off
         if not present:
-            turned_on = False
-            for kind in ("wifi", "bt"):  # every pass while it's gone: never leave the PC without Wi-Fi
-                d = (devs.get("builtin") or {}).get(kind)
-                if d and d["disabled"]:
-                    wifi_on("builtin", d) if kind == "wifi" else enable(d["id"])
-                    turned_on = True
-            if (turned_on or was) and not self._told:
+            todo = [k for k in ("wifi", "bt") if ((devs.get("builtin") or {}).get(k) or {}).get("disabled")]
+            if (todo or was) and not self._told:  # first: turning on can block until the dongle is re-plugged
                 self._told = True
                 self._notify("The dongle stopped responding. Using the built-in adapter. Unplug it and plug it back in."
                              if crashed else "The dongle was unplugged. Using the built-in adapter.", True)
+            for kind in todo:  # every pass while it's gone: never leave the PC without Wi-Fi
+                log.info("watchdog: turning on the built-in %s", "Wi-Fi" if kind == "wifi" else "Bluetooth")
+                d = devs["builtin"][kind]
+                wifi_on("builtin", d) if kind == "wifi" else enable(d["id"])
             return
         self._told = False
         if choice != "unigen":

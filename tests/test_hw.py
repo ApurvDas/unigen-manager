@@ -504,6 +504,26 @@ def test_brief_missing_interface_is_not_a_crash(monkeypatch, tmp_path):
     assert pc.enabled == [] and pc.notes == [] and pc.used == []
 
 
+def test_watchdog_tells_the_user_before_a_turn_on_that_blocks(monkeypatch, tmp_path, caplog):
+    """Windows' PnP service waits on the crashed dongle, so enable() can block until it's re-plugged."""
+    caplog.set_level("INFO", logger="unigen")
+    pc = Pc(monkeypatch, tmp_path, choice="builtin", unigen_on=False)
+    pc.lost = True
+    base, seen = pc.devices, []
+    monkeypatch.setattr(hw, "devices", lambda: (lambda d: {**d, "builtin": {**d["builtin"], "bt": dev(MT_BT, False)}})(base()))
+    def blocked(i):
+        seen.append(list(pc.notes))
+        raise RuntimeError("hung")
+    monkeypatch.setattr(hw, "enable", blocked)
+    f = pc.follower()
+    for _ in range(hw.LOST_PASSES - 1):
+        f.step()
+    assert seen == []
+    f.step()
+    assert len(seen) == 1 and "stopped responding" in seen[0][0][0]  # notified before enable ran
+    assert "watchdog: turning on the built-in Bluetooth" in caplog.text
+
+
 def test_follow_replug_switches_back_once(monkeypatch, tmp_path):
     pc = Pc(monkeypatch, tmp_path)
     f = pc.follower()
@@ -608,8 +628,8 @@ def test_follow_unplug_retries_enable_until_it_works(monkeypatch, tmp_path):
             raise winrun.CmdError("busy")
         real(i)
     monkeypatch.setattr(hw, "enable", flaky)
-    f.step()  # fails: logged, no notice yet
-    assert pc.notes == []
+    f.step()  # fails: logged; the notice already went out, before the turn-on
+    assert len(pc.notes) == 1
     f.step()
     f.step()
     assert tries == [MT_WIFI, MT_WIFI, MT_BT] and len(pc.notes) == 1
