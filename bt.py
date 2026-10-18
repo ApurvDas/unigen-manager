@@ -11,6 +11,8 @@ _set = pnp.set_enabled  # tests replace this
 _switch_lock = threading.Lock()
 SERVICE_TOGGLE = True  # Way 2 of audio connect; the hardware check in Task 7 decides whether it stays.
 _OFF_WAIT = 45  # s: disabling a radio tears down its paired devices' audio first, which can take 25 s
+_DROP_WAIT = 10  # s: how long a switch waits for the earbuds it disconnected to read disconnected
+_SETTLE = 2  # s: pause after they drop (and before reconnecting on the new radio) so audiodg lets go of / finds the audio endpoint
 LMP = {6: "4.0", 7: "4.1", 8: "4.2", 9: "5.0", 10: "5.1", 11: "5.2", 12: "5.3", 13: "5.4", 14: "6.0"}
 AUDIO_SERVICES = ["0000110B-0000-1000-8000-00805F9B34FB", "0000111E-0000-1000-8000-00805F9B34FB"]  # A2DP sink, Hands-free
 
@@ -81,12 +83,14 @@ def _switch(target, *, wait=20.0, clock=time.monotonic, sleep=time.sleep):
     others = [r for r in rs if r["ok"] and r["key"] != target]
     if tgt["ok"] and not others and _radio_up():
         return target
+    held = _disconnect_first(clock, sleep) if others else []
     try:
         for r in others:  # Windows runs one Bluetooth radio at a time
             _set(r["id"], False, wait=_OFF_WAIT)
     except winrun.CmdError:  # it's mid-teardown: turning it back on is what hung the dongle's driver, so leave it
-        raise StuckRadio(f"Windows didn't finish turning off the {_label(others[0]['key'])} radio. Switch again in a "
-                         "minute; if Bluetooth stays off, re-plug the dongle or restart the PC.") from None
+        raise StuckRadio(f"Windows didn't turn off the {_label(others[0]['key'])} radio, usually because audio is still "
+                         "playing through it. Stop the audio or disconnect your earbuds, then switch again. Only if "
+                         "Bluetooth stays off, re-plug the dongle or restart the PC.") from None
     try:
         if tgt["failed"]:  # never started (e.g. code 10): restart it. A stopping radio has no problem code and is left alone
             _set(tgt["id"], False)
@@ -94,6 +98,7 @@ def _switch(target, *, wait=20.0, clock=time.monotonic, sleep=time.sleep):
         deadline = clock() + wait
         while clock() < deadline:
             if any(r["key"] == target and r["ok"] for r in radios()) and _radio_up():  # one radio runs at a time
+                _reconnect(held, sleep)
                 return target
             sleep(1)
     except winrun.CmdError:
@@ -111,6 +116,48 @@ def _switch(target, *, wait=20.0, clock=time.monotonic, sleep=time.sleep):
     logging.getLogger("unigen").warning("radio %s didn't start; radios now: %s", target, radios())
     back = f" Switched back to the {_label(others[0]['key'])}." if others else ""
     raise BtError(f"The {_label(target)} radio didn't start.{back}")
+
+
+def _disconnect_first(clock, sleep):
+    """Disconnect the connected paired devices before the radio they're on goes off: Windows vetoes removing a radio
+    while audiodg holds a connected device's audio endpoint (Kernel-PnP 225), and retrying the disable doesn't help.
+    Best effort, never opens Windows Settings. Returns the (address, name) of every device that was connected."""
+    log = logging.getLogger("unigen")
+    try:
+        live = [r for r in btwinrt.paired() if r["connected"]]
+    except BtError as e:
+        log.warning("couldn't list connected devices before the switch: %s", e)
+        return []
+    gone = []
+    for r in live:
+        try:
+            disconnect(r["address"], r["name"], open_settings=None)
+            gone.append(r["address"])
+        except Exception as e:  # a mouse has no audio to drop; whatever fails, the switch goes on
+            log.warning("couldn't disconnect %s before the switch: %s", r["name"], e)
+    if gone:
+        deadline = clock() + _DROP_WAIT
+        while clock() < deadline:
+            try:
+                if not any(r["connected"] and r["address"] in gone for r in btwinrt.paired()):
+                    break
+            except BtError:
+                break
+            sleep(1)
+        sleep(_SETTLE)
+    return [(r["address"], r["name"]) for r in live]
+
+
+def _reconnect(devs, sleep):
+    """Best effort: bring the devices that were connected back on the radio that just came up. One that isn't paired
+    on it raises NotPairedHere; the UI already offers Re-pair, so that's just logged."""
+    if devs:
+        sleep(_SETTLE)
+    for address, name in devs:
+        try:
+            connect(address, name, open_settings=None)
+        except Exception as e:
+            logging.getLogger("unigen").warning("couldn't reconnect %s after the switch: %s", name, e)
 
 
 pair, power, set_power, here_id = btwinrt.pair, btwinrt.power, btwinrt.set_power, btwinrt.here_id

@@ -1,4 +1,5 @@
 import ctypes
+import os
 import pytest
 import bt
 import btwinrt
@@ -25,6 +26,7 @@ class FakePs:
 @pytest.fixture(autouse=True)
 def radio_up(monkeypatch):
     monkeypatch.setattr(bt, "_radio_up", lambda: True)  # Windows has a working radio unless a test says otherwise
+    monkeypatch.setattr(btwinrt, "paired", lambda: [])  # nothing is connected unless a test says so (never ask the real radio)
 
 
 def use_fake(monkeypatch, fake):
@@ -138,9 +140,98 @@ def test_switch_leaves_an_old_radio_that_wont_finish_turning_off_alone(monkeypat
         if not on and "368B" in dev_id:
             raise CmdError("The device didn't turn off.")
     monkeypatch.setattr(bt, "_set", stuck)
-    with pytest.raises(bt.StuckRadio, match="didn't finish turning off the Unigen dongle radio.*re-plug the dongle"):
+    with pytest.raises(bt.StuckRadio, match="didn't turn off the Unigen dongle radio.*audio.*disconnect your earbuds.*re-plug the dongle"):
         bt.switch("builtin", sleep=lambda s: None)
     assert [a for a, i, w in fake.calls] == ["disable"]  # no re-enable of a radio mid-teardown, target untouched
+
+
+def buds(connected=True):
+    return {"id": "x", "ids": ["x"], "name": "Buds", "kind": "Headphones", "connected": connected, "address": "AABBCCDDEEFF", "here": True}
+
+
+def connected_world(monkeypatch, fake, still=0):
+    """Earbuds connected on the old radio. `events` records disconnect/connect/radio calls in order; the buds read as
+    connected for `still` more polls after a disconnect."""
+    events, left = [], [still]
+    use_fake(monkeypatch, fake)
+    monkeypatch.setattr(fake, "set", lambda dev_id, on, wait=30.0: events.append(("enable" if on else "disable", dev_id[:21])))
+    monkeypatch.setattr(bt, "_set", fake.set)
+
+    def paired():
+        if any(e[0] == "disconnect" for e in events):
+            left[0] -= 1
+            return [buds(left[0] >= 0)]
+        return [buds()]
+    monkeypatch.setattr(btwinrt, "paired", paired)
+    monkeypatch.setattr(bt, "disconnect", lambda a, n, *, open_settings=os.startfile: events.append(("disconnect", a, open_settings)))
+    monkeypatch.setattr(bt, "connect", lambda a, n, *, open_settings=os.startfile: events.append(("connect", a, open_settings)))
+    return events
+
+
+def test_switch_disconnects_connected_devices_before_turning_the_old_radio_off(monkeypatch):
+    events = connected_world(monkeypatch, FakePs([RADIOS_OK_UNIGEN, flipped(False, False), flipped(False, True)]), still=1)
+    now = [0.0]
+    assert bt.switch("builtin", clock=lambda: now[0], sleep=lambda s: now.__setitem__(0, now[0] + s)) == "builtin"
+    assert events == [("disconnect", "AABBCCDDEEFF", None), ("disable", "USB\\VID_368B&PID_8D81"),
+                      ("enable", "USB\\VID_13D3&PID_3563"), ("connect", "AABBCCDDEEFF", None)]  # Settings never opens
+    assert now[0] < bt._DROP_WAIT + 3 * bt._SETTLE + 3  # it didn't wait out the full drop wait
+
+
+def test_switch_gives_up_waiting_for_a_device_that_wont_disconnect(monkeypatch):
+    events = connected_world(monkeypatch, FakePs([RADIOS_OK_UNIGEN, flipped(False, False), flipped(False, True)]), still=10**6)
+    now = [0.0]
+    bt.switch("builtin", clock=lambda: now[0], sleep=lambda s: now.__setitem__(0, now[0] + s))
+    assert [e[0] for e in events] == ["disconnect", "disable", "enable", "connect"]
+    assert now[0] >= bt._DROP_WAIT
+
+
+def test_switch_goes_on_when_a_disconnect_raises(monkeypatch):
+    events = connected_world(monkeypatch, FakePs([RADIOS_OK_UNIGEN, flipped(False, False), flipped(False, True)]))
+
+    def boom(a, n, *, open_settings=None):
+        raise bt.BtError("Windows didn't let the app disconnect Buds.")
+    monkeypatch.setattr(bt, "disconnect", boom)
+    assert bt.switch("builtin", sleep=lambda s: None) == "builtin"
+    assert [e[0] for e in events] == ["disable", "enable", "connect"]  # still tried to bring it back
+
+
+def test_switch_goes_on_when_the_connected_list_cant_be_read(monkeypatch):
+    fake = use_fake(monkeypatch, FakePs([RADIOS_OK_UNIGEN, flipped(False, False), flipped(False, True)]))
+    monkeypatch.setattr(btwinrt, "paired", lambda: (_ for _ in ()).throw(bt.BtError("Is Bluetooth on?")))
+    assert bt.switch("builtin", sleep=lambda s: None) == "builtin"
+    assert [a for a, i, w in fake.calls] == ["disable", "enable"]
+
+
+def test_a_reconnect_that_fails_or_isnt_paired_here_doesnt_fail_the_switch(monkeypatch):
+    for err in (bt.NotPairedHere("This Bluetooth radio doesn't know Buds."), bt.BtError("nope"), OSError("gone")):
+        events = connected_world(monkeypatch, FakePs([RADIOS_OK_UNIGEN, flipped(False, False), flipped(False, True)]))
+
+        def refuse(a, n, *, open_settings=None, err=err):
+            raise err
+        monkeypatch.setattr(bt, "connect", refuse)
+        assert bt.switch("builtin", sleep=lambda s: None) == "builtin"
+
+
+def test_no_reconnect_when_the_switch_fails(monkeypatch):
+    events = connected_world(monkeypatch, FakePs([RADIOS_OK_UNIGEN, flipped(False, False)]))
+    t = iter(range(100))
+    with pytest.raises(bt.BtError):
+        bt.switch("builtin", wait=10, clock=lambda: next(t), sleep=lambda s: None)
+    assert "connect" not in [e[0] for e in events]
+
+
+def test_no_connected_devices_means_no_disconnect_and_no_reconnect(monkeypatch):
+    events = connected_world(monkeypatch, FakePs([RADIOS_OK_UNIGEN, flipped(False, False), flipped(False, True)]))
+    monkeypatch.setattr(btwinrt, "paired", lambda: [buds(connected=False)])
+    now = [0.0]
+    bt.switch("builtin", clock=lambda: now[0], sleep=lambda s: now.__setitem__(0, now[0] + s))
+    assert [e[0] for e in events] == ["disable", "enable"] and now[0] == 1  # one poll for the target, no settle
+
+
+def test_switch_that_is_already_done_touches_no_device(monkeypatch):
+    use_fake(monkeypatch, FakePs([flipped(True, False)]))
+    monkeypatch.setattr(btwinrt, "paired", lambda: pytest.fail("nothing to switch"))
+    assert bt.switch("unigen") == "unigen"
 
 
 def test_service_changed():

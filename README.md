@@ -88,7 +88,7 @@ Older versions and checksums are on the [releases page](https://github.com/Apurv
 
 ### 🔀 One switch: Using Dongle | Built-in
 - **One control moves Wi-Fi and Bluetooth together.** Wi-Fi works on the new adapter in about 3 seconds: the app turns each adapter's Wi-Fi radio on or off (the per-adapter Wi-Fi switch in Windows), so no driver has to restart. If Windows' Wi-Fi button turns the unused adapter back on, the app turns it off again.
-- **Bluetooth moves right after, in the background.** Windows runs one Bluetooth radio at a time, so the old one is turned off in Device Manager. That is usually quick, but Windows can take up to a minute while its audio engine lets go of a paired speaker or headphones. The app tells you when Bluetooth has moved.
+- **Bluetooth moves right after, in the background.** Windows runs one Bluetooth radio at a time, so the old one is turned off in Device Manager. That is usually quick, but Windows can take up to a minute while its audio engine lets go of a paired speaker or headphones. To avoid that, the app first disconnects any connected earbuds or speakers (Windows refuses to turn a radio off while audio is playing through it), turns the old radio off, then tries to reconnect them on the new one (a device not paired there shows **Re-pair**). The app tells you when Bluetooth has moved. If Windows still refuses, stop the audio or disconnect the earbuds and switch again.
 - It joins the same network on the new adapter (copying the saved profile if needed) and shows each step while it runs.
 - **Your choice is remembered** across restarts.
 - **It follows the dongle:** unplug it and the built-in adapter turns back on; plug it in again and the app switches back to it. A tray notification tells you.

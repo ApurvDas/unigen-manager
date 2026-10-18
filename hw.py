@@ -108,7 +108,9 @@ def save_choice(path, key):
 
 # ---- the switch ----
 _lock = threading.Lock()
-BT_STUCK = 120  # s: a Bluetooth move this long has hung in a driver (tests lower it)
+# s: a Bluetooth move this long has hung in a driver (tests lower it). A normal move is disconnect wait (10) + settles (2+2)
+# + old radio off (up to 45) + target on (up to 20) = 79, plus the per-device disconnect/reconnect calls: 150 leaves room.
+BT_STUCK = 150
 RESTART_LIMIT = 30  # s: restarting a half-started Wi-Fi driver; longer means it's not answering (tests lower it)
 LOST_PASSES = 3  # watchdog passes (a few seconds each) the dongle's Wi-Fi may lack its WLAN interface before it counts as crashed
 _FAIL = (wifi.WifiError, wifi.ParseError, bt.BtError, winrun.CmdError)
