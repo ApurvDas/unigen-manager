@@ -51,7 +51,7 @@ Older versions and checksums are on the [releases page](https://github.com/Apurv
 - A channel map for 2.4 and 5 GHz shows which channels are crowded.
 - Connect, disconnect, or add a new WPA2 or open network with its password.
 - **Saved networks:** show a password, copy a network to the other adapter, or hold to delete.
-- An **Adapter** switch above the tabs picks which adapter Wi-Fi uses: the dongle or the built-in card.
+- An **Adapter** switch above the tabs picks which adapter Wi-Fi uses: the dongle or the built-in card. While it switches, a [stepped progress bar](#-two-switches-wi-fi-and-bluetooth-each-dongle--built-in) shows each real step.
 
 </td>
 <td width="50%" valign="top">
@@ -91,8 +91,19 @@ Older versions and checksums are on the [releases page](https://github.com/Apurv
 
 ### 🔀 Two switches: Wi-Fi and Bluetooth, each Dongle | Built-in
 - **Wi-Fi and Bluetooth are chosen separately.** For example, Wi-Fi on the dongle and Bluetooth on the built-in radio. The **Adapter** switch is on the Wi-Fi page, the **Radio** switch on the Bluetooth page, and the tray widget has both. Each choice is remembered across restarts (an older single choice is used for both until you change one).
-- **Wi-Fi works on the new adapter in about 3 seconds:** the app turns each adapter's Wi-Fi radio on or off (the per-adapter Wi-Fi switch in Windows), so no driver has to restart. It joins the same network on the new adapter (copying the saved profile if needed), shows each step while it runs, and then turns the old adapter's Wi-Fi off in the background. If Windows' Wi-Fi button turns the unused adapter back on, the app turns it off again. Bluetooth is not touched.
-- **Bluetooth moves in the background.** Windows runs one Bluetooth radio at a time, so the old one is turned off in Device Manager. That is usually quick, but Windows can take up to a minute while its audio engine lets go of a paired speaker or headphones. To avoid that, the app first disconnects any connected earbuds or speakers (Windows refuses to turn a radio off while audio is playing through it), turns the old radio off, then tries to reconnect them on the new one (a device not paired there shows **Re-pair**). The app tells you when Bluetooth has moved. If Windows still refuses, stop the audio or disconnect the earbuds and switch again. Wi-Fi is not touched.
+- **Wi-Fi works on the new adapter in about 3 seconds:** the app turns each adapter's Wi-Fi radio on or off (the per-adapter Wi-Fi switch in Windows), so no driver has to restart. It joins the same network on the new adapter (copying the saved profile if needed), and then turns the old adapter's Wi-Fi off in the background. If Windows' Wi-Fi button turns the unused adapter back on, the app turns it off again. Bluetooth is not touched.
+- **A stepped progress bar shows what the app is really doing**, under the switch in the main window and in the tray widget (compact there). There is one block per real step, the current step's name, a step count and a seconds counter (`2/4 · 12 s`), and never a made-up percentage:
+  - **Wi-Fi, up to 5 steps:** turning on the new adapter, waiting for it to start, finding your network, connecting to it, turning off the old adapter. The two middle steps are left out when the old adapter wasn't connected.
+  - **Bluetooth, 4 steps:** disconnecting your devices, turning off the old radio, starting the new radio, reconnecting your devices. A step with nothing to do (no device connected) shows dimmed and is skipped.
+  - **A block is** empty, current (hatched and filling, but never to the end before the step really ends), done, skipped or failed. When a move finishes, the blocks flash green and fold into one line (*Bluetooth moved to the Unigen dongle*) that fades away. If a step fails, its block turns red and shakes, the bar stays with the message, and **Try again** repeats the move.
+  - **A move started by the other window or by the watchdog** (after a re-plug) shows its bar too. Pressing a switch while a move runs just says *Already moving Bluetooth · 2/4* on the bar. While Bluetooth moves, Connect, Disconnect, Pair, Remove and the Bluetooth on/off switch are disabled.
+  - **Look and motion:** square corners, a 2px outline and a hard shadow in the chosen adapter's colour that the switch sinks onto when pressed. With Windows' **Show animations** off, the sweep, hatch and shake are replaced by instant changes and fades.
+- **Bluetooth moves in the background.** Windows runs one Bluetooth radio at a time, so the old one is turned off in Device Manager. That is usually quick, but Windows can take up to a minute while its audio engine lets go of a paired speaker or headphones. To avoid that, the app first disconnects any connected earbuds or speakers (Windows refuses to turn a radio off while audio is playing through it), turns the old radio off, then tries to reconnect them on the new one (a device not paired there shows **Re-pair**). The app tells you when Bluetooth has moved. Wi-Fi is not touched.
+- **Bluetooth fails fast and says why:**
+  - A device that still reads connected 10 seconds after it was disconnected also gets its audio services switched off (they come back on when it reconnects), which usually makes Windows let go of it.
+  - If Windows still refuses to turn the old radio off, the app sees the refusal in the System event log (Kernel-PnP event 225, read-only, looked at most every 2 seconds) and gives up in about 10 to 20 seconds instead of 45. It never asks Windows to turn that radio off a third time: poking a radio Windows is tearing down has hung the dongle's driver before. Stop the audio or disconnect the earbuds and switch again.
+  - A move counts as done only once Windows has the new radio, so Connect works right after the *moved* message. Connect also waits up to 8 seconds for the radio to appear.
+  - `app.log` records each device's disconnect (which way was used, and whether it dropped), so a refusal explains itself.
 - **One switch at a time:** the dongle's Wi-Fi and Bluetooth are one USB device, and changing one while the other is being turned off has hung its driver. So the two switches share a lock: a second click waits until the first is done.
 - **It follows the dongle:** unplug it and the built-in adapter turns back on for both Wi-Fi and Bluetooth; plug it in again and each switch that was set to the dongle goes back to it (one set to Built-in stays). A tray notification tells you.
 - **It notices a crashed dongle:** if the dongle stops responding (Windows still lists it, but it has no Wi-Fi), the app moves to the built-in adapter and asks you to unplug the dongle and plug it back in. A switch never waits on a device that has stopped answering.
@@ -105,7 +116,7 @@ Older versions and checksums are on the [releases page](https://github.com/Apurv
 </tr>
 </table>
 
-Each adapter shows its own standards, read from the hardware: **Wi-Fi 6**, **Bluetooth 5.4** for the Unigen dongle and **5.2** for the MediaTek card. The motion is built with anime.js and turns into simple fades when Windows' **Show animations** setting is off.
+Each adapter shows its own standards, read from the hardware: **Wi-Fi 6**, **Bluetooth 5.4** for the Unigen dongle and **5.2** for the MediaTek card. The motion is built with anime.js and turns into simple fades when Windows' **Show animations** setting is off. The switches and their progress bars are square, outlined and caps-labelled; the rest of the app keeps its softer look.
 
 <div align="center">
 
@@ -259,8 +270,8 @@ flowchart LR
 | `api.py` | Everything the pages call, with plain-language errors |
 | `wifi.py` | `netsh` parsing, connect and disconnect, saved profiles, Windows scan request |
 | `hw.py` | The Wi-Fi and Bluetooth switches: Wi-Fi by radio with rollback, Bluetooth in the background, one lock, a saved choice for each, dongle status, unplug/replug watchdog |
-| `pnp.py` | Reads Device Manager (status, disabled, Bluetooth version, device battery levels) through SetupAPI, in milliseconds, and turns devices on and off (verified by their state) |
-| `bt.py` | Bluetooth radio switching and audio connect |
+| `pnp.py` | Reads Device Manager (status, disabled, Bluetooth version, device battery levels) through SetupAPI, in milliseconds, and turns devices on and off (verified by their state, at most two calls, with an optional abort for a refusal Windows has already logged) |
+| `bt.py` | Bluetooth radio switching with its four reported steps, the read-only refusal probe, and audio connect |
 | `btwinrt.py` | Bluetooth through Windows' WinRT device APIs: paired list, live search, pairing with PIN prompts, unpair, radio power |
 | `speed.py` | Ping and per-adapter sampled download and upload |
 | `tray.py` | Tray icon, widget placement, Start with Windows, single instance |
