@@ -12,7 +12,7 @@
 ![Python 3.10](https://img.shields.io/badge/Python-3.10-0E151D?style=flat-square&logo=python&logoColor=4FB3C8)
 ![pywebview](https://img.shields.io/badge/UI-pywebview%20%2B%20WebView2-0E151D?style=flat-square)
 ![anime.js](https://img.shields.io/badge/motion-anime.js%204-0E151D?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-404%20passing-5CC08A?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-445%20passing-5CC08A?style=flat-square)
 
 <a href="https://github.com/ApurvDas/unigen-manager/releases/latest/download/UnigenManager.exe"><img src="https://img.shields.io/badge/Download-UnigenManager.exe%20%C2%B7%2033%20MB-4FB3C8?style=for-the-badge&logo=windows&logoColor=white" alt="Download UnigenManager.exe" height="44"></a>
 
@@ -82,7 +82,23 @@ Older versions and checksums are on the [releases page](https://github.com/Apurv
 ### 🧭 Always-on tray widget
 - Live status of both adapters, the dongle's status, and both switches (Wi-Fi and Bluetooth), the same as in the main window.
 - Quick connect to saved networks, the Bluetooth on/off switch, and a mini speed test.
+- A **Traffic** section with the live download and upload and the last minute as a sparkline. Click the numbers to switch units.
 - Optional **Start with Windows**.
+
+</td>
+</tr>
+<tr>
+<td colspan="2" valign="top">
+
+### 📡 Traffic: what the Wi-Fi is pulling, second by second
+- **A Traffic page** (<kbd>Ctrl</kbd>+<kbd>4</kbd>) with the live **download** and **upload**, a **60-second chart** that scrolls once a second, and a **Today** card with each adapter's total so far.
+- **MB/s or Mbps:** a switch at the top of the page changes the units. It shows KB/s or MB/s by itself (or Kbps / Mbps), is remembered, and is shared by the main window and the tray widget. 1 MB/s is 8 Mbps.
+- **A live line on the Wi-Fi page**, under the Adapter switch, and the **rate in the tray icon's tooltip** (`Unigen dongle: HOME-5G, 97% · ↓4.2 MB/s ↑300 KB/s`).
+- **Read straight from Windows' own byte counters** for each Wi-Fi adapter, so it matches Task Manager's Wi-Fi graph. Nothing is added to the network, no packets are captured and nothing is installed.
+- **Today's totals are saved per day** in `%LOCALAPPDATA%\UnigenManager\traffic.json` (the last 30 days), so they survive a restart. They count **only while Unigen Manager runs**, which is why the app can start with Windows.
+- **Light on the PC:** one reading per adapter each second, no `netsh`, and the window only asks for new numbers while it is shown.
+
+<div align="center"><img src="docs/screenshots/traffic.png" alt="The Traffic page: download and upload readouts, a 60-second chart and today's totals per adapter" width="760"></div>
 
 </td>
 </tr>
@@ -194,7 +210,7 @@ py -3.10 app.py --install-shortcut
 
 | Action | How |
 |---|---|
-| Switch screens | Side menu, or <kbd>Ctrl</kbd>+<kbd>1</kbd> Wi-Fi · <kbd>Ctrl</kbd>+<kbd>2</kbd> Bluetooth · <kbd>Ctrl</kbd>+<kbd>3</kbd> Speed |
+| Switch screens | Side menu, or <kbd>Ctrl</kbd>+<kbd>1</kbd> Wi-Fi · <kbd>Ctrl</kbd>+<kbd>2</kbd> Bluetooth · <kbd>Ctrl</kbd>+<kbd>3</kbd> Speed · <kbd>Ctrl</kbd>+<kbd>4</kbd> Traffic |
 | Connect | Double-click a network, or select it and press <kbd>Enter</kbd> |
 | Delete a saved network, or remove a device | Press and hold the button for 1.5 s; let go early to cancel |
 | Open the widget | Click **^** on the taskbar, then the cyan icon. Click anywhere else or press <kbd>Esc</kbd> to close |
@@ -214,7 +230,7 @@ Opening the app again while it's running brings the existing window forward, so 
 
 The options work the same way on the `.exe`, for example `UnigenManager.exe --tray`.
 
-App data such as the last speed results and `app.log` lives in `%LOCALAPPDATA%\UnigenManager\`.
+App data such as the last speed results, today's traffic totals (`traffic.json`) and `app.log` lives in `%LOCALAPPDATA%\UnigenManager\`.
 
 ## Development
 
@@ -232,7 +248,7 @@ Then open:
 
 ```powershell
 py -3.10 -m pip install -r requirements-dev.txt
-py -3.10 -m pytest                 # 404 unit, contract and UI tests (UI tests drive the installed Microsoft Edge)
+py -3.10 -m pytest                 # 445 unit, contract and UI tests (UI tests drive the installed Microsoft Edge)
 py -3.10 -m pytest -m hardware     # read-only checks against the real adapters (changes nothing)
 ```
 
@@ -269,6 +285,9 @@ flowchart LR
     hw --> pnp["pnp.py<br/>SetupAPI device reads"]
     bt --> pnp
     api --> speed["speed.py<br/>ping, sampled HTTP"]
+    api --> traffic["traffic.py<br/>byte counters, 1 s sampler"]
+    app --> traffic
+    traffic --> wifi
     hw --> winrun
     wifi --> winrun["winrun.py<br/>argument lists only, no shell"]
     bt --> winrun
@@ -286,6 +305,7 @@ flowchart LR
 | `bt.py` | Bluetooth radio switching with its four reported steps, the read-only refusal probe, and audio connect |
 | `btwinrt.py` | Bluetooth through Windows' WinRT device APIs: paired list, live search, pairing with PIN prompts, unpair, radio power |
 | `speed.py` | Ping and per-adapter sampled download and upload |
+| `traffic.py` | Live Wi-Fi traffic: reads each Wi-Fi adapter's byte counters from Windows (iphlpapi `GetIfEntry2`), and a one-second sampler keeps the rate, the last minute and today's totals (`traffic.json`) |
 | `tray.py` | Tray icon, widget placement, Start with Windows, single instance |
 | `winrun.py` | The only place that starts processes |
 | `ui/` | `index.html`, `widget.html`, `shared.css`, `shared.js`, `mock-api.js`, vendored anime.js |
@@ -311,6 +331,7 @@ flowchart LR
 - **Two Bluetooth radios, two sets of pairings:** a device paired with only one radio shows **Re-pair** on the other. Each pairing needs the device in pairing mode while that radio is on, so the app can't pair a device with both radios in one go. **Hold to remove** on such a row unpairs it from the other radio too, which can fail while that radio is off.
 - Battery levels of Bluetooth LE-only devices (most mice and keyboards) aren't shown yet.
 - An adapter plugged in after the app starts appears after the app restarts.
+- **Traffic** counts Wi-Fi adapters only, and today's totals only while Unigen Manager is running (a day the app was closed shows less than Windows' own usage figures). The adapter in use is the one chosen with the Adapter switch; before the first switch, the first Wi-Fi adapter that is on.
 
 ## Built with
 

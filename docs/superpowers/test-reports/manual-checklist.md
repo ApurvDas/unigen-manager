@@ -36,6 +36,8 @@ Date: 2026-10-13 · Build: e295789
 
 | 24 | Bluetooth spike (deferred plan Task 1): turn on a paired speaker, run the spike script from an elevated prompt; after the app's Disconnect, connect from Windows Settings and confirm audio plays | Records whether `bt.SERVICE_TOGGLE` stays True (Connect/Disconnect work directly) or becomes False (always opens Settings) | |
 | 25 | Switch Wi-Fi, then Bluetooth with earbuds connected and audio playing; compare the bar with `app.log` | The bar's steps match the log (Wi-Fi up to 5, Bluetooth 4); a refusal fails in under about 20 s with the audio message and a red block; Connect works right after *moved*; no stale red line stays under the result; the log says how each device was disconnected and whether it dropped | |
+| 26 | Traffic (Ctrl 4): start a large download; compare with Task Manager › Performance › Wi-Fi | Download and upload agree within about 10%. The chart scrolls once a second, MB/s and Mbps switch (and the widget follows), the Wi-Fi page's live line and the tray tooltip show the same rate | |
+| 27 | Traffic: note Today's totals, quit from the tray, start the app again (also after midnight) | The totals are still there and keep counting; after midnight a new day starts at 0. `%LOCALAPPDATA%\UnigenManager\traffic.json` holds the last 30 days; `app.log` shows no traffic errors | |
 
 ## Sign-off
 - Failures and follow-ups:
