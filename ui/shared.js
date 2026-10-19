@@ -61,10 +61,24 @@ function markSeg(seg, key, instant) {
   slide($(".ind", seg), bs.find(b => b.dataset.k === key), instant);
 }
 const ADMIN_TIP = "Switching adapters needs administrator rights.";
+// The dongle's state (api.app_info "dongle": connected, unplugged, not_responding; null when unknown): a status line, and the
+// Dongle button of both switches is disabled until it is connected. Built-in stays usable.
+const DONGLE_TEXT = { connected: "Dongle connected", unplugged: "Dongle not plugged in",
+  not_responding: "Dongle not responding. Unplug it and plug it back in." };
+const DONGLE_TIP = { unplugged: "Plug in the dongle.", not_responding: "Unplug the dongle and plug it back in." };
+function renderDongle(el, state) {
+  el.hidden = !state;
+  el.dataset.state = state || "";
+  setText($(".t", el), DONGLE_TEXT[state] || "");
+}
 // disabled without admin rights, and while a switch runs (Wi-Fi and Bluetooth share one lock)
-function enableSeg(seg, admin, busy) {
+function enableSeg(seg, admin, busy, dongle) {
   seg.title = admin ? "" : ADMIN_TIP;
-  $$("button", seg).forEach(b => { b.disabled = !admin || busy; });
+  $$("button", seg).forEach(b => {
+    const away = b.dataset.k === "unigen" && dongle in DONGLE_TIP;
+    b.disabled = !admin || busy || away;
+    b.title = away ? DONGLE_TIP[dongle] : "";
+  });
 }
 
 // swap: a label changes with a short blur, so it reads as one control changing

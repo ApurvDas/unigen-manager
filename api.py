@@ -139,8 +139,10 @@ class Api:
             radios = {r["key"]: r for r in bt.radios()}
         except _KNOWN:  # Bluetooth trouble must not stop the Wi-Fi page loading
             radios = {}
+        dongle = None  # unknown without the device list
         try:
             devs = hw.devices()
+            dongle = hw.dongle_state(devs)
         except _KNOWN:  # without the device list nothing can be called off
             devs = {}
         order = ["unigen", "builtin"]
@@ -150,7 +152,7 @@ class Api:
         using = choice if choice in keys and not off[choice] else (
             next((k for k in keys if k in ifs and ifs[k].get("state") == "connected"), None)
             or next((k for k in keys if not off[k]), None))
-        return {"version": VERSION, "admin": self._admin, "wifi_using": using, "adapters": [
+        return {"version": VERSION, "admin": self._admin, "wifi_using": using, "dongle": dongle, "adapters": [
             {"key": k, "name": self._name(k, ifs[k]["description"] if k in ifs else k),
              "wifi": wifi.wifi_standard(drv.get(ifs[k]["name"], {}).get("radio_types", [])) if k in ifs else None,
              "bt": radios.get(k, {}).get("version"), "using": k == using, "off": off[k]} for k in keys]}
@@ -345,10 +347,16 @@ class Api:
             self._widget.evaluate_js("window.onWidgetShown && window.onWidgetShown()")
 
     def _status(self):
+        text = "Unigen Manager: not connected"
         for a in self.adapters().get("data") or []:
             if a["state"] == "connected":
-                return f"{a['name']}: {a['ssid']}, {a['signal']}%"
-        return "Unigen Manager: not connected"
+                text = f"{a['name']}: {a['ssid']}, {a['signal']}%"
+                break
+        try:
+            state = hw.dongle_state(hw.devices())
+        except (*_KNOWN, OSError):
+            state = None  # unknown: say nothing
+        return text + {"unplugged": " · Dongle unplugged", "not_responding": " · Dongle not responding"}.get(state, "")
 
     @_envelope
     def open_main(self):

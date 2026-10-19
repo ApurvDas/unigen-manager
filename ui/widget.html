@@ -24,6 +24,7 @@
   .widget .btn:not(.primary) { background: var(--panel); }
 
   /* Wi-Fi and Bluetooth: Dongle | Built-in (.seg is in shared.css) */
+  .widget > .dongle { padding: 0 14px 10px; }
   .uses { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
   .uses .lbl { color: var(--muted); font-size: 13px; }
 
@@ -97,6 +98,7 @@
       <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M8 1.5h4.5V6M12.5 1.5 7.5 6.5M6 12.5H1.5V8M1.5 12.5l5-5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </button>
   </header>
+  <p class="dongle" id="dongle" hidden><i aria-hidden="true"></i><span class="t"></span></p>
   <div class="sec">
     <div class="uses"><span class="lbl" id="wifiUseLbl">Wi-Fi</span><div class="seg" id="wifiUse" role="radiogroup" aria-labelledby="wifiUseLbl"></div></div>
     <div id="ads"></div>
@@ -159,6 +161,7 @@ const fail = el => e => note(el, e.message, true);
 const level = s => s == null ? 0 : s >= 80 ? 4 : s >= 60 ? 3 : s >= 40 ? 2 : 1;
 const bars = s => `<span class="bars" aria-hidden="true">${[1, 2, 3, 4].map(i => `<i class="${i <= level(s) ? "lit" : ""}"></i>`).join("")}</span>`;
 function renderAdapters() {
+  renderDongle($("#dongle"), INFO.dongle);
   buildSeg(wifiSeg, SWITCH_KEYS); buildSeg(btSeg, SWITCH_KEYS);
   $("#ads").innerHTML = INFO.adapters.map(a => `
     <div class="ad" data-k="${esc(a.key)}">
@@ -169,7 +172,7 @@ function renderAdapters() {
   enableSegs();
 }
 const markUses = instant => { markSeg(wifiSeg, uses, instant); if (BT) markSeg(btSeg, BT.active, instant); };
-const enableSegs = () => { enableSeg(wifiSeg, INFO.admin, switching); enableSeg(btSeg, BT ? BT.can_switch : INFO.admin, switching); };
+const enableSegs = () => { enableSeg(wifiSeg, INFO.admin, switching, INFO.dongle); enableSeg(btSeg, BT ? BT.can_switch : INFO.admin, switching, INFO.dongle); };
 // in place: only values that changed animate
 function updateAdapters() {
   for (const row of $$(".ad")) {
@@ -277,7 +280,7 @@ async function loadBt() {
   setText($("#btVer"), act && act.version ? `Bluetooth ${act.version}` : "Bluetooth");
   const level = dev && dev.battery != null ? ` · ${dev.battery}%` : "";
   setText($("#btDev"), on ? (dev ? dev.name + level : "No device connected") : "Bluetooth is off");
-  enableSeg(btSeg, BT.can_switch, switching);
+  enableSeg(btSeg, BT.can_switch, switching, INFO.dongle);
   markSeg(btSeg, BT.active, true);
 }
 
@@ -364,6 +367,12 @@ if (!MOCK) {
 }
 setInterval(async () => { if (shown && await call("is_visible", "widget").catch(() => true)) { poll().catch(fail($("#wifiMsg"))); loadNets().catch(fail($("#netMsg"))); } }, 3000);
 setInterval(async () => { if (shown && await call("is_visible", "widget").catch(() => true)) loadBt().catch(() => {}); }, 10000);  // connected state and battery
+// the watchdog announces an unplug, not a dongle coming back or still starting: while it isn't connected, look again
+setInterval(async () => {
+  if (!shown || !INFO || !INFO.dongle || INFO.dongle === "connected" || switching || !await call("is_visible", "widget").catch(() => true)) return;
+  const i = await call("app_info").catch(() => null);
+  if (i && i.dongle !== INFO.dongle) reloadAll().catch(fail($("#wifiMsg")));
+}, 5000);
 
 // ================= ?mock preview: fake taskbar with the ^ overflow =================
 if (MOCK) {

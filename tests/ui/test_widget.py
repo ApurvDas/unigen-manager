@@ -27,7 +27,7 @@ def base_url():
 def widget(browser, base_url):
     pages = []
 
-    def _open(hooks=""):
+    def _open(hooks="", ads=2):
         pg = browser.new_page(viewport={"width": 1000, "height": 760})
         pg.errors = []
         pg.on("pageerror", lambda e: pg.errors.append(str(e)))
@@ -36,7 +36,7 @@ def widget(browser, base_url):
         pg.locator("#chevron").click()
         pg.locator("#trayIcon").click()
         expect(pg.locator("#w")).to_be_visible()
-        expect(pg.locator(".ad")).to_have_count(2)
+        expect(pg.locator(".ad")).to_have_count(ads)
         pages.append(pg)
         return pg
 
@@ -192,3 +192,37 @@ def test_widget_bluetooth_power(widget):
 def test_widget_shows_connected_device_battery(widget):
     pg = widget()
     expect(pg.locator("#btDev")).to_have_text("Den Beats Pill · 90%")
+
+
+def test_widget_dongle_status_line(widget):
+    pg = widget()
+    expect(pg.locator("#dongle")).to_have_text("Dongle connected")
+    expect(pg.locator("#dongle")).to_have_attribute("data-state", "connected")
+    expect(wifi_use(pg, "unigen")).to_be_enabled()
+    expect(bt_use(pg, "unigen")).to_be_enabled()
+
+
+def test_widget_unplugged_dongle_disables_its_buttons(widget):
+    pg = widget("window.MOCK_UNPLUG = 'unigen';", ads=1)
+    expect(pg.locator("#dongle")).to_have_text("Dongle not plugged in")
+    for use in (wifi_use, bt_use):
+        expect(use(pg, "unigen")).to_be_disabled()
+        expect(use(pg, "unigen")).to_have_attribute("title", "Plug in the dongle.")
+        expect(use(pg, "builtin")).to_be_enabled()
+        expect(use(pg, "builtin")).to_have_attribute("aria-checked", "true")
+
+
+def test_widget_dongle_not_responding(widget):
+    pg = widget("window.MOCK_DONGLE = 'not_responding';")
+    expect(pg.locator("#dongle")).to_have_text("Dongle not responding. Unplug it and plug it back in.")
+    expect(wifi_use(pg, "unigen")).to_have_attribute("title", "Unplug the dongle and plug it back in.")
+
+
+def test_widget_dongle_status_follows_the_watchdog_and_looks_again(widget):
+    pg = widget()
+    pg.evaluate("mockApi._setDongle('unplugged'); window.onUsingChanged()")
+    expect(pg.locator("#dongle")).to_have_text("Dongle not plugged in")
+    expect(bt_use(pg, "unigen")).to_be_disabled()
+    pg.evaluate("mockApi._setDongle('connected')")
+    expect(pg.locator("#dongle")).to_have_text("Dongle connected", timeout=8000)
+    expect(bt_use(pg, "unigen")).to_be_enabled()

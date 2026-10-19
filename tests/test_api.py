@@ -528,3 +528,56 @@ def test_follow_notify_pushes_reload_when_changed(hw):
 def test_app_info_reads_the_old_one_switch_setting(hw, tmp_path):
     (tmp_path / "settings.json").write_text('{"use": "unigen"}', encoding="utf-8")
     assert api.Api().app_info()["data"]["wifi_using"] == "unigen"
+
+
+# ---- dongle status ----
+REAL_DEVICES = hwm.devices  # the `hw` fixture swaps it for fixture-backed adapters
+
+
+def dongle(a):
+    return a.app_info()["data"]["dongle"]
+
+
+def test_app_info_dongle_connected_not_responding_or_unplugged(hw, monkeypatch):
+    devs = hwm.devices()
+    monkeypatch.setattr(hwm, "devices", lambda: devs)
+    assert dongle(api.Api()) == "connected"
+    devs["unigen"]["wifi"] = {"id": "unigen-w", "ok": False, "disabled": False, "lost": True}  # started, no WLAN interface
+    assert dongle(api.Api()) == "not_responding"
+    del devs["unigen"]
+    assert dongle(api.Api()) == "unplugged"
+
+
+def test_app_info_dongle_bluetooth_code_31_counts_as_connected(hw, monkeypatch):
+    """Windows allows one active Bluetooth adapter: with the built-in radio on, the dongle's shows code 31. Normal."""
+    uni, mt = r"USB\VID_368B&PID_8D81&MI_%s\7&AAAA0001&0&0000", r"PCI\VEN_14C3&DEV_7961\4&BBBB0002&0&00E0"
+    rows = [{"id": uni % "02", "name": "AIC8800D80 USB WiFi", "status": "OK", "problem": "CM_PROB_NONE"},
+            {"id": uni % "00", "name": "Generic Bluetooth Adapter", "status": "Error", "problem": "CM_PROB_FAILED_ADD"},
+            {"id": mt, "name": "MediaTek Wi-Fi 6 MT7921 Wireless LAN Card", "status": "OK", "problem": "CM_PROB_NONE"},
+            {"id": r"USB\VID_13D3&PID_3563\0", "name": "MediaTek Bluetooth Adapter", "status": "OK", "problem": "CM_PROB_NONE"}]
+    monkeypatch.setattr(hwm, "devices", REAL_DEVICES)
+    monkeypatch.setattr(hwm, "_rows", lambda: rows)
+    monkeypatch.setattr(hwm, "_radios", lambda: {k: {"guid": "g", "on": True} for k in ("unigen", "builtin")})
+    assert hwm.devices()["unigen"]["bt"]["ok"] is False
+    assert dongle(api.Api()) == "connected"
+    monkeypatch.setattr(hwm, "_radios", lambda: {"builtin": {"guid": "g", "on": True}})  # now its Wi-Fi really is gone
+    assert dongle(api.Api()) == "not_responding"
+
+
+def test_app_info_dongle_is_unknown_without_the_device_list(hw, monkeypatch):
+    monkeypatch.setattr(hwm, "devices", raising(winrun.CmdError("powershell.exe took longer than 90 s.")))
+    assert dongle(api.Api()) is None
+
+
+def test_tray_tooltip_adds_the_dongle_only_when_it_is_not_there(hw, monkeypatch):
+    devs = hwm.devices()
+    monkeypatch.setattr(hwm, "devices", lambda: devs)
+    a = api.Api()
+    assert a._status() == "Built-in MediaTek: HOME-5G, 80%"
+    devs["unigen"]["wifi"] = {"id": "unigen-w", "ok": False, "disabled": False, "lost": True}
+    assert a._status() == "Built-in MediaTek: HOME-5G, 80% · Dongle not responding"
+    del devs["unigen"]
+    assert a._status() == "Built-in MediaTek: HOME-5G, 80% · Dongle unplugged"
+    assert len(a._status()) <= 127  # Windows caps tray tooltips at 128 characters
+    monkeypatch.setattr(hwm, "devices", raising(winrun.CmdError("busy")))
+    assert a._status() == "Built-in MediaTek: HOME-5G, 80%"

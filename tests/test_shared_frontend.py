@@ -3,7 +3,7 @@ from pathlib import Path
 UI = Path(__file__).resolve().parents[1] / "ui"
 HELPERS = ["function call(", "function slide(", "function swap(", "async function busy(", "function arrive(",
            "function setText(", "function setMsg(", "function scramble(", "function pop(", "function relayout(",
-           "function removeEl(", "function addEl(", "function buildSeg(", "function markSeg(", "function enableSeg("]
+           "function removeEl(", "function addEl(", "function buildSeg(", "function markSeg(", "function enableSeg(", "function renderDongle("]
 
 
 def test_index_uses_shared_files():

@@ -108,6 +108,14 @@ def save_choice(path, kind, key):
     path.write_text(json.dumps({**data, kind: key}), encoding="utf-8")
 
 
+def dongle_state(devs):
+    """The dongle as the user sees it: "connected", "not_responding" (Windows lists it, its Wi-Fi has no WLAN interface:
+    the crash the watchdog detects) or "unplugged". Its Bluetooth showing code 31 while the built-in radio is on is
+    normal (Windows runs one Bluetooth adapter), so only the Wi-Fi counts."""
+    d = devs.get("unigen")
+    return "unplugged" if not d else "not_responding" if (d["wifi"] or {}).get("lost") else "connected"
+
+
 # ---- the switch ----
 _lock = threading.Lock()
 # s: a Bluetooth move this long has hung in a driver (tests lower it). A normal move is disconnect wait (10) + settles (2+2)
@@ -389,6 +397,8 @@ class Follower:
             self._queue = []
         elif was is False:  # plugged back in: each switch that was on the dongle goes back (Wi-Fi first)
             self._queue = [k for k, c in (("wifi", wifi_choice), ("bt", bt_choice)) if c == "unigen"]
+            if not self._queue:
+                self._notify("Dongle plugged in.", True)  # nothing to switch back, but the windows must show it
         elif first:  # after a restart Windows may have brought the other Bluetooth radio back
             active = next((k for k, d in devs.items() if (d["bt"] or {}).get("ok")), None)
             if bt_choice in devs and active not in (None, bt_choice):

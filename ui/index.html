@@ -25,6 +25,7 @@
     flex-direction: column;
     gap: 28px;
   }
+  .rail .dongle { padding: 0 6px; }
   .rail .ver { margin-top: auto; padding: 0 6px; color: var(--muted); font-size: 12px; }
   .rail h2 {
     font: 600 12px/1 var(--display);
@@ -294,6 +295,7 @@
 <body>
 
 <aside class="rail">
+  <p class="dongle" id="dongle" hidden><i aria-hidden="true"></i><span class="t"></span></p>
   <div>
     <h2>Adapters</h2>
     <div class="adapters"><span class="ind ad-ind" aria-hidden="true"></span></div>
@@ -634,13 +636,14 @@ function pickAdapter(a) {
 
 // ================= Wi-Fi and Bluetooth switches (Dongle | Built-in) =================
 function enableSegs() {
-  enableSeg(wifiSeg, INFO.admin, switching);
-  enableSeg(btSeg, BT ? BT.can_switch : INFO.admin, switching);
+  enableSeg(wifiSeg, INFO.admin, switching, INFO.dongle);
+  enableSeg(btSeg, BT ? BT.can_switch : INFO.admin, switching, INFO.dongle);
 }
 function renderUsing() {
-  $("#wifiUseRow").hidden = INFO.adapters.length < 2;
+  renderDongle($("#dongle"), INFO.dongle);
+  $("#wifiUseRow").hidden = INFO.adapters.length < 2 && INFO.dongle !== "unplugged";  // the Dongle button shows disabled
   buildSeg(wifiSeg, SWITCH_KEYS);
-  enableSeg(wifiSeg, INFO.admin, switching);
+  enableSeg(wifiSeg, INFO.admin, switching, INFO.dongle);
   markSeg(wifiSeg, INFO.wifi_using, true);
 }
 // INFO changed (a switch, here or by the watchdog): redraw everything that depends on the adapter in use
@@ -795,7 +798,7 @@ function renderRadio() {
   setText($("#btOther"), other ? `The ${other.name} radio is turned off.` : "");
   setText($("#btLabel"), act && act.version ? `Bluetooth ${act.version}` : "Bluetooth");
   buildSeg(btSeg, SWITCH_KEYS);
-  enableSeg(btSeg, BT.can_switch, switching);
+  enableSeg(btSeg, BT.can_switch, switching, INFO.dongle);
   markSeg(btSeg, BT.active, true);
 }
 $("#paired").addEventListener("click", async e => {
@@ -1306,6 +1309,12 @@ setTimeout(() => { if (!INFO && !MOCK && !window.pywebview) setMsg($("#wifiMsg")
   setInterval(async () => { if (await visible()) poll(); }, 2000);
   setInterval(tickAge, 1000);
   setInterval(async () => { if (!$("#bt").hidden && !pairingRow && await visible()) refreshPaired().catch(() => {}); }, 5000);  // a check takes ~50 ms
+  // the watchdog announces an unplug, not a dongle coming back or still starting: while it isn't connected, look again
+  setInterval(async () => {
+    if (!INFO.dongle || INFO.dongle === "connected" || switching || !await visible()) return;
+    const i = await call("app_info").catch(() => null);
+    if (i && i.dongle !== INFO.dongle) reloadInfo().catch(e => setMsg($("#wifiUseMsg"), e.message, true));
+  }, 5000);
   // opened from the tray or the shortcut: fresh data now, not at the next tick
   window.onMainShown = () => {
     poll();

@@ -1,11 +1,12 @@
 // Stand-in for api.py when the page is opened as index.html?mock (browser preview and UI tests).
 // Same method names and data shapes as the Python Api; tests/test_api.py checks that the names match.
 // Test hooks (set before the page loads): MOCK_FAST (no delays), MOCK_FAIL = { method: "message" },
-// MOCK_UNPLUG = "unigen" | "builtin", MOCK_ADMIN = false, MOCK_HOSTILE (adds a network, saved profile and paired device named like an HTML tag),
+// MOCK_UNPLUG = "unigen" | "builtin", MOCK_DONGLE = "unplugged" | "not_responding" (the dongle's status; "unplugged" removes it like MOCK_UNPLUG = "unigen"), MOCK_ADMIN = false, MOCK_HOSTILE (adds a network, saved profile and paired device named like an HTML tag),
 // MOCK_SEARCH_HOLD (the Bluetooth search never finishes), MOCK_PAIR_TWIN (pairing races a paired-list refresh), MOCK_BT_OFF (Bluetooth starts off),
 // MOCK_BOTH_ON (neither adapter is switched off, like before the first switch), MOCK_OTHER_RADIO (two paired devices are paired
 // only with the other radio: Re-pair instead of Connect), MOCK_BT_FAIL = "message" (the background Bluetooth move fails).
 // window.mockApi._setUsing(key, kind) changes the adapter Wi-Fi ("wifi") or Bluetooth ("bt") uses, both without a kind;
+// mockApi._setDongle(state) plugs the dongle in ("connected"), out ("unplugged") or hangs it ("not_responding");
 // mockApi._setConnected(id, on) connects a paired device behind the app's back (as Windows Settings would);
 // mockApi._setHere(id, on) moves a paired device to / from the other radio behind the app's back.
 // Mock nearby devices carry ceremony null | "confirm" | "display" | "provide"; the PIN shown is 482913 and the right provide PIN is 0000.
@@ -82,7 +83,8 @@ window.mockApi = (() => {
   const RESULTS = {};
   for (const k of ["unigen", "builtin"]) RESULTS[k] = result(Array.from({ length: 40 }, (_, i) => sample(i, ...BASE[k])), k === "unigen" ? 433 : 866, "2026-10-12 23:00");
 
-  const plugged = () => ADAPTERS.filter(a => a.key !== window.MOCK_UNPLUG);
+  const dongle = () => window.MOCK_UNPLUG === "unigen" ? "unplugged" : window.MOCK_DONGLE || "connected";
+  const plugged = () => ADAPTERS.filter(a => a.key !== window.MOCK_UNPLUG && !(a.key === "unigen" && dongle() === "unplugged"));
   const pick = key => (plugged().find(a => a.key === key) || plugged()[0]).key; // unplugging the dongle falls back, like the watchdog
   const using = () => pick(WIFI), radio = () => pick(RADIO);
   const off = a => !window.MOCK_BOTH_ON && a.key !== using();
@@ -103,7 +105,7 @@ window.mockApi = (() => {
     return { networks: nets, scanned_at: Date.now() / 1000 };
   };
 
-  def("app_info", 0, () => ({ version: "0.0.0-mock", admin: window.MOCK_ADMIN !== false, wifi_using: using(),
+  def("app_info", 0, () => ({ version: "0.0.0-mock", admin: window.MOCK_ADMIN !== false, wifi_using: using(), dongle: dongle(),
     adapters: plugged().map(a => ({ key: a.key, name: a.name, wifi: off(a) ? null : "Wi-Fi 6", bt: a.bt, using: a.key === using(), off: off(a) })) }));
   def("adapters", 0, () => live().map(a => {
     const on = a.state === "connected";
@@ -238,6 +240,7 @@ window.mockApi = (() => {
   def("open_main", 0, () => null);
   def("hide_widget", 0, () => null);
   def("widget_fit", 0, () => null);
+  api._setDongle = state => { window.MOCK_DONGLE = state; if (window.MOCK_UNPLUG === "unigen") window.MOCK_UNPLUG = undefined; }; // test hook
   api._setUsing = (key, kind) => { if (kind !== "bt") WIFI = key; if (kind !== "wifi") RADIO = key; }; // test hook
   api._setConnected = (id, on) => { PAIRED.find(d => d.id === id).connected = on; }; // test hook
   api._setHere = (id, on) => { PAIRED.find(d => d.id === id).here = on; }; // test hook

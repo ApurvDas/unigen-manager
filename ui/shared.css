@@ -54,11 +54,20 @@ button { font: inherit; color: inherit; }
 .switch:disabled { opacity: .5; cursor: default; }
 .switch:focus-visible { outline: 2px solid var(--uni); outline-offset: 2px; }
 
+/* the dongle's status line (top of the main window's rail, under the widget's header): a dot and a sentence */
+.dongle { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 13px; color: var(--muted); }
+.dongle[hidden] { display: none; }
+.dongle i { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.dongle[data-state="connected"] i { background: var(--ok); }
+.dongle[data-state="not_responding"] { color: var(--warn); }
+.dongle[data-state="not_responding"] i { background: var(--warn); }
+
 /* segmented control with one sliding highlight (the Wi-Fi and Bluetooth switches in both windows; positioned by slide() in JS) */
 .seg { position: relative; display: flex; gap: 2px; background: var(--panel); border-radius: 7px; padding: 3px; }
 .seg button { position: relative; z-index: 1; background: none; border: 0; cursor: pointer; padding: 4px 12px; border-radius: 5px; color: var(--muted); font: 500 13px var(--display); }
 .seg button[aria-checked="true"] { color: var(--ink); }
 .seg button:disabled { cursor: default; }
+.seg button:disabled:not([aria-checked="true"]) { opacity: .45; }  /* the Dongle button while it is unplugged, and the other one during a switch */
 .seg .ind { position: absolute; top: 3px; bottom: 3px; left: 0; right: auto; background: var(--raised); border-radius: 5px; pointer-events: none; }
 @media (hover: hover) and (pointer: fine) {
   .seg button:not(:disabled):hover { color: var(--ink); }

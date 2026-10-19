@@ -570,3 +570,57 @@ def test_hostile_name_in_repair_box_is_text(open_page):
     row.locator(".pair").click()
     expect(pg.locator(".pairbox.explain")).to_contain_text("<img src=x onerror=alert(1)> isn't connected")
     assert pg.locator("img").count() == 0
+
+
+# ---- the dongle's status ----
+def test_dongle_connected_in_the_rail(open_page):
+    pg = open_page()
+    expect(pg.locator("#dongle")).to_have_text("Dongle connected")
+    expect(pg.locator("#dongle")).to_have_attribute("data-state", "connected")
+    expect(wifi_use(pg, "unigen")).to_be_enabled()
+    expect(wifi_use(pg, "unigen")).to_have_attribute("title", "")
+    pg.keyboard.press("Control+2")
+    expect(bt_use(pg, "unigen")).to_be_enabled()
+
+
+def test_unplugged_dongle_shows_in_the_rail_and_disables_its_buttons(open_page):
+    pg = open_page("window.MOCK_UNPLUG = 'unigen';")
+    expect(pg.locator("#dongle")).to_have_text("Dongle not plugged in")
+    expect(pg.locator("#dongle")).to_have_attribute("data-state", "unplugged")
+    expect(pg.locator(".adapter")).to_have_count(1)
+    expect(pg.locator("#wifiUseRow")).to_be_visible()  # one adapter left, but the disabled Dongle button is still shown
+    expect(wifi_use(pg, "unigen")).to_be_disabled()
+    expect(wifi_use(pg, "unigen")).to_have_attribute("title", "Plug in the dongle.")
+    expect(wifi_use(pg, "builtin")).to_be_enabled()  # Built-in stays usable
+    expect(wifi_use(pg, "builtin")).to_have_attribute("aria-checked", "true")
+    pg.keyboard.press("Control+2")
+    expect(bt_use(pg, "unigen")).to_be_disabled()
+    expect(bt_use(pg, "unigen")).to_have_attribute("title", "Plug in the dongle.")
+    expect(bt_use(pg, "builtin")).to_be_enabled()
+    expect(bt_use(pg, "builtin")).to_have_attribute("aria-checked", "true")
+
+
+def test_dongle_not_responding_in_the_rail(open_page):
+    pg = open_page("window.MOCK_DONGLE = 'not_responding';")
+    expect(pg.locator("#dongle")).to_have_text("Dongle not responding. Unplug it and plug it back in.")
+    expect(pg.locator("#dongle")).to_have_attribute("data-state", "not_responding")
+    expect(wifi_use(pg, "unigen")).to_be_disabled()
+    expect(wifi_use(pg, "unigen")).to_have_attribute("title", "Unplug the dongle and plug it back in.")
+
+
+def test_dongle_status_follows_the_watchdog_and_looks_again(open_page):
+    pg = open_page()
+    pg.evaluate("mockApi._setDongle('unplugged'); window.onUsingChanged()")  # the watchdog's unplug notice
+    expect(pg.locator("#dongle")).to_have_text("Dongle not plugged in")
+    expect(pg.locator(".adapter")).to_have_count(1)
+    pg.evaluate("mockApi._setDongle('connected')")  # plugged back in: nothing announces it, the page looks again
+    expect(pg.locator("#dongle")).to_have_text("Dongle connected", timeout=8000)
+    expect(pg.locator(".adapter")).to_have_count(2)
+    expect(wifi_use(pg, "unigen")).to_be_enabled()
+
+
+def test_switches_need_admin_and_a_dongle_each_say_why(open_page):
+    pg = open_page("window.MOCK_ADMIN = false; window.MOCK_UNPLUG = 'unigen';")
+    expect(wifi_use(pg, "builtin")).to_be_disabled()
+    expect(pg.locator("#wifiUse")).to_have_attribute("title", "Switching adapters needs administrator rights.")
+    expect(wifi_use(pg, "unigen")).to_have_attribute("title", "Plug in the dongle.")

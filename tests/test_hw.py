@@ -564,7 +564,9 @@ def test_follow_second_unplug_notifies_again_with_builtin_chosen(monkeypatch, tm
         f.step()
         pc.plugged = True
         f.step()
-    assert pc.enabled == [MT_BT, MT_BT] and len(pc.notes) == 2
+    assert pc.enabled == [MT_BT, MT_BT]
+    unplugged, plugged = "The dongle was unplugged. Using the built-in adapter.", "Dongle plugged in."
+    assert [t for t, changed in pc.notes] == [unplugged, plugged, unplugged, plugged]  # said again each time
 
 
 def test_watchdog_moves_off_a_crashed_dongle(monkeypatch, tmp_path):
@@ -646,7 +648,8 @@ def test_follow_replug_switches_back_once(monkeypatch, tmp_path):
     f.step()
     f.step()
     assert pc.used == [("wifi", "unigen"), ("bt", "unigen")]
-    assert pc.notes[-1] == ("Dongle plugged in. Using the dongle.", True)
+    assert pc.notes == [("The dongle was unplugged. Using the built-in adapter.", True),
+                        ("Dongle plugged in. Using the dongle.", True)]  # one notice, not two
 
 
 @pytest.mark.parametrize("wifi_choice, bt_choice, restored", [
@@ -827,3 +830,38 @@ def test_follow_turns_the_other_radio_off_quietly_when_both_are_on(monkeypatch, 
     assert pc.offs == []
     f.step()
     assert pc.offs == ["builtin"] and pc.used == [] and pc.notes == []
+
+
+# ---- the dongle's status ----
+def test_dongle_state_connected_not_responding_unplugged(monkeypatch):
+    monkeypatch.setattr(hw, "_rows", lambda: ALL)
+    monkeypatch.setattr(hw, "_radios", lambda: {k: {"guid": "g", "on": True} for k in ("unigen", "builtin")})
+    assert hw.dongle_state(hw.devices()) == "connected"
+    monkeypatch.setattr(hw, "_radios", lambda: {"builtin": {"guid": "g", "on": True}})  # started, but no WLAN interface
+    assert hw.dongle_state(hw.devices()) == "not_responding"
+    monkeypatch.setattr(hw, "_rows", lambda: ALL[2:])
+    assert hw.dongle_state(hw.devices()) == "unplugged"
+
+
+def test_dongle_bluetooth_code_31_is_not_a_crash(monkeypatch):
+    """Windows allows one active Bluetooth adapter: with the built-in radio on, the dongle's shows code 31. Normal."""
+    rows = [ALL[0], row(UNI_BT, "Generic Bluetooth Adapter", "Error", "CM_PROB_FAILED_ADD"), ALL[2],
+            row(MT_BT, "MediaTek Bluetooth Adapter")]
+    monkeypatch.setattr(hw, "_rows", lambda: rows)
+    monkeypatch.setattr(hw, "_radios", lambda: {k: {"guid": "g", "on": True} for k in ("unigen", "builtin")})
+    d = hw.devices()
+    assert d["unigen"]["bt"]["ok"] is False and d["unigen"]["wifi"]["lost"] is False
+    assert hw.dongle_state(d) == "connected"
+
+
+def test_follow_tells_the_windows_when_the_dongle_is_plugged_in(monkeypatch, tmp_path):
+    pc = Pc(monkeypatch, tmp_path, choice="builtin", unigen_on=False)  # nothing to switch back
+    f = pc.follower()
+    f.step()
+    pc.plugged = False
+    f.step()
+    assert pc.notes == [("The dongle was unplugged. Using the built-in adapter.", True)]
+    pc.plugged = True
+    f.step()
+    f.step()
+    assert pc.notes[-1] == ("Dongle plugged in.", True) and len(pc.notes) == 2 and pc.used == []
