@@ -72,6 +72,12 @@ def test_opens_from_tray_and_shows_live_status(widget):
     expect(pg.locator("#w")).to_be_hidden()  # like Windows flyouts: clicking elsewhere closes it
 
 
+def test_close_button_hides_the_widget(widget):
+    pg = widget()
+    pg.locator("#closeWidget").click()
+    expect(pg.locator("#w")).to_be_hidden()
+
+
 def test_widget_wifi_switch(widget):
     pg = widget()
     expect(ad(pg, "builtin").locator(".ssid")).to_have_text("Off")
