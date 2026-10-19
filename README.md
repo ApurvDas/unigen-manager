@@ -12,7 +12,7 @@
 ![Python 3.10](https://img.shields.io/badge/Python-3.10-0E151D?style=flat-square&logo=python&logoColor=4FB3C8)
 ![pywebview](https://img.shields.io/badge/UI-pywebview%20%2B%20WebView2-0E151D?style=flat-square)
 ![anime.js](https://img.shields.io/badge/motion-anime.js%204-0E151D?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-336%20passing-5CC08A?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-404%20passing-5CC08A?style=flat-square)
 
 <a href="https://github.com/ApurvDas/unigen-manager/releases/latest/download/UnigenManager.exe"><img src="https://img.shields.io/badge/Download-UnigenManager.exe%20%C2%B7%2033%20MB-4FB3C8?style=for-the-badge&logo=windows&logoColor=white" alt="Download UnigenManager.exe" height="44"></a>
 
@@ -97,13 +97,18 @@ Older versions and checksums are on the [releases page](https://github.com/Apurv
   - **Bluetooth, 4 steps:** disconnecting your devices, turning off the old radio, starting the new radio, reconnecting your devices. A step with nothing to do (no device connected) shows dimmed and is skipped.
   - **A block is** empty, current (hatched and filling, but never to the end before the step really ends), done, skipped or failed. When a move finishes, the blocks flash green and fold into one line (*Bluetooth moved to the Unigen dongle*) that fades away. If a step fails, its block turns red and shakes, the bar stays with the message, and **Try again** repeats the move.
   - **A move started by the other window or by the watchdog** (after a re-plug) shows its bar too. Pressing a switch while a move runs just says *Already moving Bluetooth · 2/4* on the bar. While Bluetooth moves, Connect, Disconnect, Pair, Remove and the Bluetooth on/off switch are disabled.
-  - **Look and motion:** square corners, a 2px outline and a hard shadow in the chosen adapter's colour that the switch sinks onto when pressed. With Windows' **Show animations** off, the sweep, hatch and shake are replaced by instant changes and fades.
-- **Bluetooth moves in the background.** Windows runs one Bluetooth radio at a time, so the old one is turned off in Device Manager. That is usually quick, but Windows can take up to a minute while its audio engine lets go of a paired speaker or headphones. To avoid that, the app first disconnects any connected earbuds or speakers (Windows refuses to turn a radio off while audio is playing through it), turns the old radio off, then tries to reconnect them on the new one (a device not paired there shows **Re-pair**). The app tells you when Bluetooth has moved. Wi-Fi is not touched.
+  - **Look and motion:** the same [design as the rest of the app](#one-design-for-the-whole-app). With Windows' **Show animations** off, the sweep, hatch and shake are replaced by instant changes and fades.
+- **Bluetooth moves in the background.** Windows runs one Bluetooth radio at a time, so the old one is turned off in Device Manager. That is slow while the audio drivers of a connected speaker or headphones are still loaded, because Windows tears them down first (it took 42 to 51 seconds in the app's own log). So the app unloads them itself first, then turns the old radio off, then reconnects the device on the new one (a device not paired there shows **Re-pair**). The app tells you when Bluetooth has moved. Wi-Fi is not touched.
+- **Faster Bluetooth switching:**
+  - **Audio goes first.** A connected audio device (headphones, speaker or other audio, or anything with a Bluetooth audio driver loaded) has its audio services switched off straight away, which disconnects it and unloads its drivers in one go. Before, the app asked the audio driver to disconnect and waited up to 10 seconds, and the old radio was still slow to turn off. Other devices (controllers, mice) keep the audio-driver disconnect. If the audio-services route fails, the device falls back to it.
+  - **No fixed pauses.** The 2-second wait before reconnecting is gone (the move already waits until Windows has the new radio), and the short pause before the old radio goes off is 1 second and only happens when a device was taken off.
+  - **A re-plug restores faster.** After the dongle comes back, the watchdog starts the Bluetooth restore as soon as the Wi-Fi restore lets go of the lock, instead of at its next check a few seconds later.
+  - **Every step is timed in `app.log`**, for example `bt step 2/4 Turning off the Built-in MediaTek radio: 31.4 s`, with the total at the end and how each device dropped, so the gain shows on your own PC. The safety rules are unchanged: one switch at a time, no extra retries of a radio's turn-off, and a refusal from Windows ends the wait.
 - **Bluetooth fails fast and says why:**
-  - A device that still reads connected 10 seconds after it was disconnected also gets its audio services switched off (they come back on when it reconnects), which usually makes Windows let go of it.
+  - A device that was asked to disconnect through its audio driver and still reads connected 10 seconds later also gets its audio services switched off (they come back on when it reconnects), which usually makes Windows let go of it.
   - If Windows still refuses to turn the old radio off, the app sees the refusal in the System event log (Kernel-PnP event 225, read-only, looked at most every 2 seconds) and gives up in about 10 to 20 seconds instead of 45. It never asks Windows to turn that radio off a third time: poking a radio Windows is tearing down has hung the dongle's driver before. Stop the audio or disconnect the earbuds and switch again.
   - A move counts as done only once Windows has the new radio, so Connect works right after the *moved* message. Connect also waits up to 8 seconds for the radio to appear.
-  - `app.log` records each device's disconnect (which way was used, and whether it dropped), so a refusal explains itself.
+  - `app.log` records each device's disconnect (which way was used, how long it took and whether it dropped), so a refusal explains itself.
 - **One switch at a time:** the dongle's Wi-Fi and Bluetooth are one USB device, and changing one while the other is being turned off has hung its driver. So the two switches share a lock: a second click waits until the first is done.
 - **It follows the dongle:** unplug it and the built-in adapter turns back on for both Wi-Fi and Bluetooth; plug it in again and each switch that was set to the dongle goes back to it (one set to Built-in stays). A tray notification tells you.
 - **It notices a crashed dongle:** if the dongle stops responding (Windows still lists it, but it has no Wi-Fi), the app moves to the built-in adapter and asks you to unplug the dongle and plug it back in. A switch never waits on a device that has stopped answering.
@@ -116,7 +121,14 @@ Older versions and checksums are on the [releases page](https://github.com/Apurv
 </tr>
 </table>
 
-Each adapter shows its own standards, read from the hardware: **Wi-Fi 6**, **Bluetooth 5.4** for the Unigen dongle and **5.2** for the MediaTek card. The motion is built with anime.js and turns into simple fades when Windows' **Show animations** setting is off. The switches and their progress bars are square, outlined and caps-labelled; the rest of the app keeps its softer look.
+Each adapter shows its own standards, read from the hardware: **Wi-Fi 6**, **Bluetooth 5.4** for the Unigen dongle and **5.2** for the MediaTek card. The motion is built with anime.js and turns into simple fades when Windows' **Show animations** setting is off.
+
+#### One design for the whole app
+The main window and the tray widget share one brutalist look, so nothing clashes:
+- **Square and outlined:** no rounded corners anywhere (only chart curves are curved), a 2px outline on every panel and 1px rules inside lists.
+- **Depth means "you can press this":** buttons, switches and the highlighted menu items have a hard offset shadow; panels and charts have none. Pressing sinks a control onto its shadow and it springs back. It is one motion for everything pressable, in the same place as the progress bar's blocks.
+- **Colour has a meaning:** the dongle and the built-in radio keep their own colours (on the switch, the selected adapter card and the charts), the main action is white with a cyan shadow, green, amber and red are states, and everything else is grey.
+- **Labels are caps in a condensed face, text stays plain:** five type sizes in all. The Nearby | Saved tabs are the same control as the Adapter switch. Signal is shown as four square blocks, the Bluetooth search as the same hatched strip as the progress bar.
 
 <div align="center">
 
@@ -220,7 +232,7 @@ Then open:
 
 ```powershell
 py -3.10 -m pip install -r requirements-dev.txt
-py -3.10 -m pytest                 # 336 unit, contract and UI tests (UI tests drive the installed Microsoft Edge)
+py -3.10 -m pytest                 # 404 unit, contract and UI tests (UI tests drive the installed Microsoft Edge)
 py -3.10 -m pytest -m hardware     # read-only checks against the real adapters (changes nothing)
 ```
 
