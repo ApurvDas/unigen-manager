@@ -324,3 +324,39 @@ def test_widget_reduced_motion_has_no_hatch_or_sweep(widget):
     assert pg.evaluate(f"document.querySelector(\"{cur}\").style.transform") == ""
     pg.evaluate("mockApi._resume()")
     expect(pg.locator("#btSteps .steps-fold")).to_be_visible(timeout=6000)
+
+
+# ---- the design system, compact ----
+def test_widget_is_square_with_three_pixel_shadows_and_five_type_sizes(widget):
+    pg = widget()
+    round_ = pg.evaluate("""() => [...document.querySelectorAll('#w, #w *')].filter(e => !e.closest('svg') &&
+        ['TopLeft', 'TopRight', 'BottomLeft', 'BottomRight'].some(c => getComputedStyle(e)['border' + c + 'Radius'] !== '0px')).map(e => e.className)""")
+    assert round_ == []
+    sizes = pg.evaluate("""() => [...new Set([...document.querySelectorAll('#w *')].filter(e => getComputedStyle(e).display !== 'none' &&
+        [...e.childNodes].some(n => n.nodeType === 3 && n.textContent.trim())).map(e => getComputedStyle(e).fontSize))]""")
+    assert set(sizes) <= {"11px", "12px", "14px", "24px", "48px"}, sizes
+    shadow = lambda sel: pg.evaluate(f"getComputedStyle(document.querySelector('{sel}')).boxShadow")
+    for sel in ("#run", "#openApp", "#nets .btn", "#btPower"):
+        assert "3px 3px 0px" in shadow(sel), sel  # 3px offsets in the widget, 4px in the window
+    assert "3px 3px 0px" in shadow("#wifiUse") and "rgb(144, 133, 233)" in shadow("#wifiUse")
+    sections = pg.eval_on_selector_all(".sec", "ss => ss.map(s => getComputedStyle(s).borderTopWidth + ' ' + getComputedStyle(s).boxShadow)")
+    assert set(sections) == {"2px none"}  # every section a square 2px panel; static panels have no shadow
+
+
+def test_widget_signal_bars_are_square_blocks(widget):
+    pg = widget()
+    assert pg.eval_on_selector_all(".ad:first-child .bars i.lit", "b => b.length") == 4
+    assert pg.evaluate("[...document.querySelectorAll('.bars i')].every(b => getComputedStyle(b).borderTopLeftRadius === '0px')")
+    assert pg.evaluate("getComputedStyle(document.querySelector('.ad .dot')).borderTopLeftRadius") == "0px"  # the status pip is square
+
+
+def test_widget_press_sinks_onto_the_shadow(widget):
+    pg = widget()
+    box = pg.locator("#run").bounding_box()
+    pg.mouse.move(box["x"] + 8, box["y"] + 8)
+    pg.mouse.down()
+    pg.wait_for_timeout(300)
+    assert "0px 0px 0px" in pg.evaluate("getComputedStyle(document.querySelector('#run')).boxShadow")
+    pg.mouse.up()
+    pg.wait_for_timeout(900)
+    assert "3px 3px 0px" in pg.evaluate("getComputedStyle(document.querySelector('#run')).boxShadow")

@@ -27,11 +27,12 @@ const ease = anime.cubicBezier(0.23, 1, 0.32, 1); // same curve as CSS --ease-ou
 const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches; // reduced motion: fades only
 const COLOR = k => ({ unigen: "var(--uni)", builtin: "var(--bi)" })[k] || "var(--muted)"; // an adapter's identity colour
 
-// Timings (ms) of the switch area. The brutalist switch is crisp: it sinks onto its shadow and springs back, the
-// indicator slides with no overshoot, and the progress bar only ever shows steps the app really performed.
-const PRESS_MS = 90, RELEASE_MS = 220, PRESS_PX = 3; // the switch sinks PRESS_PX onto its shadow, then springs back
-const SLIDE_MS = 220;                                // the indicator travelling to the chosen adapter
-const ENTER_MS = 180, STAGGER_MS = 40;               // the bar grows in; its blocks follow one after another
+// Timings (ms). The brutalist UI is crisp: a press sinks onto the hard shadow and springs back, indicators slide with no
+// overshoot, labels change without blur, and the progress bar only ever shows steps the app really performed.
+const PRESS_MS = 90, RELEASE_MS = 220;               // every pressable sinks onto its shadow, then springs back
+const SLIDE_MS = 220;                                // the indicator travelling to the chosen item
+const SWAP_MS = 100, POP_MS = 160, ROW_Y = 8;        // a label changes, a pip blinks, a row arrives from ROW_Y px below
+const ENTER_MS = 180, STAGGER_MS = 40, STAGGER_CAP_MS = 160; // the bar grows in; its blocks follow one after another, within STAGGER_CAP_MS in all
 const SWEEP_MS = 14000, SWEEP_TO = 0.7, SNAP_MS = 160; // the current block fills to 70% over a step's usual length, never full until it really ends
 const FLASH_MS = 300, FOLD_MS = 400, LINGER_MS = 4000, FADE_MS = 200; // done: blocks flash green, fold to one line, linger, fade
 const SHAKE_MS = 300, SHAKE_PX = 4;                  // the failed block
@@ -39,20 +40,20 @@ const PULSE_MS = 240, NOTE_MS = 2400;                // pressing a switch while 
 const TICK_MS = 1000;                                // the seconds counter
 const SPRING = anime.spring({ stiffness: 520, damping: 22 });
 
-// press: any clickable dips while the pointer is down, eases back on release. A switch sinks onto its hard shadow instead.
-const PRESSABLE = ".btn, .adapter, nav button, .tabs button, .link, .icon-btn";
+// press: one press for everything pressable. The element sinks onto its hard shadow (CSS turns --press into the offset and the
+// shadow collapse, see shared.css) and springs back on release. A rail item or a menu item presses the highlight under it.
+const PRESSABLE = ".btn, .seg button, .adapter, nav button, .switch, .link, .icon-btn";
+const pressTarget = el => el.closest(".seg") || (el.matches(".adapter") ? $(".ad-ind") : el.matches("nav button") ? $(".nav-ind") : el);
 let pressed = null;
 document.addEventListener("pointerdown", e => {
-  const el = e.target.closest(`${PRESSABLE}, .seg button`);
+  const el = e.target.closest(PRESSABLE);
   if (!el || el.disabled || reduce) return;
-  pressed = el.closest(".seg") || el;
-  if (pressed.matches(".seg")) anime.animate(pressed, { x: PRESS_PX, y: PRESS_PX, "--press": 1, duration: PRESS_MS, ease });
-  else anime.animate(pressed, { scale: 0.97, duration: 120, ease });
+  pressed = pressTarget(el);
+  anime.animate(pressed, { "--press": 1, duration: PRESS_MS, ease });
 });
 ["pointerup", "pointercancel"].forEach(t => document.addEventListener(t, () => {
   if (!pressed) return;
-  if (pressed.matches(".seg")) anime.animate(pressed, { x: 0, y: 0, "--press": 0, duration: RELEASE_MS, ease: SPRING });
-  else anime.animate(pressed, { scale: 1, duration: 200, ease });
+  anime.animate(pressed, { "--press": 0, duration: RELEASE_MS, ease: SPRING });
   pressed = null;
 }));
 
@@ -98,15 +99,12 @@ function enableSeg(seg, admin, busy, dongle) {
   });
 }
 
-// swap: a label changes with a short blur, so it reads as one control changing
+// swap: a label changes at once and settles from a dimmer opacity, so it reads as one control changing
 function swap(btn, text) {
   const l = $(".label", btn);
   if (l.textContent === text) return;
-  if (reduce) { l.textContent = text; return; }
-  anime.animate(l, { opacity: 0.6, filter: "blur(2px)", duration: 100, ease, onComplete: () => {
-    l.textContent = text;
-    anime.animate(l, { opacity: 1, filter: "blur(0px)", duration: 140, ease });
-  } });
+  l.textContent = text;
+  if (!reduce) anime.animate(l, { opacity: [0.6, 1], duration: SWAP_MS, ease });
 }
 
 // busy: the shared shape of every slow action. Disable, swap the label, show progress, await the work,
@@ -122,6 +120,9 @@ async function busy(btn, label, work, { prog, after } = {}) {
     if (prog) prog.hidden = true;
   }
 }
+
+// signal blocks lit (0-4) for a 0-100 signal; null = no signal. The list meters and the widget bars both draw from it.
+const signalLevel = s => s == null ? 0 : s >= 80 ? 4 : s >= 60 ? 3 : s >= 40 ? 2 : 1;
 
 // arrive: a changed value settles in so the eye catches what changed
 function arrive(el) {
@@ -148,11 +149,11 @@ function scramble(el, text) {
   anime.animate(el, { innerHTML: anime.scrambleText({ text: esc(text) }), duration: 300 });
 }
 
-// pop: a status dot changes state (does nothing if it didn't change)
+// pop: a status pip changes state with a two-step blink (does nothing if it didn't change)
 function pop(dot, on) {
   if (dot.classList.contains("on") === on) return;
   dot.classList.toggle("on", on);
-  if (!reduce) anime.animate(dot, { scale: [1.8, 1], duration: 250, ease });
+  if (!reduce) anime.animate(dot, { opacity: [{ to: 0, duration: POP_MS / 2 }, { to: 1, duration: POP_MS / 2 }], ease: "linear" });
 }
 
 // layout transition on a list: mutate runs between record() and animate()
@@ -169,10 +170,10 @@ function removeEl(el, done) {
   // the layout treats display:none as leaving, fades it out, then we drop it
   relayout(el.parentElement, () => el.style.display = "none", { onComplete: fin });
 }
-// addEl: appends a row that settles in
+// addEl: appends a row that settles in from ROW_Y px below
 function addEl(list, html) {
   relayout(list, () => list.insertAdjacentHTML("beforeend", html),
-    { enterFrom: reduce ? { opacity: 0 } : { opacity: 0, transform: "translateY(4px)" } });
+    { enterFrom: reduce ? { opacity: 0 } : { opacity: 0, transform: `translateY(${ROW_Y}px)` } });
 }
 
 // ================= switch progress =================
@@ -230,7 +231,7 @@ function buildBlocks(el, st) {
   box.setAttribute("aria-valuemax", st.of);
   for (let i = 1; i < st.cur; i++) setBlock(el, st, i, "done");
   if (st.cur) setBlock(el, st, st.cur, "current");
-  if (!reduce) anime.animate($$(".blk", el), { opacity: [0, 1], delay: anime.stagger(STAGGER_MS), duration: ENTER_MS, ease });
+  if (!reduce) anime.animate($$(".blk", el), { opacity: [0, 1], delay: anime.stagger(Math.min(STAGGER_MS, STAGGER_CAP_MS / Math.max(1, st.of - 1))), duration: ENTER_MS, ease });
 }
 // the bar grows in (a compact one only fades: the widget window resizes to its content)
 function enterBar(el) {

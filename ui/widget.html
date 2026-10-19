@@ -7,81 +7,77 @@
 <link rel="stylesheet" href="shared.css">
 <style>
   html, body { height: 100%; margin: 0; }
-  body { background: var(--raised); color: var(--ink); font: 14px/1.45 var(--body); overflow: hidden; }
+  body { background: var(--panel); color: var(--ink); font: var(--t-md)/1.45 var(--body); overflow: hidden; }
 
-  /* the widget: fills its frameless window inside the app; floats above a fake taskbar in the ?mock preview */
-  .widget { width: 100%; background: var(--raised); }
+  /* the widget: fills its frameless window inside the app; floats above a fake taskbar in the ?mock preview.
+     The same system as the main window, compact: 3px offsets, every section a square 2px panel. */
+  .widget { --off: 3px; width: 100%; background: var(--panel); border: var(--edge) solid var(--line); padding: 10px;
+    display: flex; flex-direction: column; gap: 10px; }
   .widget[hidden] { display: none; }
-  header { display: flex; align-items: center; gap: 10px; padding: 12px 12px 10px 14px; }
-  header h1 { font: 600 15px/1 var(--display); margin: 0; flex: 1; }
+  header { display: flex; align-items: center; gap: 10px; padding: 0 3px 0 4px; }
+  header h1 { font: 700 var(--t-md)/1 var(--display); margin: 0; flex: 1; }
   .logo { width: 18px; height: 18px; flex: none; }
-  .icon-btn { width: 28px; height: 28px; display: grid; place-items: center; background: none; border: 0; border-radius: 6px; color: var(--muted); cursor: pointer; }
-  .sec { padding: 12px 14px; border-top: 1px solid var(--line); }
-  .sec h2 { font: 600 13px/1 var(--display); color: var(--muted); margin: 0 0 8px; }
-  .widget .msg { font-size: 12.5px; margin: 6px 0 0; }
+  .sec { background: var(--raised); border: var(--edge) solid var(--line); padding: 10px 12px; }
+  .sec h2 { font: 700 var(--t-xs)/1 var(--display); letter-spacing: var(--track); text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
+  .widget .msg { font-size: var(--t-sm); margin: 6px 0 0; }
   .widget .msg:empty { display: none; }
-  .widget .btn { padding: 5px 11px; font-size: 13px; white-space: nowrap; }
+  .widget .btn { padding: 5px 10px; white-space: nowrap; }
   .widget .btn:not(.primary) { background: var(--panel); }
 
   /* Wi-Fi and Bluetooth: Dongle | Built-in (.seg is in shared.css) */
-  .widget > .dongle { padding: 0 14px 10px; }
+  .widget > .dongle { padding: 0 4px; }
   .uses { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; padding-right: var(--off); }  /* room for the switch's hard shadow */
-  .uses .lbl { font: 700 11px/1 var(--display); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  .uses .lbl { font: 700 var(--t-xs)/1 var(--display); letter-spacing: var(--track); text-transform: uppercase; color: var(--muted); }
   .uses + .steps { margin: -2px 0 10px; }
 
-  .ad { display: grid; grid-template-columns: 10px 1fr auto; column-gap: 10px; row-gap: 2px; align-items: center; padding: 6px 0; }
+  .ad { display: grid; grid-template-columns: 8px 1fr auto; column-gap: 10px; row-gap: 2px; align-items: center; padding: 6px 0; }
   .ad + .ad { border-top: 1px solid var(--line); }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot { width: 8px; height: 8px; background: var(--muted); }
   .dot.on { background: var(--ok); }
-  .ad .name { font: 600 14px/1.3 var(--display); }
-  .ad .ssid { text-align: right; font-size: 13px; display: inline-block; }
+  .ad .name { font: 700 var(--t-md)/1.3 var(--display); }
+  .ad .ssid { text-align: right; font-size: var(--t-sm); display: inline-block; }
   .ad .ssid.off { color: var(--muted); }
-  .ad .sub { grid-column: 2 / 4; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12.5px; }
+  .ad .sub { grid-column: 2 / 4; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: var(--t-sm); }
   .ad .sub .rate { margin-left: auto; display: inline-block; }
   .ad .sub .pct { display: inline-block; min-width: 30px; }
   .bars { display: inline-flex; align-items: flex-end; gap: 2px; height: 12px; }
-  .bars i { width: 3px; border-radius: 1px; background: var(--line); }
+  .bars i { width: 4px; background: var(--line); }
   .bars i:nth-child(1) { height: 4px; } .bars i:nth-child(2) { height: 7px; }
   .bars i:nth-child(3) { height: 10px; } .bars i:nth-child(4) { height: 12px; }
-  .bars i.lit { background: var(--ink); opacity: 0.8; }
+  .bars i.lit { background: var(--ink); }
 
-  .net { display: grid; grid-template-columns: 1fr 38px 104px; gap: 8px; align-items: center; padding: 5px 0; min-height: 36px; }
+  .net { display: grid; grid-template-columns: 1fr 38px 104px; gap: 8px; align-items: center; padding: 6px 0; min-height: 40px; }
+  .net + .net { border-top: 1px solid var(--line); }
   .net .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .net .pct { color: var(--muted); font-size: 12.5px; text-align: right; }
-  .net .act { justify-self: end; }
-  .empty { color: var(--muted); font-size: 13px; padding: 4px 0; margin: 0; }
+  .net .pct { color: var(--muted); font-size: var(--t-sm); text-align: right; }
+  .net .act { justify-self: end; padding-right: var(--off); }
+  .empty { color: var(--muted); font-size: var(--t-sm); padding: 4px 0; margin: 0; }
 
-  .bt { display: flex; align-items: center; gap: 10px; }
-  .bt .ver { font: 600 14px var(--display); white-space: nowrap; display: inline-block; }
-  .bt .dev { flex: 1; color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; }
+  .bt { display: flex; align-items: center; gap: 12px; }
+  .bt .ver { font: 700 var(--t-md) var(--display); white-space: nowrap; display: inline-block; }
+  .bt .dev { flex: 1; color: var(--muted); font-size: var(--t-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; }
 
-  .speed { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; }
-  .speed .nums { display: flex; align-items: baseline; gap: 8px; white-space: nowrap; }
-  .speed .nums b { font: 400 20px/1 var(--display); display: inline-block; }
-  .speed .nums .arrow, .speed .nums .unit { color: var(--muted); font-size: 12px; }
-  #spark { display: block; width: 100%; height: 28px; overflow: visible; }
-  #spark .line { fill: none; stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
-  #spark .area { fill-opacity: 0.1; }
-
-  @media (hover: hover) and (pointer: fine) {
-    .icon-btn:hover { color: var(--ink); }
-  }
+  .speed { display: grid; grid-template-columns: 1fr auto; grid-template-areas: "nums run" "spark spark"; gap: 8px 12px; align-items: center; }
+  .speed .nums { grid-area: nums; display: flex; align-items: baseline; gap: 8px; white-space: nowrap; }
+  .speed .nums b { font: 700 var(--t-lg)/1 var(--display); font-variant-numeric: tabular-nums; display: inline-block; }
+  .speed .nums .arrow, .speed .nums .unit { color: var(--muted); font: 700 var(--t-xs) var(--display); letter-spacing: var(--track); text-transform: uppercase; }
+  #spark { grid-area: spark; display: block; width: 100%; height: 28px; overflow: visible; }
+  #run { grid-area: run; margin-right: var(--off); }
+  #spark .line { fill: none; stroke-width: 2; stroke-linejoin: round; }
+  #spark .area { fill-opacity: 0.12; }
 
   /* ---------- ?mock preview only: a Windows 10 taskbar to click ---------- */
   body.preview { background: #0E151D; }
-  .preview .widget {
-    position: fixed; right: 12px; bottom: 52px; width: 340px;
-    border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45); overflow: hidden;
-  }
+  .preview .widget { position: fixed; right: 12px; bottom: 52px; width: 342px; max-height: calc(100vh - 64px); overflow: auto; }
   .taskbar { position: fixed; left: 0; right: 0; bottom: 0; height: 40px; background: #101820; border-top: 1px solid #1B2632;
     display: flex; align-items: center; justify-content: flex-end; gap: 2px; padding-right: 8px; }
   .taskbar[hidden], .overflow[hidden], .hint[hidden] { display: none; }
   .tb { height: 40px; min-width: 32px; padding: 0 8px; display: grid; place-items: center; background: none; border: 0; color: #C9D3DC; cursor: pointer; }
-  .tb.clock { font-size: 12px; line-height: 1.25; text-align: center; cursor: default; }
+  .tb.clock { font-size: var(--t-sm); line-height: 1.25; text-align: center; cursor: default; }
   .overflow { position: fixed; bottom: 48px; right: 150px; display: grid; grid-template-columns: repeat(3, 34px); gap: 2px; padding: 6px;
-    background: #1A242F; border: 1px solid #2A3644; border-radius: 4px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4); }
-  .overflow button { height: 34px; display: grid; place-items: center; background: none; border: 0; border-radius: 3px; cursor: pointer; color: #9FB0BF; }
-  .hint { position: fixed; left: 16px; top: 14px; color: var(--muted); font-size: 13px; margin: 0; }
+    background: #1A242F; border: 1px solid #2A3644; }
+  .overflow button { height: 34px; display: grid; place-items: center; background: none; border: 0; cursor: pointer; color: #9FB0BF; }
+  .hint { position: fixed; left: 16px; top: 14px; color: var(--muted); font-size: var(--t-sm); margin: 0; }
   @media (hover: hover) and (pointer: fine) { .tb:hover, .overflow button:hover { background: rgba(255, 255, 255, 0.08); } }
 </style>
 </head>
@@ -160,8 +156,7 @@ const note = (el, text, isErr) => setMsg(el, text, isErr, { clearAfter: isErr ? 
 const fail = el => e => note(el, e.message, true);
 
 // ================= Wi-Fi: which adapter carries traffic =================
-const level = s => s == null ? 0 : s >= 80 ? 4 : s >= 60 ? 3 : s >= 40 ? 2 : 1;
-const bars = s => `<span class="bars" aria-hidden="true">${[1, 2, 3, 4].map(i => `<i class="${i <= level(s) ? "lit" : ""}"></i>`).join("")}</span>`;
+const bars = s => `<span class="bars" aria-hidden="true">${[1, 2, 3, 4].map(i => `<i class="${i <= signalLevel(s) ? "lit" : ""}"></i>`).join("")}</span>`;
 function renderAdapters() {
   renderDongle($("#dongle"), INFO.dongle);
   buildSeg(wifiSeg, SWITCH_KEYS); buildSeg(btSeg, SWITCH_KEYS);
@@ -310,7 +305,7 @@ async function loadBt() {
   BT = radio;
   const on = BT.power !== "off", sw = $("#btPower");
   sw.setAttribute("aria-checked", String(on)); sw.classList.toggle("on", on);
-  anime.animate($("i", sw), { x: on ? 16 : 0, duration: reduce ? 0 : 180, ease });
+  anime.animate($("i", sw), { x: on ? 19 : 0, duration: reduce ? 0 : 180, ease });
   const act = BT.radios.find(r => r.key === BT.active);
   const dev = paired.find(d => d.connected);
   setText($("#btVer"), act && act.version ? `Bluetooth ${act.version}` : "Bluetooth");

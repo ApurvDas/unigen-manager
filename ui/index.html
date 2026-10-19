@@ -10,108 +10,105 @@
   body {
     background: var(--panel);
     color: var(--ink);
-    font: 14px/1.45 var(--body);
+    font: var(--t-md)/1.45 var(--body);
     display: grid;
     grid-template-columns: 240px 1fr;
     overflow: hidden;
   }
+  /* the caps label every heading, chip and table head shares */
+  .rail h2, .band h3, .group h2, .card-head h2, .readout .what, th, .chip, .badge, nav kbd, .head .sub, .card-head .sub {
+    font: 700 var(--t-xs)/1.2 var(--display); letter-spacing: var(--track); text-transform: uppercase; }
 
   /* ---------- rail ---------- */
   .rail {
     background: var(--raised);
-    border-right: 1px solid var(--line);
-    padding: 20px 14px;
+    border-right: var(--edge) solid var(--line);
+    padding: 20px 16px;
     display: flex;
     flex-direction: column;
     gap: 28px;
   }
-  .rail .dongle { padding: 0 6px; }
-  .rail .ver { margin-top: auto; padding: 0 6px; color: var(--muted); font-size: 12px; }
-  .rail h2 {
-    font: 600 12px/1 var(--display);
-    color: var(--muted);
-    margin: 0 6px 10px;
-    letter-spacing: 0.02em;
-  }
+  .rail .ver { margin-top: auto; color: var(--muted); font-size: var(--t-xs); }
+  .rail h2 { color: var(--muted); margin: 0 0 12px; }
   .adapter {
     width: 100%;
     text-align: left;
     background: transparent;
-    border: 1px solid transparent;
-    border-radius: 8px;
+    border: var(--edge) solid transparent;
     padding: 10px 12px;
     cursor: pointer;
     display: grid;
-    grid-template-columns: 12px 1fr;
+    grid-template-columns: 8px 1fr;
     column-gap: 10px;
     row-gap: 2px;
     position: relative; z-index: 1;
   }
-  .adapter + .adapter { margin-top: 6px; }
-  .adapters { position: relative; }
+  .adapter + .adapter { margin-top: 12px; }
+  .adapters { position: relative; padding-right: 4px; }
   /* one highlight per group that slides to the chosen item (positioned by slide() in JS) */
   .ind { position: absolute; left: 0; right: 0; top: 0; pointer-events: none; }
-  .ad-ind { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
-  .nav-ind { background: var(--panel); border-radius: 6px; }
-  .sel-ind { background: var(--raised); }
-  .adapter .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); align-self: center; }
+  .ad-ind { right: 4px; background: var(--panel); border: var(--edge) solid var(--sel-c, var(--muted)); --sh: var(--sel-c, var(--muted)); }
+  .nav-ind { right: 4px; background: var(--ink); --sh: var(--b5); }
+  .sel-ind { background: var(--raised); border-left: 4px solid var(--b5); }
+  .adapter .dot { width: 8px; height: 8px; background: var(--muted); align-self: center; }
   .adapter .dot.on { background: var(--ok); }
-  .adapter .name { font: 600 15px/1.3 var(--display); }
-  .adapter .meta { grid-column: 2; color: var(--muted); font-size: 12.5px; }
+  .adapter .name { font: 700 var(--t-md)/1.3 var(--display); }
+  .adapter .meta { grid-column: 2; color: var(--muted); font-size: var(--t-sm); }
   .adapter .meta b { color: var(--ink); font-weight: 400; display: inline-block; }
   .adapter .meta .rate { display: inline-block; }
-  .adapter .caps { grid-column: 2; color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .adapter .caps { grid-column: 2; color: var(--muted); font-size: var(--t-xs); margin-top: 2px; }
   /* its own line under the name: "Built-in MediaTek" plus a tag doesn't fit the rail on one line */
-  .adapter .badge { grid-column: 2; justify-self: start; margin: 3px 0 5px; white-space: nowrap; font: 600 11px/1 var(--display);
-    padding: 3px 6px; border-radius: 4px; color: var(--muted); border: 1px solid var(--line); }
-  .adapter .badge.use { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+  .adapter .badge { grid-column: 2; justify-self: start; margin: 3px 0 5px; white-space: nowrap; padding: 3px 6px; color: var(--muted); border: 1px solid var(--line); }
+  .adapter .badge.use { color: var(--ok); border-color: var(--ok); }
   .adapter.off { cursor: default; }
   .adapter.off .name, .adapter.off .meta, .adapter.off .caps { opacity: .6; }
   /* "Adapter [ Dongle | Built-in ]" above the Wi-Fi tabs, "Radio [ ... ]" in the Bluetooth note: the switch, its state, its progress bar, its message */
   .use[hidden] { display: none; }
-  .use-row { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; }
-  .use .msg { display: block; margin-top: 8px; font-size: 12.5px; }
+  .use-row { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; padding-right: 4px; }
+  .use .msg { display: block; margin-top: 8px; font-size: var(--t-sm); }
   .use .msg:empty { display: none; }
 
-  nav { display: flex; flex-direction: column; gap: 2px; position: relative; }
+  nav { display: flex; flex-direction: column; gap: 8px; position: relative; padding-right: 4px; }
   nav button {
     background: none; border: 0; text-align: left; cursor: pointer;
-    padding: 8px 12px; border-radius: 6px; color: var(--muted);
-    font: 500 15px/1.2 var(--display);
+    padding: 9px 12px; color: var(--muted);
+    font: 700 var(--t-sm)/1.2 var(--display); letter-spacing: var(--track); text-transform: uppercase;
     position: relative; z-index: 1;
   }
-  nav button[aria-current="page"] { color: var(--ink); }
-  nav kbd { float: right; font: 11px var(--body); color: var(--muted); opacity: 0.6; }
+  nav button[aria-current="page"] { color: var(--panel); }
+  nav kbd { float: right; color: inherit; opacity: 0.6; }
 
   /* ---------- main ---------- */
   main { overflow: auto; padding: 24px 28px; display: flex; flex-direction: column; min-width: 0; }
   section[hidden] { display: none; }
   section { display: flex; flex-direction: column; gap: 18px; flex: 1; }
   .head { display: flex; align-items: baseline; gap: 14px; }
-  .head h1 { font: 600 24px/1.1 var(--display); margin: 0; }
+  .head h1 { font: 700 var(--t-lg)/1.1 var(--display); margin: 0; }
   .head .sub { color: var(--muted); }
   .head .grow { flex: 1; }
+  .head .btn, .head .progress { align-self: center; }
 
   /* channel map */
   .map { display: grid; grid-template-columns: 34fr 66fr; gap: 18px; }
-  .band { background: var(--raised); border-radius: 8px; padding: 10px 12px 6px; }
-  .band h3 { margin: 0 0 4px; font: 600 13px var(--display); }
+  .band { background: var(--raised); border: var(--edge) solid var(--line); padding: 10px 12px 6px; }
+  .band h3 { margin: 0 0 4px; }
   .band.b24 h3 { color: var(--b24); }
   .band.b5 h3 { color: var(--b5); }
   .band svg { display: block; width: 100%; height: 110px; overflow: visible; }
-  .band .axis { font: 10.5px var(--display); fill: var(--muted); }
-  .hump { fill-opacity: 0.05; stroke-width: 1.5; }
+  .band .axis { font: var(--t-xs) var(--display); fill: var(--muted); }
+  .band .base { stroke: var(--line); stroke-width: 2; }
+  .hump { fill-opacity: 0.08; stroke-width: 2; }
   .b24 .hump { stroke: var(--b24); fill: var(--b24); }
   .b5 .hump { stroke: var(--b5); fill: var(--b5); }
   .hump.dim { stroke-opacity: 0.55; fill-opacity: 0; }
-  .tag { font: 600 11.5px var(--display); fill: var(--ink); display: none; }
+  .tag { font: 700 var(--t-xs) var(--display); fill: var(--ink); display: none; }
   .tag.hot { display: block; }
   .hump.connected { fill-opacity: 0.55; }
-  .hump.hot { stroke-opacity: 1; stroke-width: 2.5; fill-opacity: 0.3; }
+  .hump.hot { stroke-opacity: 1; stroke-width: 3; fill-opacity: 0.3; }
   .hump.connected.hot { fill-opacity: 0.7; }
 
-  /* lists */
-  .list { border-top: 1px solid var(--line); }
+  /* lists: a square 2px panel with 1px rules between its rows */
+  .list { border: var(--edge) solid var(--line); background: var(--panel); }
   .row {
     display: grid;
     align-items: center;
@@ -120,44 +117,40 @@
     border-bottom: 1px solid var(--line);
     cursor: default;
   }
+  .list > .row:last-child, #netRows .row:last-child { border-bottom: 0; }
   #nets { position: relative; }
   #netRows .row { position: relative; z-index: 1; }
   #netRows .row { grid-template-columns: minmax(180px, 1.4fr) 120px 1.6fr 64px 90px; }
 
-  /* Nearby | Saved switcher inside the Wi-Fi tab */
-  .tabs { position: relative; display: flex; gap: 2px; align-self: flex-start; background: var(--raised); border-radius: 8px; padding: 3px; }
-  .tabs button {
-    position: relative; z-index: 1; background: none; border: 0; cursor: pointer;
-    padding: 6px 14px; border-radius: 6px; color: var(--muted); font: 500 14px var(--display);
-  }
-  .tabs button[aria-selected="true"] { color: var(--ink); }
-  .tabs .count { color: var(--muted); font-weight: 400; margin-left: 4px; }
-  .tab-ind { top: 3px; bottom: 3px; right: auto; background: var(--panel); border-radius: 6px; }
+  .seg.tabs { align-self: flex-start; }
   .view { display: flex; flex-direction: column; gap: 18px; flex: 1; }
   .view[hidden] { display: none; }
   .row .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .row .muted { color: var(--muted); }
   .signal { display: flex; align-items: center; gap: 8px; }
   .signal .num { width: 34px; text-align: right; }
-  .meter { flex: 1; height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
-  .meter i { display: block; height: 100%; width: 100%; transform-origin: left; background: var(--ink); opacity: 0.7; }
+  /* signal as four square blocks, lit by strength */
+  .meter { display: inline-flex; gap: 3px; }
+  .meter i { display: block; width: 10px; height: 10px; background: var(--line); }
+  .meter i.lit { background: var(--ink); }
   .chips { display: flex; flex-wrap: wrap; gap: 6px; }
-  .chip { font: 12px/1 var(--display); padding: 4px 7px; border-radius: 4px; border: 1px solid; white-space: nowrap; }
-  .chip.b24 { color: var(--b24); border-color: color-mix(in srgb, var(--b24) 45%, transparent); }
-  .chip.b5 { color: var(--b5); border-color: color-mix(in srgb, var(--b5) 45%, transparent); }
+  .chip { padding: 4px 6px; border: 1px solid; white-space: nowrap; }
+  .chip.b24 { color: var(--b24); }
+  .chip.b5 { color: var(--b5); }
   .state.ok { color: var(--ok); }
   .batt { margin-left: 10px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
   .batt svg { width: 16px; height: 9px; margin-right: 4px; vertical-align: -0.5px; fill: none; stroke: currentColor; }
-  .batt svg .lvl, .batt svg .tip { fill: currentColor; stroke: none; }
+  .batt svg .cell, .batt svg .tip { fill: currentColor; stroke: none; }
+  .batt svg .cell.off { fill: var(--line); }
   .batt.low { color: var(--warn); }
 
   /* actions */
-  .actions { display: flex; gap: 10px; align-items: center; margin-top: auto; padding-top: 6px; }
+  .actions { display: flex; gap: 12px; align-items: center; margin-top: auto; padding: 6px 4px 0 0; }
   .actions .grow { flex: 1; }
 
-  /* hold to confirm */
-  .hold { color: var(--muted); }
-  .hold.holding { color: var(--err); }
+  /* hold to confirm: the red fill wipes across while the button is held */
+  .hold { color: var(--muted); border-color: var(--line); }
+  .hold.holding { color: var(--err); border-color: var(--err); --sh: var(--err); }
   .hold .fill {
     position: absolute; inset: 0; pointer-events: none;
     background: color-mix(in srgb, var(--err) 30%, transparent);
@@ -165,125 +158,116 @@
   }
 
   @media (hover: hover) and (pointer: fine) {
-    nav button:hover, .adapter:hover, .tabs button:hover { color: var(--ink); }
-    .hold:hover { color: var(--err); }
+    nav button:not([aria-current]):hover, .adapter:hover { color: var(--ink); }
+    nav button[aria-current]:hover { color: var(--panel); }
+    .hold:hover { color: var(--err); border-color: var(--err); }
     .row:hover { background: color-mix(in srgb, var(--raised) 60%, transparent); }
   }
 
   /* bluetooth / saved */
-  .group h2 { font: 600 15px var(--display); margin: 0 0 8px; }
+  .group h2 { margin: 0 0 12px; }
   .group h2 > span { color: var(--muted); font-weight: 400; }
   .group h2 .btn { margin-left: 8px; vertical-align: 1px; }
   .bt .row { grid-template-columns: 1.4fr 1fr 240px; }
   .saved .row { grid-template-columns: minmax(160px, 1fr) 150px 120px 250px; }
-  .row .ops { display: flex; gap: 8px; justify-content: flex-end; }
+  .row .ops { display: flex; gap: 12px; justify-content: flex-end; padding-right: 3px; }
   .pw { display: flex; align-items: center; gap: 10px; }
   .pw .secret { font-family: var(--display); letter-spacing: 0.1em; color: var(--muted); white-space: nowrap; }
-  .link { background: none; border: 0; padding: 2px 0; color: var(--b5); cursor: pointer; }
   .radio-note {
     display: flex; align-items: center; gap: 14px;
-    background: var(--raised); border-radius: 8px; padding: 12px 14px;
+    background: var(--raised); border: var(--edge) solid var(--line); padding: 14px 16px;
   }
   .radio-note .note-text { flex: 1; }
   .radio-note p { margin: 0; }
-  .head .switch { align-self: center; }
+  .head .switch { align-self: center; margin-right: 3px; }
   .radio-note > .note-text > .msg { display: block; margin-top: 4px; }
   .radio-note .msg:empty { display: none; }
   .radio-note .use { margin-bottom: 12px; }
   .bt.off .group { opacity: .45; pointer-events: none; }
-  .pairbox { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 12px; margin: 2px 0 8px;
-    background: var(--raised); border: 1px solid var(--line); border-radius: 8px; }
-  .pairbox .pin { font: 600 18px/1 var(--display); letter-spacing: .08em; }
-  .pairbox input { width: 120px; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line);
+  .pairbox { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px 14px; margin: 0;
+    background: var(--raised); border-bottom: 1px solid var(--line); border-left: 4px solid var(--b5); }
+  .pairbox .pin { font: 700 var(--t-lg)/1 var(--display); letter-spacing: .08em; }
+  .pairbox input { width: 120px; padding: 6px 8px; border: var(--edge) solid var(--muted);
     background: var(--panel); color: inherit; font: inherit; }
   .st.away, .link.why { color: var(--warn); text-align: left; }
+  .link.why { font: 600 var(--t-sm)/1.3 var(--body); letter-spacing: 0; text-transform: none; }  /* a sentence, not a label */
   .pairbox.explain { display: block; }
   .pairbox.explain p { margin: 0 0 6px; }
-  .pairbox.explain ol { margin: 0 0 10px; padding-left: 20px; }
-  .pairbox .btns { display: flex; gap: 8px; }
+  .pairbox.explain ol { margin: 0 0 12px; padding-left: 20px; }
+  .pairbox .btns { display: flex; gap: 12px; padding-right: 3px; }
   .empty { color: var(--muted); padding: 14px 12px; display: flex; gap: 14px; align-items: center; }
-
-  .progress { width: 140px; height: 3px; background: var(--line); border-radius: 2px; overflow: hidden; position: relative; }
-  .progress i {
-    position: absolute; top: 0; bottom: 0; width: 40%;
-    background: var(--b5);
-    animation: slide 1.1s linear infinite;
-  }
-  @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
 
   /* speed */
   .readouts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
-  .readout { background: var(--raised); border-radius: 8px; padding: 16px 18px; }
-  .readout .big { display: inline-block; font: 300 52px/1 var(--display); }
-  .readout .unit { font: 400 16px var(--display); color: var(--muted); margin-left: 4px; }
-  .readout .what { color: var(--muted); margin-top: 8px; }
+  .readout { background: var(--raised); border: var(--edge) solid var(--line); padding: 16px 18px; }
+  .readout .big { display: inline-block; font: 700 var(--t-xl)/1 var(--display); font-variant-numeric: tabular-nums; }
+  .readout .unit { font: 700 var(--t-sm) var(--display); letter-spacing: var(--track); text-transform: uppercase; color: var(--muted); margin-left: 6px; }
+  .readout .what { color: var(--muted); margin-top: 10px; }
   table { border-collapse: collapse; width: 100%; }
+  .group table { border: var(--edge) solid var(--line); }
   th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); }
-  th { font: 600 13px var(--display); color: var(--muted); }
-  td.num { font-size: 15px; }
+  tbody tr:last-child td { border-bottom: 0; }
+  th { color: var(--muted); background: var(--raised); }
+  td.num { font-size: var(--t-md); }
 
   /* charts */
   .charts { display: grid; grid-template-columns: 3fr 2fr; gap: 18px; }
-  .card { background: var(--raised); border-radius: 8px; padding: 12px 14px 10px; min-width: 0; }
-  .card-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; margin-bottom: 8px; }
-  .card-head h2 { font: 600 15px var(--display); margin: 0; }
-  .card-head .sub { color: var(--muted); font-size: 13px; }
-  .legend { margin-left: auto; display: flex; gap: 14px; color: var(--muted); font-size: 12.5px; }
+  .card { background: var(--raised); border: var(--edge) solid var(--line); padding: 12px 14px 10px; min-width: 0; }
+  .card-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; margin-bottom: 10px; }
+  .card-head h2 { margin: 0; }
+  .card-head .sub { color: var(--muted); }
+  .legend { margin-left: auto; display: flex; gap: 14px; color: var(--muted); font-size: var(--t-sm); }
   .legend span { display: inline-flex; align-items: center; gap: 6px; }
-  .key { display: inline-block; width: 14px; height: 2px; border-radius: 1px; flex: none; }
-  .key.box { width: 10px; height: 10px; border-radius: 2px; }
+  .key { display: inline-block; width: 14px; height: 4px; flex: none; }
+  .key.box { width: 10px; height: 10px; }
   svg.chart { display: block; width: 100%; overflow: visible; }
   .chart .grid { stroke: var(--line); stroke-width: 1; }
-  .chart .tick { font: 11px var(--display); fill: var(--muted); font-variant-numeric: tabular-nums; }
-  .chart .line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
-  .chart .area { fill-opacity: 0.1; }
+  .chart .tick { font: var(--t-xs) var(--display); fill: var(--muted); font-variant-numeric: tabular-nums; }
+  .chart .line { fill: none; stroke-width: 2; stroke-linejoin: round; }
+  .chart .area { fill-opacity: 0.12; }
   .chart .end { stroke: var(--raised); stroke-width: 2; }
-  .chart .lab { font: 12px var(--body); fill: var(--ink); }
+  .chart .lab { font: var(--t-sm) var(--body); fill: var(--ink); }
   .chart .cross { stroke: var(--muted); stroke-width: 1; }
   .metric + .metric { margin-top: 10px; }
-  .mname { color: var(--muted); font-size: 12.5px; margin-bottom: 3px; }
+  .mname { color: var(--muted); font-size: var(--t-sm); margin-bottom: 3px; }
   .brow { display: flex; align-items: center; height: 16px; margin-top: 2px; }
   .track { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; }
-  .bar { height: 12px; border-radius: 0 4px 4px 0; min-width: 2px; }
-  .brow .v { font: 12.5px var(--display); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .bar { height: 12px; min-width: 2px; }
+  .brow .v { font: 700 var(--t-sm) var(--display); font-variant-numeric: tabular-nums; white-space: nowrap; }
   details.tv { margin-top: 6px; }
-  details.tv summary { color: var(--muted); font-size: 12.5px; cursor: pointer; width: max-content; }
-  details.tv table { margin-top: 6px; font-size: 12.5px; }
+  details.tv summary { color: var(--muted); font: 700 var(--t-xs) var(--display); letter-spacing: var(--track); text-transform: uppercase; cursor: pointer; width: max-content; }
+  details.tv table { margin-top: 6px; font-size: var(--t-sm); }
   details.tv th, details.tv td { padding: 4px 10px; }
   #tip {
     position: fixed; z-index: 10; pointer-events: none; display: none;
-    background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
-    padding: 6px 9px; font-size: 12.5px; box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+    background: var(--panel); border: var(--edge) solid var(--muted);
+    padding: 6px 10px; font-size: var(--t-sm);
   }
   #tip .row2 { display: flex; align-items: center; gap: 8px; }
-  #tip b { font: 600 13px var(--display); }
+  #tip b { font: 700 var(--t-md) var(--display); }
   #tip .n { color: var(--muted); }
 
   /* password dialog (box animated in JS; backdrop can't be) */
   dialog {
     background: var(--raised); color: var(--ink);
-    border: 1px solid var(--line); border-radius: 8px;
+    border: var(--edge) solid var(--muted); box-shadow: 8px 8px 0 var(--b5);
     padding: 20px; width: 340px; max-width: calc(100vw - 32px);
   }
   dialog::backdrop { background: rgba(10, 16, 22, 0.6); transition: opacity 200ms var(--ease-out); }
   @starting-style { dialog[open]::backdrop { opacity: 0; } }
   dialog.closing::backdrop { opacity: 0; transition-duration: 150ms; }
-  dialog h2 { font: 600 17px/1.3 var(--display); margin: 0 0 14px; overflow-wrap: anywhere; }
+  dialog h2 { font: 700 var(--t-lg)/1.2 var(--display); margin: 0 0 16px; overflow-wrap: anywhere; }
   dialog input {
     width: 100%; font: inherit; color: var(--ink);
-    background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+    background: var(--panel); border: var(--edge) solid var(--muted);
     padding: 8px 10px;
   }
-  dialog .ops { display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px; }
+  dialog .ops { display: flex; gap: 12px; justify-content: flex-end; margin-top: 16px; padding-right: 3px; }
   dialog .msg { margin: 8px 0 0; min-height: 1.2em; }
-
-  @media (prefers-reduced-motion: reduce) {
-    .progress i { animation-duration: 3s; }
-  }
 
   @media (max-width: 760px) {
     body { grid-template-columns: 1fr; overflow: auto; }
-    .rail { border-right: 0; border-bottom: 1px solid var(--line); }
+    .rail { border-right: 0; border-bottom: var(--edge) solid var(--line); }
     .map, .readouts, .charts { grid-template-columns: 1fr; }
     #netRows .row { grid-template-columns: 1fr 100px; }
     #netRows .row > :nth-child(n+3) { display: none; }
@@ -319,7 +303,7 @@
       <div id="wifiSteps" hidden></div>
       <span class="msg" id="wifiUseMsg"></span>
     </div>
-    <div class="tabs" role="tablist" aria-label="Wi-Fi">
+    <div class="tabs seg" role="tablist" aria-label="Wi-Fi">
       <span class="ind tab-ind" data-axis="x" aria-hidden="true"></span>
       <button role="tab" aria-selected="true" data-view="nearby">Nearby</button>
       <button role="tab" aria-selected="false" data-view="saved">Saved <span class="count" id="savedCount"></span></button>
@@ -504,8 +488,8 @@ function drawMaps() {
   b += [36, 52, 100, 116, 132, 149, 165].map(c => `<text class="axis" x="${x5(CH5.indexOf(c))}" y="106" text-anchor="middle">${c}</text>`).join("");
   s24.setAttribute("viewBox", `0 0 ${W24} 110`);
   s5.setAttribute("viewBox", `0 0 ${W5} 110`);
-  s24.innerHTML = `<line x1="0" x2="${W24}" y1="${H}" y2="${H}" stroke="#2A3A4B"/>` + a;
-  s5.innerHTML = `<line x1="0" x2="${W5}" y1="${H}" y2="${H}" stroke="#2A3A4B"/>` + b;
+  s24.innerHTML = `<line class="base" x1="0" x2="${W24}" y1="${H}" y2="${H}"/>` + a;
+  s5.innerHTML = `<line class="base" x1="0" x2="${W5}" y1="${H}" y2="${H}"/>` + b;
 }
 // the newly connected network fills in on the map
 function fillIn() {
@@ -517,11 +501,12 @@ function fillIn() {
 
 // ================= Wi-Fi: nearby networks =================
 const best = n => Math.max(0, ...n.aps.map(a => a.s));
+const meterHtml = s => `<span class="meter" aria-hidden="true">${[1, 2, 3, 4].map(i => `<i${i <= signalLevel(s) ? ' class="lit"' : ""}></i>`).join("")}</span>`;
 function drawNets() {
   setText($("#wifiTitle"), `${NETS.length} network${NETS.length === 1 ? "" : "s"} nearby`);
   $("#netRows").innerHTML = NETS.map((n, i) => `<div class="row" role="option" data-i="${i}" aria-selected="false">
       <span class="title${n.hidden ? " muted" : ""}">${n.hidden ? "(hidden network)" : esc(n.ssid)}</span>
-      <span class="signal"><span class="num">${best(n)}%</span><span class="meter"><i style="transform:scaleX(${best(n) / 100})"></i></span></span>
+      <span class="signal"><span class="num">${best(n)}%</span>${meterHtml(best(n))}</span>
       <span class="chips">${n.aps.map(a => `<span class="chip ${a.b === 5 ? "b5" : "b24"}">${a.b} GHz, ch ${a.ch}</span>`).join("")}</span>
       <span class="muted">${esc(n.sec)}</span>
       <span class="state ${n.state === "Connected" ? "ok" : "muted"}">${esc(n.state)}</span>
@@ -601,14 +586,21 @@ $("#scan").addEventListener("click", async function () {
   try { await busy(this, "Scanning…", loadNetworks(true), { after: "Scan again" }); }
   catch (e) { return setMsg($("#wifiMsg"), e.message, true); }
   if (reduce) return;
-  $$("#netRows .row").forEach(r => { // meters ease from their previous value to the new one
+  $$("#netRows .row").forEach(r => { // a meter whose strength changed lights its blocks up again, one after another
     const n = NETS[r.dataset.i];
-    if (old.has(n.ssid)) anime.animate($(".meter i", r), { scaleX: [old.get(n.ssid) / 100, best(n) / 100], duration: 300, ease });
+    if (old.has(n.ssid) && signalLevel(old.get(n.ssid)) !== signalLevel(best(n)))
+      anime.animate($$(".meter i", r), { opacity: [0.2, 1], delay: anime.stagger(40), duration: 160, ease });
   });
 });
 
 // ================= adapters rail + polling =================
 const inUse = () => INFO.adapters.find(a => a.using) || INFO.adapters[0] || {};
+// the highlight under the chosen adapter: its outline and hard shadow are the adapter's colour
+function markAd(a, instant) {
+  const ind = $(".ad-ind");
+  ind.style.setProperty("--sel-c", COLOR(a && a.dataset.adapter));
+  slide(ind, a, instant);
+}
 function renderRail() {
   $(".adapters").innerHTML = `<span class="ind ad-ind" aria-hidden="true"></span>` + INFO.adapters.map(a => `
     <button class="adapter${a.off ? " off" : ""}" aria-pressed="${!!a.using}"${a.off ? ' aria-disabled="true"' : ""} data-adapter="${esc(a.key)}" data-bt="${esc(a.bt || "")}">
@@ -617,7 +609,7 @@ function renderRail() {
       <span class="caps">${esc([a.wifi, a.bt && `Bluetooth ${a.bt}`].filter(Boolean).join(", "))}</span>
     </button>`).join("");
   $$(".adapter").forEach(a => a.addEventListener("click", () => pickAdapter(a)));
-  slide($(".ad-ind"), activeAdapter(), true);
+  markAd(activeAdapter(), true);
   setText($("#wifiLabel"), inUse().wifi || "Wi-Fi");
 }
 function updateRail() {
@@ -632,7 +624,7 @@ function updateRail() {
 function pickAdapter(a) {
   if (a.classList.contains("off")) return; // an adapter that is off has no Wi-Fi to show
   $$(".adapter").forEach(x => x.setAttribute("aria-pressed", x === a));
-  slide($(".ad-ind"), a);
+  markAd(a);
   const key = a.dataset.adapter;
   setText($("#wifiLabel"), (INFO.adapters.find(x => x.key === key) || {}).wifi || "Wi-Fi");
   setText($("#speed h1"), `Speed on ${NAME(key)}`);
@@ -793,13 +785,13 @@ function openPw(n) {
   pw.classList.remove("closing");
   pw.showModal();
   anime.animate(pw, reduce ? { opacity: [0, 1], duration: 150, ease }
-    : { opacity: [0, 1], scale: [0.96, 1], duration: 200, ease });
+    : { opacity: [0, 1], y: [ROW_Y, 0], duration: 200, ease });
 }
 function closePw(then) {
   if (pw.classList.contains("closing")) return;
   pw.classList.add("closing");
   anime.animate(pw, reduce ? { opacity: 0, duration: 150, ease, onComplete: done }
-    : { opacity: 0, scale: 0.96, duration: 150, ease, onComplete: done });
+    : { opacity: 0, y: ROW_Y, duration: 150, ease, onComplete: done });
   function done() { pw.close(); pw.classList.remove("closing"); if (then) then(); }
 }
 const validPassword = p => /^[0-9A-Fa-f]{64}$/.test(p) || (p.length >= 8 && p.length <= 63 && /^[\x20-\x7E]+$/.test(p));
@@ -813,8 +805,9 @@ $("#pwForm").addEventListener("submit", e => {
 });
 
 // ================= Bluetooth =================
-// battery: the % Windows last heard from a connected device (None when it doesn't report one); amber at 20% or less
-const battery = b => b == null ? "" : `<span class="batt${b <= 20 ? " low" : ""}"><svg viewBox="0 0 16 9" aria-hidden="true"><rect x="0.5" y="0.5" width="13" height="8" rx="1.5"/><rect class="lvl" x="2" y="2" width="${(10 * b / 100).toFixed(1)}" height="5" rx="0.5"/><rect class="tip" x="14" y="3" width="1.5" height="3" rx="0.5"/></svg>${b}%</span>`;
+// battery: the % Windows last heard from a connected device (None when it doesn't report one), as four square cells; amber at 20% or less
+const cells = b => [0, 1, 2, 3].map(i => `<rect class="cell${b > i * 25 ? "" : " off"}" x="${(1.55 + i * 2.9).toFixed(2)}" y="2" width="2.2" height="5"/>`).join("");
+const battery = b => b == null ? "" : `<span class="batt${b <= 20 ? " low" : ""}"><svg viewBox="0 0 16 9" aria-hidden="true"><rect x="0.5" y="0.5" width="13" height="8"/>${cells(b)}<rect class="tip" x="14" y="3" width="1.5" height="3"/></svg>${b}%</span>`;
 const stHtml = d => d.connected ? `Connected${battery(d.battery)}` : esc(d.kind);
 // a device paired only with the other radio can't connect here: amber status, Re-pair instead of Connect
 const HERE = { unigen: "the dongle", builtin: "the built-in radio" };
@@ -909,7 +902,7 @@ function renderPower() {
   const on = BT.power !== "off", sw = $("#btPower");
   sw.setAttribute("aria-checked", String(on));
   sw.classList.toggle("on", on);
-  anime.animate($("i", sw), { x: on ? 16 : 0, duration: reduce ? 0 : 180, ease });
+  anime.animate($("i", sw), { x: on ? 19 : 0, duration: reduce ? 0 : 180, ease });
   $("#bt").classList.toggle("off", !on);
   $("#btRunNote").hidden = !on;
   $("#btOnNote").hidden = on;
@@ -1093,6 +1086,7 @@ async function confirmHold(b) {
 // ================= charts (dataviz rules: thin marks, one axis, values lead in tooltips) =================
 // smallest "nice" number >= v, for axis tops
 const nice = v => { const p = 10 ** Math.floor(Math.log10(v)); return [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10].map(m => m * p).find(s => s >= v); };
+const endMark = (x, y, c) => `<rect class="end" x="${x - 4}" y="${y - 4}" width="8" height="8" fill="${c}"/>`;
 const pathOf = pts => pts.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join("");
 
 // shared tooltip; labels go in via textContent (names can come from the air)
@@ -1125,7 +1119,7 @@ function crosshair(svg) {
     if (!g) { g = document.createElementNS("http://www.w3.org/2000/svg", "g"); g.setAttribute("class", "hover"); svg.append(g); }
     const x = m.x(i), rows = m.rows(i), box = svg.getBoundingClientRect();
     g.innerHTML = `<line class="cross" x1="${x}" x2="${x}" y1="${m.top}" y2="${m.bottom}"/>`
-      + rows.filter(r => r.y != null).map(r => `<circle class="end" cx="${x}" cy="${r.y}" r="4" fill="${r.c}"/>`).join("");
+      + rows.filter(r => r.y != null).map(r => endMark(x, r.y, r.c)).join("");
     showTip(cx ?? box.left + x, cy ?? box.top + m.top, rows, m.head(i));
   };
   svg.addEventListener("pointermove", e => { if (svg._m) show(svg._m.index(e.clientX - svg.getBoundingClientRect().left), e.clientX, e.clientY); });
@@ -1167,7 +1161,7 @@ function drawTp(samples, key, { draw, split } = {}) {
   const phases = [pts.slice(0, split), pts.slice(split)].filter(p => p.length > 1);
   s += phases.map(p => `<path class="area" fill="${c}" d="${pathOf(p)}L${p[p.length - 1][0]},${y(0)}L${p[0][0]},${y(0)}Z"/>
       <path class="line" stroke="${c}" d="${pathOf(p)}"/>`).join("");
-  if (pts.length) { const last = pts[pts.length - 1]; s += `<circle class="end" cx="${last[0]}" cy="${last[1]}" r="4" fill="${c}"/>`; }
+  if (pts.length) { const last = pts[pts.length - 1]; s += endMark(last[0], last[1], c); }
   svg.setAttribute("viewBox", `0 0 ${W} ${H}`); svg.style.height = `${H}px`;
   svg.innerHTML = s;
   svg._m = { n: samples.length, x, top: T, bottom: H - B, index: px => Math.round((px - L) / ((W - L - R) / (TP_N - 1))),
@@ -1247,7 +1241,7 @@ function drawSig(extra) {
   const xEnd = L + (SIG_N - 1) * step;
   const ends = keys.map(k => { const a = sig[k] || []; return { k, v: a[a.length - 1] }; }).filter(e => e.v != null).map(e => ({ ...e, yy: y(e.v) }));
   const apart = ends.length < 2 || Math.abs(ends[0].yy - ends[1].yy) >= 14;
-  s += ends.map(e => `<circle class="end" cx="${xEnd}" cy="${e.yy}" r="4" fill="${COLOR(e.k)}"/>`
+  s += ends.map(e => endMark(xEnd, e.yy, COLOR(e.k))
     + (apart ? `<text class="lab" x="${xEnd + 10}" y="${e.yy + 4}">${esc(SHORT(e.k))} ${e.v}%</text>` : "")).join("");
   svg.setAttribute("viewBox", `0 0 ${W} ${H}`); svg.style.height = `${H}px`;
   svg.innerHTML = s;
@@ -1337,7 +1331,7 @@ document.addEventListener("keydown", e => {
 addEventListener("resize", () => {
   if (nearbyShown()) { drawMaps(); highlight(selected); markSel(true); }
   if (!$("#speed").hidden) drawSpeed();
-  slide($(".ad-ind"), activeAdapter(), true);
+  markAd(activeAdapter(), true);
   slide($(".ind", wifiSeg), $("[aria-checked='true']", wifiSeg), true);
   slide($(".ind", btSeg), $("[aria-checked='true']", btSeg), true);
   slide($(".nav-ind"), $("nav button[aria-current]"), true);

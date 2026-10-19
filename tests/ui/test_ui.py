@@ -791,3 +791,117 @@ def test_switch_is_square_with_a_hard_shadow_in_the_adapters_colour(open_page):
     pg.mouse.up()
     pg.wait_for_timeout(900)
     assert abs(float(css("boxShadow").split("px")[0].split()[-1]) - 4) < 0.5  # and springs back
+
+
+# ---- the design system: square, hard shadows only on pressables, one press, five type sizes ----
+SIZES = {"11px", "12px", "14px", "24px", "48px"}
+ROUND = """() => [...document.querySelectorAll('body *')].filter(e => !e.closest('svg') &&
+    ['TopLeft', 'TopRight', 'BottomLeft', 'BottomRight'].some(c => getComputedStyle(e)['border' + c + 'Radius'] !== '0px')).map(e => e.tagName + '.' + e.className)"""
+TEXT_SIZES = """() => [...new Set([...document.querySelectorAll('body *')].filter(e => getComputedStyle(e).display !== 'none' &&
+    [...e.childNodes].some(n => n.nodeType === 3 && n.textContent.trim())).map(e => getComputedStyle(e).fontSize))]"""
+
+
+def shadow(pg, sel):
+    return pg.evaluate(f"getComputedStyle(document.querySelector('{sel}')).boxShadow")
+
+
+def test_nothing_is_rounded_and_text_uses_five_sizes(open_page):
+    pg = open_page("window.MOCK_BOTH_ON = true;")
+    for tab in ("Control+1", "Control+2", "Control+3"):
+        pg.keyboard.press(tab)
+        pg.wait_for_timeout(300)
+        assert pg.evaluate(ROUND) == []  # only the chart curves (inside the SVGs) are curved
+        assert set(pg.evaluate(TEXT_SIZES)) <= SIZES, pg.evaluate(TEXT_SIZES)
+    pg.keyboard.press("Control+1")
+    pg.locator('.tabs button[data-view="saved"]').click()
+    expect(pg.locator("#savedList .row").first).to_be_visible()
+    assert pg.evaluate(ROUND) == [] and set(pg.evaluate(TEXT_SIZES)) <= SIZES
+
+
+def test_every_button_and_segmented_control_has_a_hard_shadow_that_collapses_on_press(open_page):
+    pg = open_page()
+    net(pg, "Maple House").click()  # a network that can be connected: the primary button is enabled
+    hard = re.compile(r"^rgb\(\d+, \d+, \d+\) (\d+)px (\d+)px 0px 0px$")  # a colour, an offset, no blur, no spread
+    for sel in ("#scan", "#connect", "#wifiUse", ".tabs"):
+        m = hard.match(shadow(pg, sel))
+        assert m and m.group(1) == m.group(2) and int(m.group(1)) >= 3, (sel, shadow(pg, sel))
+    assert "4px 4px 0px" in shadow(pg, "#connect") and "rgb(79, 179, 200)" in shadow(pg, "#connect")  # primary: --b5
+    assert "3px 3px 0px" in shadow(pg, "#scan")  # a small button
+    for sel in ("#scan", "#connect"):  # pressing sinks the button onto its shadow
+        box = pg.locator(sel).bounding_box()
+        pg.mouse.move(box["x"] + 8, box["y"] + 8)
+        pg.mouse.down()
+        pg.wait_for_timeout(300)
+        assert "0px 0px 0px" in shadow(pg, sel), sel
+        assert pg.evaluate(f"getComputedStyle(document.querySelector('{sel}')).translate") != "none"  # and moved by its offset
+        pg.mouse.up()
+        pg.wait_for_timeout(900)
+        assert re.match(r"^rgb\(.*\) [34]px [34]px 0px 0px$", shadow(pg, sel)), sel
+    pg.locator('.tabs button[data-view="saved"]').click()  # the tabs are the same control as the adapter switch
+    expect(pg.locator('.tabs button[aria-selected="true"]')).to_have_text(re.compile("Saved"))
+    assert pg.evaluate("document.querySelector('.tabs').classList.contains('seg')")
+
+
+def test_the_selected_adapter_card_wears_its_adapters_colour(open_page):
+    pg = open_page()
+    assert "rgb(144, 133, 233)" in shadow(pg, ".ad-ind")  # --uni
+    wifi_use(pg, "builtin").click()
+    expect(rail(pg, "builtin")).to_have_attribute("aria-pressed", "true")
+    pg.wait_for_function("getComputedStyle(document.querySelector('.ad-ind')).boxShadow.includes('rgb(213, 81, 129)')")  # --bi
+    assert "0px" not in shadow(pg, ".ad-ind").split(")")[1].split()[0]  # a hard offset, not collapsed
+
+
+def test_the_signal_meter_is_four_square_blocks_lit_by_strength(open_page):
+    pg = open_page()
+    rows = pg.locator("#netRows .row")
+    for i in range(rows.count()):
+        assert rows.nth(i).locator(".meter i").count() == 4
+    lit = pg.eval_on_selector_all("#netRows .row", "rs => rs.map(r => r.querySelectorAll('.meter i.lit').length)")
+    assert lit[0] == 4 and lit[-1] == 1 and lit == sorted(lit, reverse=True)  # HOME-5G 96% down to the hidden network at 6%
+    w = pg.evaluate("[...document.querySelectorAll('.meter i')].map(i => i.offsetWidth + 'x' + i.offsetHeight)")
+    assert set(w) == {"10x10"}
+
+
+def test_the_battery_is_square_cells(open_page):
+    pg = bt_page(open_page)
+    beats = paired_row(pg, "Den Beats Pill").locator(".batt svg .cell")
+    assert beats.count() == 4 and pg.eval_on_selector_all("#paired .batt svg .cell:not(.off)", "c => c.length") == 4  # 90%
+    paired_row(pg, "JBL Go 3").locator(".conn").click()
+    expect(paired_row(pg, "JBL Go 3").locator(".batt")).to_have_text("15%")
+    assert paired_row(pg, "JBL Go 3").locator(".batt svg .cell:not(.off)").count() == 1
+    assert pg.evaluate("[...document.querySelectorAll('.batt svg rect')].every(r => !r.getAttribute('rx'))")
+
+
+def test_a_label_swap_has_no_blur(open_page):
+    pg = open_page()
+    seen = pg.evaluate("""() => new Promise(done => {
+        const l = document.querySelector('#scan .label'), seen = new Set();
+        const t = setInterval(() => seen.add(getComputedStyle(l).filter), 10);
+        document.querySelector('#scan').click();
+        setTimeout(() => { clearInterval(t); done([...seen]); }, 700);
+    })""")
+    assert seen == ["none"]
+
+
+def test_searching_shows_the_moving_hatch_strip(open_page):
+    pg = bt_page(open_page, "window.MOCK_SEARCH_HOLD = true;")
+    pg.locator("#btSearch").click()
+    expect(pg.locator("#btProg")).to_be_visible()
+    assert pg.evaluate("getComputedStyle(document.querySelector('#btProg i'), '::after').animationName") == "hatch"
+    assert pg.evaluate("getComputedStyle(document.querySelector('#btProg')).height") == "10px"
+
+
+def test_reduced_motion_presses_without_moving_and_the_strip_stands_still(open_page):
+    pg = open_page("window.MOCK_SEARCH_HOLD = true;", reduced_motion="reduce")
+    pg.keyboard.press("Control+2")
+    expect(pg.locator("#paired .row")).to_have_count(6)
+    pg.locator("#btSearch").click()
+    expect(pg.locator("#btProg")).to_be_visible()
+    assert pg.evaluate("getComputedStyle(document.querySelector('#btProg i'), '::after').animationName") == "none"
+    before = shadow(pg, "#btRefresh")
+    box = pg.locator("#btRefresh").bounding_box()
+    pg.mouse.move(box["x"] + 8, box["y"] + 8)
+    pg.mouse.down()
+    pg.wait_for_timeout(300)
+    assert shadow(pg, "#btRefresh") == before and pg.evaluate("getComputedStyle(document.querySelector('#btRefresh')).translate") in ("none", "0px")
+    pg.mouse.up()

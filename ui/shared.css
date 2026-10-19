@@ -1,4 +1,10 @@
-/* Shared by index.html (main window) and widget.html (tray widget): tokens, base, buttons, messages. */
+/* Shared by index.html (main window) and widget.html (tray widget): tokens, base, buttons, messages, the switch, the progress bar.
+   One brutalist system for the whole app:
+   - square everywhere (border-radius: 0; only chart curves are curved), a 2px outline on containers, 1px rules inside them;
+   - depth means "you can press this": only pressables have a hard offset shadow, and pressing collapses it (shared.js);
+   - accent by meaning: --uni / --bi are the adapters, --ink fill + --b5 shadow is the primary action, --ok / --warn / --err
+     are states, everything else is --ink / --muted / --line;
+   - Bahnschrift for headings, labels, numbers and buttons; Segoe UI for text. Five sizes: --t-xs, --t-sm, --t-md, --t-lg, --t-xl. */
 :root {
   --panel: #16202B;
   --raised: #1F2C3A;
@@ -14,76 +20,107 @@
   --uni: #9085e9;
   --bi: #d55181;
 
-  --edge: 2px;     /* brutalist outline of the switch area */
-  --off: 4px;      /* hard shadow offset */
+  --edge: 2px;     /* outline of every container and pressable */
+  --off: 4px;      /* hard shadow offset (3px on small buttons and in the widget) */
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --display: "Bahnschrift", "Segoe UI", sans-serif;
   --body: "Segoe UI", system-ui, sans-serif;
+  --t-xs: 11px;    /* caps labels, chips, table heads, chart ticks */
+  --t-sm: 12px;    /* buttons, switches, nav, small text */
+  --t-md: 14px;    /* body */
+  --t-lg: 24px;    /* h1, dialog title, the widget's speed numbers */
+  --t-xl: 48px;    /* big readouts */
+  --track: 0.08em; /* tracking of every caps label */
+  /* the diagonal hatch of the progress blocks and the search strip: an SVG tile (stripes, not a gradient) */
+  --hatch: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8'%3E%3Cpath d='M-2 2 2 -2M0 8 8 0M6 10 10 6' stroke='%2316202B' stroke-opacity='.5' stroke-width='3'/%3E%3C/svg%3E");
 }
 
-* { box-sizing: border-box; }
+* { box-sizing: border-box; border-radius: 0; }
 button { font: inherit; color: inherit; }
 :focus-visible { outline: 2px solid var(--b5); outline-offset: 2px; }
 .num { font-family: var(--display); font-variant-numeric: tabular-nums; }
 
+/* One press for everything you can press. shared.js animates --press from 0 to 1 on pointer down and back on release:
+   the element moves by its offset and its hard shadow collapses into the place it left, so it sinks onto its shadow.
+   --sh is the shadow's colour, --off its size. The rail's and the menu's highlights (.ad-ind, .nav-ind) carry the press for their items. */
+.btn, .seg, .switch, .icon-btn, .link, .ad-ind, .nav-ind { --press: 0;
+  translate: calc(var(--off) * var(--press)) calc(var(--off) * var(--press)); }
+.btn, .seg, .switch, .icon-btn, .ad-ind, .nav-ind {
+  box-shadow: calc(var(--off) * (1 - var(--press))) calc(var(--off) * (1 - var(--press))) 0 var(--sh, var(--line)); }
+.link { --off: 1px; }
+
 .btn {
   position: relative;
   overflow: hidden;
-  border: 1px solid var(--line);
+  border: var(--edge) solid var(--muted);
   background: var(--raised);
-  border-radius: 6px;
-  padding: 8px 16px;
+  color: var(--ink);
+  padding: 7px 14px;
   cursor: pointer;
+  font: 700 var(--t-sm)/1.2 var(--display);
+  letter-spacing: var(--track);
+  text-transform: uppercase;
 }
-.btn.primary { background: var(--ink); color: var(--panel); border-color: var(--ink); font-weight: 600; }
+.btn.primary { background: var(--ink); color: var(--panel); border-color: var(--ink); --sh: var(--b5); }
 .btn:disabled { opacity: 0.5; cursor: default; }
-.btn.small { padding: 5px 11px; font-size: 13px; }
+.btn.small { --off: 3px; padding: 4px 10px; font-size: var(--t-xs); }
 .btn .label, .link .label { display: inline-block; }
+
+.link { background: none; border: 0; padding: 2px 0; color: var(--b5); cursor: pointer;
+  font: 700 var(--t-xs)/1.2 var(--display); letter-spacing: var(--track); text-transform: uppercase; }
+
+.icon-btn { --off: 3px; width: 28px; height: 28px; display: grid; place-items: center; background: var(--raised);
+  border: var(--edge) solid var(--muted); color: var(--muted); cursor: pointer; padding: 0; }
 
 .msg { color: var(--muted); }
 .msg.err { color: var(--err); }
 
 @media (hover: hover) and (pointer: fine) {
-  .btn:not(:disabled):hover { border-color: var(--muted); }
+  .btn:not(:disabled):hover { border-color: var(--ink); }
+  .btn.primary:not(:disabled):hover { border-color: var(--b5); }
+  .icon-btn:hover { color: var(--ink); border-color: var(--ink); }
+  .link:hover { text-decoration: underline; text-underline-offset: 3px; }
 }
 
 /* on/off switch (Bluetooth power): square like the adapter switches */
-.switch { width: 38px; height: 22px; padding: 0; border-radius: 0; border: var(--edge) solid var(--line);
+.switch { --off: 3px; width: 40px; height: 24px; padding: 0; border: var(--edge) solid var(--muted);
   background: var(--raised); position: relative; cursor: pointer; flex: none; }
-.switch i { position: absolute; top: 3px; left: 3px; width: 12px; height: 12px; background: var(--muted); }
-.switch.on { background: var(--uni); border-color: var(--uni); }
+.switch i { position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; background: var(--muted); }
+.switch.on { background: var(--uni); border-color: var(--uni); --sh: var(--line); }
 .switch.on i { background: var(--panel); }
 .switch:disabled { opacity: .5; cursor: default; }
 .switch:focus-visible { outline: 2px solid var(--uni); outline-offset: 2px; }
 
-/* the dongle's status line (top of the main window's rail, under the widget's header): a dot and a sentence */
-.dongle { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 13px; color: var(--muted); }
+/* the dongle's status line (top of the main window's rail, under the widget's header): a square pip and a sentence */
+.dongle { display: flex; align-items: center; gap: 8px; margin: 0; font: 700 var(--t-xs)/1.35 var(--display); letter-spacing: var(--track);
+  text-transform: uppercase; color: var(--muted); }
 .dongle[hidden] { display: none; }
-.dongle i { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.dongle i { flex: none; width: 8px; height: 8px; background: var(--muted); }
 .dongle[data-state="connected"] i { background: var(--ok); }
 .dongle[data-state="not_responding"] { color: var(--warn); }
 .dongle[data-state="not_responding"] i { background: var(--warn); }
 
-/* The Wi-Fi and Bluetooth switches (both windows): a square block with a 2px outline and a hard shadow in the chosen
-   adapter's colour (--seg-c, set by markSeg). One solid indicator slides to the chosen item (positioned by slide() in JS).
-   Pressing sinks it onto its shadow: shared.js animates --press (0..1) and the translate together. */
-.seg { --press: 0; --seg-c: var(--line); position: relative; display: inline-flex; background: var(--panel); border: var(--edge) solid var(--line);
-  border-radius: 0; padding: 0; vertical-align: middle;
-  box-shadow: calc(var(--off) * (1 - var(--press))) calc(var(--off) * (1 - var(--press))) 0 var(--seg-c); }
-.seg button { position: relative; z-index: 1; background: none; border: 0; border-radius: 0; cursor: pointer; padding: 6px 14px; color: var(--muted);
-  font: 700 12px/1.2 var(--display); letter-spacing: .06em; text-transform: uppercase; }
-.seg button[aria-checked="true"] { color: var(--panel); }  /* dark on the solid indicator */
+/* The one segmented control (the Wi-Fi and Bluetooth adapter switches in both windows, and the Nearby | Saved tabs): a square block
+   with a 2px outline and a hard shadow (--sh, defaults to the chosen adapter's colour, --seg-c, set by markSeg). One solid
+   indicator slides to the chosen item (positioned by slide() in JS). Pressing sinks it onto its shadow (see the press above). */
+.seg { --seg-c: var(--line); --sh: var(--seg-c); position: relative; display: inline-flex; background: var(--panel); border: var(--edge) solid var(--muted);
+  padding: 0; vertical-align: middle; }
+.seg button { position: relative; z-index: 1; background: none; border: 0; cursor: pointer; padding: 6px 14px; color: var(--muted);
+  font: 700 var(--t-sm)/1.2 var(--display); letter-spacing: var(--track); text-transform: uppercase; }
+.seg button[aria-checked="true"], .seg button[aria-selected="true"] { color: var(--panel); }  /* dark on the solid indicator */
 .seg button:disabled { cursor: default; }
 .seg button:disabled:not([aria-checked="true"]) { opacity: .45; }  /* the Dongle button while it is unplugged, and the other one during a switch */
-.seg .ind { position: absolute; top: 0; bottom: 0; left: 0; right: auto; background: var(--seg-c); border-radius: 0; pointer-events: none; }
+.seg .ind { position: absolute; top: 0; bottom: 0; left: 0; right: auto; background: var(--seg-c); pointer-events: none; }
 .seg button:focus-visible { outline-offset: -4px; }
+.seg.tabs { --seg-c: var(--ink); --sh: var(--line); }
+.seg .count { font-weight: 400; margin-left: 4px; opacity: .7; }
 @media (hover: hover) and (pointer: fine) {
-  .seg button:not(:disabled):not([aria-checked="true"]):hover { color: var(--ink); }
+  .seg button:not(:disabled):not([aria-checked="true"]):not([aria-selected="true"]):hover { color: var(--ink); }
 }
 
 /* "ADAPTER [switch] ■ UNIGEN DONGLE · ON": the row label and the one-line state with a square pip */
-.use-row .lbl { font: 700 11px/1 var(--display); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
-.state-line { display: inline-flex; align-items: center; gap: 8px; font: 700 11px/1 var(--display); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.use-row .lbl { font: 700 var(--t-xs)/1 var(--display); letter-spacing: var(--track); text-transform: uppercase; color: var(--muted); }
+.state-line { display: inline-flex; align-items: center; gap: 8px; font: 700 var(--t-xs)/1 var(--display); letter-spacing: var(--track); text-transform: uppercase; color: var(--muted); }
 .state-line[hidden] { display: none; }
 .state-line .pip { width: 8px; height: 8px; flex: none; background: var(--pip, var(--muted)); }
 
@@ -93,31 +130,29 @@ button { font: inherit; color: inherit; }
 .steps[hidden] { display: none; }
 .steps-body[hidden], .steps-fold[hidden], .steps-fail[hidden] { display: none; }
 .steps-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 7px; }
-.steps-title, .steps-count, .steps-label, .steps-fold { font: 700 11px/1.2 var(--display); letter-spacing: .08em; text-transform: uppercase; }
+.steps-title, .steps-count, .steps-label, .steps-fold { font: 700 var(--t-xs)/1.2 var(--display); letter-spacing: var(--track); text-transform: uppercase; }
 .steps-count { font-variant-numeric: tabular-nums; color: var(--muted); white-space: nowrap; text-transform: none; }
 .blocks { display: flex; gap: 4px; }
 .blocks:empty { display: none; }
 .blk { position: relative; flex: 1; height: 10px; border: var(--edge) solid var(--line); background: transparent; overflow: hidden; }
 .blk b { position: absolute; inset: 0; background: var(--accent); transform: scaleX(0); transform-origin: left; }
 .blk[data-s="current"] { border-color: var(--accent); }
-/* a diagonal hatch from an SVG tile (stripes, not a gradient) drifting along the fill */
-.blk[data-s="current"] b::after { content: ""; position: absolute; inset: 0; background-size: 8px 8px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8'%3E%3Cpath d='M-2 2 2 -2M0 8 8 0M6 10 10 6' stroke='%2316202B' stroke-opacity='.5' stroke-width='3'/%3E%3C/svg%3E");
+/* the hatch drifts along the fill */
+.blk[data-s="current"] b::after { content: ""; position: absolute; inset: 0; background-size: 8px 8px; background-image: var(--hatch);
   animation: hatch 600ms linear infinite; }
 .blk[data-s="done"] { border-color: var(--accent); }
 .blk[data-s="skipped"] { border-color: var(--line); }
 .blk[data-s="skipped"] b { opacity: .4; }
 .blk[data-s="failed"] { border-color: var(--err); }
 .blk[data-s="failed"] b { background: var(--err); }
-.blk[data-s="failed"] b::after { content: ""; position: absolute; inset: 0; background-size: 8px 8px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8'%3E%3Cpath d='M-2 2 2 -2M0 8 8 0M6 10 10 6' stroke='%2316202B' stroke-opacity='.5' stroke-width='3'/%3E%3C/svg%3E"); }
+.blk[data-s="failed"] b::after { content: ""; position: absolute; inset: 0; background-size: 8px 8px; background-image: var(--hatch); }
 .steps.ok { --accent: var(--ok); }
 .steps-label { margin-top: 7px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .steps[data-bar="fail"] .steps-label, .steps[data-bar="fail"] .steps-count { color: var(--err); }
 .steps[data-bar="fail"] .steps-label { white-space: normal; }  /* say which step failed in full */
 .steps-fail { margin-top: 10px; }
 .steps-fold { display: flex; align-items: center; gap: 8px; color: var(--ok); }
-.steps-fold .tick { font-size: 14px; line-height: 1; order: 2; }
+.steps-fold .tick { font-size: var(--t-md); line-height: 1; order: 2; }
 /* while the bar tells the story the page's own message is only for screen readers; it shows when there is no bar or the move failed */
 .steps[data-bar="run"] ~ .msg, .steps[data-bar="done"] ~ .msg { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 /* widget: 6px blocks, the count and the step name on one line under the switch */
@@ -131,7 +166,14 @@ button { font: inherit; color: inherit; }
 .steps.compact .steps-count { grid-area: count; }
 .steps.compact .steps-label { grid-area: label; margin: 0; min-width: 0; }
 .steps.compact .steps-fail { grid-column: 1 / -1; margin-top: 4px; }
+
+/* the same hatch as an unfinished block, as a moving strip: the Bluetooth search and the speed test (time unknown) */
+.progress { position: relative; width: 140px; height: 10px; border: var(--edge) solid var(--b5); overflow: hidden; flex: none; }
+.progress[hidden] { display: none; }
+.progress i { position: absolute; inset: 0; background: var(--b5); }
+.progress i::after { content: ""; position: absolute; inset: 0; background-size: 8px 8px; background-image: var(--hatch);
+  animation: hatch 600ms linear infinite; }
 @keyframes hatch { to { background-position: 8px 0; } }
 @media (prefers-reduced-motion: reduce) {
-  .blk[data-s="current"] b::after { animation: none; }
+  .blk[data-s="current"] b::after, .progress i::after { animation: none; }
 }
