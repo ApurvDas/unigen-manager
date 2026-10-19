@@ -345,6 +345,15 @@ def test_service_changed():
     assert bt._service_changed(0) is True and bt._service_changed(1060) is False
     with pytest.raises(bt.BtError, match="refused"):
         bt._service_changed(87)
+    with pytest.raises(bt.NotPairedHere):  # 1168 = ELEMENT_NOT_FOUND: the device isn't on this radio -> re-pair
+        bt._service_changed(1168)
+
+
+def test_ks_oneshot_with_no_filters_says_not_paired_here(monkeypatch):
+    """No audio filters on this radio means the device is paired on the other one: re-pair, not a generic failure."""
+    monkeypatch.setattr(bt, "_ks_filters", lambda a: [])
+    with pytest.raises(bt.NotPairedHere, match="no Bluetooth audio driver on this radio"):
+        bt._ks_oneshot("020000000013", True)
 
 
 def test_switch_to_missing_radio(monkeypatch):

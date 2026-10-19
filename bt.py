@@ -300,6 +300,8 @@ def _service_changed(rc):
     """True if the service state was set, False if the device lacks the service (1060, e.g. no hands-free)."""
     if rc == 1060:
         return False
+    if rc == 1168:  # ELEMENT_NOT_FOUND: this radio doesn't know the device (paired on the other one) -> re-pair, not Settings
+        raise NotPairedHere("Windows doesn't know that device on this radio.")
     if rc:
         raise BtError(f"Windows refused (error {rc}).")
     return True
@@ -420,8 +422,8 @@ def _ks_filters(address_hex):
 def _ks_oneshot(address_hex, connect):
     """KSPROPERTY_ONESHOT_RECONNECT (0) / _DISCONNECT (1) on every audio filter of the device."""
     paths = _ks_filters(address_hex)
-    if not paths:
-        raise BtError("That device has no Bluetooth audio driver on this radio.")
+    if not paths:  # no audio filters here = the device is paired on the other radio, not this one -> re-pair, not Settings
+        raise NotPairedHere("That device has no Bluetooth audio driver on this radio.")
     k32 = ctypes.WinDLL("kernel32", use_last_error=True)
     k32.CreateFileW.restype = wintypes.HANDLE
     k32.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD,
