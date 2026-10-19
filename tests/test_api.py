@@ -2,7 +2,7 @@ import json, pathlib, re, threading, time, types
 import pytest
 
 from tests.conftest import fixture, ROOT
-import api, bt, speed, traffic, version, winrun, wifi
+import api, bt, driver, speed, traffic, version, winrun, wifi
 import hw as hwm  # the `hw` fixture below shadows the module name inside tests
 
 
@@ -26,6 +26,7 @@ def hw(monkeypatch, tmp_path):
         {"key": "unigen", "id": "U", "name": "Generic Bluetooth Adapter", "ok": True, "disabled": False, "version": "5.4"},
         {"key": "builtin", "id": "M", "name": "MediaTek Bluetooth Adapter", "ok": False, "disabled": True, "version": "5.2"}])
     monkeypatch.setattr(bt, "power", lambda: "on")
+    monkeypatch.setattr(driver, "plan", lambda: {"state": "absent", "loader": False})  # never reads this PC's real dongle
 
 
 def test_envelopes(hw, monkeypatch, caplog):

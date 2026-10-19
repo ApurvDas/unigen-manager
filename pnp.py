@@ -235,6 +235,34 @@ def battery_levels():
     return out
 
 
+def present_nodes(enumerator, prefixes):
+    """Present devices of one enumerator ("USB") whose instance id starts with one of `prefixes`, whatever their class:
+    a device with no driver has none and is missing from list_devices. [{"id", "started": bool, "problem": int}], problem 0 = none
+    (28 = CM_PROB_FAILED_INSTALL: no driver installed)."""
+    sa, cm = _libs()
+    h = sa.SetupDiGetClassDevsW(None, enumerator, None, _DIGCF_PRESENT | _DIGCF_ALLCLASSES)
+    if not h or h == ctypes.c_void_p(-1).value:
+        return []
+    out, wanted = [], tuple(p.upper() for p in prefixes)
+    try:
+        i = 0
+        while True:
+            dev = _DEVINFO(cbSize=ctypes.sizeof(_DEVINFO))
+            if not sa.SetupDiEnumDeviceInfo(h, i, ctypes.byref(dev)):
+                break
+            i += 1
+            buf = ctypes.create_unicode_buffer(512)
+            if not sa.SetupDiGetDeviceInstanceIdW(h, ctypes.byref(dev), buf, 512, None) or not buf.value.upper().startswith(wanted):
+                continue
+            status, problem = wintypes.ULONG(), wintypes.ULONG()
+            cm.CM_Get_DevNode_Status(ctypes.byref(status), ctypes.byref(problem), dev.devinst, 0)
+            bad = bool(status.value & _DN_HAS_PROBLEM)
+            out.append({"id": buf.value, "started": not bad and bool(status.value & _DN_STARTED), "problem": problem.value if bad else 0})
+    finally:
+        sa.SetupDiDestroyDeviceInfoList(h)
+    return out
+
+
 if __name__ == "__main__":  # compare with: Get-PnpDevice -PresentOnly -Class Net,Bluetooth
     for r in list_devices():
         print(r)

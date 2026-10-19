@@ -161,3 +161,11 @@ def test_sampler_measures_a_real_rate(tmp_path):
     s.tick()
     using = [k for k, on in s.radios().items() if on]
     assert using and all(s.rate(k) is not None and s.rate(k)[0] >= 0 for k in using)
+
+
+def test_driver_plan_sees_the_dongle_with_its_wifi_driver():
+    """Read-only: SetupAPI lists the dongle's Wi-Fi function, and (this PC has the driver) plan() says installed. Installs nothing."""
+    import driver
+    found = driver.nodes()
+    assert any(n["id"].upper().startswith(driver.WIFI_ID) for n in found)
+    assert driver.plan() == {"state": "installed", "loader": False}

@@ -3,14 +3,14 @@ pywebview runs each call on its own thread, so slow work never blocks the window
 import functools, json, logging, os, threading, time, traceback
 from pathlib import Path
 
-import bt, hw, speed, traffic, tray, wifi, winrun
+import bt, driver, hw, speed, traffic, tray, wifi, winrun
 from version import VERSION
 
 DATA_DIR = Path(os.environ.get("LOCALAPPDATA", ".")) / "UnigenManager"
 log = logging.getLogger("unigen")
 PAIR_WAIT = 60  # seconds a pairing prompt waits for the user
 READY_WAIT = 8.0  # seconds Connect waits for Windows' Bluetooth radio to appear after a switch
-_KNOWN = (wifi.WifiError, wifi.ParseError, bt.BtError, hw.HwError, speed.SpeedError, winrun.CmdError)
+_KNOWN = (wifi.WifiError, wifi.ParseError, bt.BtError, hw.HwError, speed.SpeedError, winrun.CmdError, driver.DriverError)
 _SEC = {"WPA2-Personal": "WPA2", "WPA3-Personal": "WPA3", "Open": "Open", "WPA-Personal": "WPA", "WPA2-Enterprise": "WPA2-Ent"}
 
 
@@ -65,6 +65,7 @@ class Api:
         self._pair_evt, self._pair_answer = threading.Event(), (False, None)
         self._main_visible = True  # app.py sets False for a --tray start and on close
         self._drivers = None  # (interface names, wifi.drivers()) cached by app_info
+        self._driver_cancel = threading.Event()  # set by cancel_driver, for the install running
 
     # ---- helpers (underscore: pywebview does not expose these) ----
     def _ifaces(self):
@@ -150,6 +151,11 @@ class Api:
             dongle = hw.dongle_state(devs)
         except _KNOWN:  # without the device list nothing can be called off
             devs = {}
+        if dongle == "unplugged":  # plugged in but Windows has no driver for it: it isn't in the Wi-Fi/Bluetooth device list
+            try:
+                dongle = "no_driver" if driver.plan()["state"] == "missing" else dongle
+            except OSError:
+                pass
         order = ["unigen", "builtin"]
         keys = sorted({*devs, *ifs}, key=lambda k: order.index(k) if k in order else len(order))
         off = {k: bool(devs.get(k, {}).get("wifi") and devs[k]["wifi"]["disabled"]) for k in keys}
@@ -412,9 +418,9 @@ class Api:
         self._widget_h = int(max(200, min(900, round(height))))
         self._place_widget(self._widget_h)
 
-    def _need_admin(self):
+    def _need_admin(self, what="Switching adapters"):
         if not self._admin:
-            raise hw.HwError("Switching adapters needs administrator rights. Restart the app and choose Yes.")
+            raise hw.HwError(f"{what} needs administrator rights. Restart the app and choose Yes.")
 
     @_envelope
     def switch_wifi(self, key):
@@ -443,6 +449,36 @@ class Api:
                 m.end(str(e), False)
             raise
         return {"using": key}
+
+    # ---- dongle driver ----
+    @_envelope
+    def driver_status(self):
+        """{"state": "installed" | "missing" | "absent", "loader": bool, "can_install": bool}: what the Wi-Fi page offers."""
+        return {**driver.plan(), "can_install": self._admin}
+
+    @_envelope
+    def install_driver(self):
+        """Download, check and install the dongle's Wi-Fi driver, on the user's click. Every step is pushed to both windows (kind
+        "driver"); the call returns when it is over. The app is already elevated: there is no second prompt."""
+        self._need_admin("Installing the driver")
+        m = hw.Mover(self._push_step, "driver", "Driver installed. The dongle's Wi-Fi is ready.")
+        self._driver_cancel = cancel = threading.Event()
+        def progress(text, label):  # the same step again with its running figures: not a new step, so not the Mover's
+            self._push_step("driver", text, step=1, of=driver.STEPS, label=label)
+        try:
+            driver.install(m.step, progress, cancel)
+        except driver.DriverError as e:
+            if not isinstance(e, driver.Busy):  # another install is running: its bar must stay
+                m.end(str(e), False)
+            raise
+        m.end(m.text, True)
+        self._drivers = self._base = None  # the Wi-Fi interface is new: netsh's driver list and the tooltip are stale
+        return driver.plan()
+
+    @_envelope
+    def cancel_driver(self):
+        """Stops a download or check in progress; once Windows is installing, it runs to its end."""
+        self._driver_cancel.set()
 
     # ---- speed ----
     @_envelope

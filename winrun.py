@@ -11,7 +11,7 @@ class CmdError(Exception):
     """A command failed; str(e) is safe to show the user."""
 
 
-def run(args, *, timeout=30, encoding="oem", env=None):
+def run(args, *, timeout=30, encoding="oem", env=None, ok_codes=(0,)):
     if isinstance(args, str):
         raise TypeError("run() takes an argument list, not a string")
     try:
@@ -21,7 +21,7 @@ def run(args, *, timeout=30, encoding="oem", env=None):
     except FileNotFoundError:
         raise CmdError(f"{args[0]} was not found on this PC.") from None
     out = p.stdout.decode(encoding, errors="replace")
-    if p.returncode != 0:
+    if p.returncode not in ok_codes:
         err = (p.stderr.decode(encoding, errors="replace") or out).strip()
         raise CmdError(err.splitlines()[-1].strip() if err else f"{args[0]} failed (exit {p.returncode}).")
     return out

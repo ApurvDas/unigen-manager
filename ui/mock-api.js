@@ -8,6 +8,8 @@
 // MOCK_WIFI_FAIL = "message" (the Wi-Fi switch fails), both at step MOCK_FAIL_STEP (default 2); MOCK_HOLD_STEP = n (a move waits
 // after announcing step n until mockApi._resume(), to look at a step or test it without timing).
 // Switches play the real step sequences of hw.py (5 Wi-Fi steps, 4 Bluetooth ones), each step 300-800 ms unless MOCK_FAST.
+// MOCK_DRIVER = "missing" (the dongle is plugged in but has no Wi-Fi driver: app_info says "no_driver" and install_driver plays the five steps
+// of driver.py, after which the dongle works; cancel_driver stops the download); MOCK_DRIVER_FAIL = "message" fails the install at step MOCK_FAIL_STEP (default 2);
 // window.mockApi._setUsing(key, kind) changes the adapter Wi-Fi ("wifi") or Bluetooth ("bt") uses, both without a kind;
 // mockApi._setDongle(state) plugs the dongle in ("connected"), out ("unplugged") or hangs it ("not_responding");
 // mockApi._setConnected(id, on) connects a paired device behind the app's back (as Windows Settings would);
@@ -87,8 +89,9 @@ window.mockApi = (() => {
   const RESULTS = {};
   for (const k of ["unigen", "builtin"]) RESULTS[k] = result(Array.from({ length: 40 }, (_, i) => sample(i, ...BASE[k])), k === "unigen" ? 433 : 866, "2026-10-12 23:00");
 
-  const dongle = () => window.MOCK_UNPLUG === "unigen" ? "unplugged" : window.MOCK_DONGLE || "connected";
-  const plugged = () => ADAPTERS.filter(a => a.key !== window.MOCK_UNPLUG && !(a.key === "unigen" && dongle() === "unplugged"));
+  let DRIVER = window.MOCK_DRIVER || "installed", cancelled = false;  // the dongle's Wi-Fi driver; "missing" until install_driver has played
+  const dongle = () => window.MOCK_UNPLUG === "unigen" ? "unplugged" : DRIVER === "missing" ? "no_driver" : window.MOCK_DONGLE || "connected";
+  const plugged = () => ADAPTERS.filter(a => a.key !== window.MOCK_UNPLUG && !(a.key === "unigen" && ["unplugged", "no_driver"].includes(dongle())));
   const pick = key => (plugged().find(a => a.key === key) || plugged()[0]).key; // unplugging the dongle falls back, like the watchdog
   const using = () => pick(WIFI), radio = () => pick(RADIO);
   const off = a => !window.MOCK_BOTH_ON && a.key !== using();
@@ -212,7 +215,7 @@ window.mockApi = (() => {
   });
   def("speed_results", 0, () => JSON.parse(JSON.stringify(RESULTS)));
   // tray widget
-  const need = () => { if (window.MOCK_ADMIN === false) throw new Error("Switching adapters needs administrator rights. Restart the app and choose Yes."); };
+  const need = (what = "Switching adapters") => { if (window.MOCK_ADMIN === false) throw new Error(`${what} needs administrator rights. Restart the app and choose Yes.`); };
   // like api.Mover: each step carries step/of/label, and a done step names the step the move stopped at
   const say = (kind, text, done = false, error = false, step = null, of = null, label = null) =>
     window.onSwitchStep && window.onSwitchStep({ kind, text, done, error, step, of, label });
@@ -274,6 +277,36 @@ window.mockApi = (() => {
     })();
     return { using: key };
   });
+  // dongle driver: the five steps of driver.install; the download reports its running figures as the same step again
+  def("driver_status", 0, () => ({ state: window.MOCK_UNPLUG === "unigen" || window.MOCK_DONGLE === "unplugged" ? "absent" : DRIVER, loader: false,
+    can_install: window.MOCK_ADMIN !== false }));
+  def("install_driver", 0, async () => {
+    need("Installing the driver");
+    if (DRIVER !== "missing") throw new Error("The dongle already has its Wi-Fi driver.");
+    busy();
+    const of = 5, SLICE_MS = 250, STEP_MS = 600, INSTALL_MS = 1500, SLICES = 6, MB = 3.3;  // the download is MB in SLICES slices
+    const LABELS = ["Downloading", "Verifying", "Unpacking", "Installing", "Checking"], TEXT = ["Downloading the driver", "Checking the download", "Unpacking the driver", "Installing the driver", "Starting the dongle's Wi-Fi"];
+    const fail = (n, text) => { moving = null; say("driver", text, true, true, n, of, LABELS[n - 1]); throw new Error(text); };
+    moving = "driver"; cancelled = false;
+    say("driver", `${TEXT[0]}…`, false, false, 1, of, LABELS[0]);
+    await hold(1);
+    for (let i = 1; i <= SLICES; i++) {
+      await wait(SLICE_MS);
+      if (cancelled) fail(1, "Cancelled. Nothing was installed.");
+      say("driver", `${TEXT[0]}… ${(i * MB / SLICES).toFixed(1)} of ${MB} MB`, false, false, 1, of, `${LABELS[0]} ${(i * MB / SLICES).toFixed(1)} of ${MB} MB`);
+    }
+    if (window.MOCK_DRIVER_FAIL && failAt() <= 1) fail(1, window.MOCK_DRIVER_FAIL);
+    for (let n = 2; n <= of; n++) {
+      say("driver", `${TEXT[n - 1]}…`, false, false, n, of, LABELS[n - 1]);
+      await hold(n);
+      await wait(n === 4 ? INSTALL_MS : STEP_MS);
+      if (window.MOCK_DRIVER_FAIL && n >= failAt()) fail(n, window.MOCK_DRIVER_FAIL);
+    }
+    DRIVER = "installed"; moving = null;
+    say("driver", "Driver installed. The dongle's Wi-Fi is ready.", true, false, of, of, LABELS[of - 1]);
+    return { state: "installed", loader: false };
+  });
+  def("cancel_driver", 0, () => { cancelled = true; });
   // traffic: a synthetic sampler, one reading per wall-clock second. The adapter in use pulls bursty 1-8 MB/s down and a few hundred
   // KB/s up; the other one idles. Same shapes as traffic.Sampler: 60 readings of [down, up], today's totals, a tick counter.
   let UNIT = "bytes", fixed = null;
