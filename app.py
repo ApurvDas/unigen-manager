@@ -2,7 +2,7 @@
 import ctypes, logging, logging.handlers, platform, subprocess, sys, threading
 from pathlib import Path
 
-import hw, tray
+import hw, traffic, tray
 from api import Api, DATA_DIR
 from version import VERSION
 
@@ -79,7 +79,8 @@ def main(argv=None):
         instance = tray.claim_instance()  # declined: carry on without admin
     setup_logging(argv, admin)
     import webview
-    api = Api(admin=admin)
+    sampler = traffic.Sampler()
+    api = Api(admin=admin, sampler=sampler)
     main_win = webview.create_window("Unigen Manager", url=str(UI), js_api=api, width=1180, height=780,
                                      min_size=(940, 620), background_color="#16202B", hidden="--tray" in argv)
     widget = webview.create_window("Unigen Manager widget", url=str(WIDGET), js_api=api, width=tray.WIDGET_W, height=480,
@@ -108,6 +109,7 @@ def main(argv=None):
 
     def quit_app():
         stop.set()
+        sampler.stop()  # writes today's totals
         if icon:
             icon.stop()
         widget.destroy()
@@ -129,7 +131,11 @@ def main(argv=None):
                     return
         threading.Thread(target=follow, daemon=True).start()
 
-    # a kept WebView2 profile starts faster than a fresh temp one each launch
-    webview.start(after_start, debug="--debug" in argv, private_mode=False, storage_path=str(DATA_DIR / "webview"))
+    sampler.start()
+    try:
+        # a kept WebView2 profile starts faster than a fresh temp one each launch
+        webview.start(after_start, debug="--debug" in argv, private_mode=False, storage_path=str(DATA_DIR / "webview"))
+    finally:
+        sampler.stop()  # also when the windows end some other way than Quit
     tray.release(instance)
     return 0

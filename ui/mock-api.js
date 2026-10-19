@@ -3,7 +3,7 @@
 // Test hooks (set before the page loads): MOCK_FAST (no delays), MOCK_FAIL = { method: "message" },
 // MOCK_UNPLUG = "unigen" | "builtin", MOCK_DONGLE = "unplugged" | "not_responding" (the dongle's status; "unplugged" removes it like MOCK_UNPLUG = "unigen"), MOCK_ADMIN = false, MOCK_HOSTILE (adds a network, saved profile and paired device named like an HTML tag),
 // MOCK_SEARCH_HOLD (the Bluetooth search never finishes), MOCK_PAIR_TWIN (pairing races a paired-list refresh), MOCK_BT_OFF (Bluetooth starts off),
-// MOCK_BOTH_ON (neither adapter is switched off, like before the first switch), MOCK_OTHER_RADIO (two paired devices are paired
+// MOCK_BOTH_ON (neither adapter is switched off, like before the first switch), MOCK_TRAFFIC = "none" (no Wi-Fi adapter is on) | "measuring" (the first second: no rate yet), MOCK_OTHER_RADIO (two paired devices are paired
 // only with the other radio: Re-pair instead of Connect), MOCK_BT_FAIL = "message" (the background Bluetooth move fails) and
 // MOCK_WIFI_FAIL = "message" (the Wi-Fi switch fails), both at step MOCK_FAIL_STEP (default 2); MOCK_HOLD_STEP = n (a move waits
 // after announcing step n until mockApi._resume(), to look at a step or test it without timing).
@@ -11,7 +11,8 @@
 // window.mockApi._setUsing(key, kind) changes the adapter Wi-Fi ("wifi") or Bluetooth ("bt") uses, both without a kind;
 // mockApi._setDongle(state) plugs the dongle in ("connected"), out ("unplugged") or hangs it ("not_responding");
 // mockApi._setConnected(id, on) connects a paired device behind the app's back (as Windows Settings would);
-// mockApi._setHere(id, on) moves a paired device to / from the other radio behind the app's back.
+// mockApi._setHere(id, on) moves a paired device to / from the other radio behind the app's back;
+// mockApi._setRate(down, up) holds the adapter in use at fixed bytes per second (history included), instead of the bursty synthetic traffic.
 // Mock nearby devices carry ceremony null | "confirm" | "display" | "provide"; the PIN shown is 482913 and the right provide PIN is 0000.
 window.mockApi = (() => {
   const wait = ms => new Promise(r => setTimeout(r, window.MOCK_FAST ? 0 : ms));
@@ -273,6 +274,39 @@ window.mockApi = (() => {
     })();
     return { using: key };
   });
+  // traffic: a synthetic sampler, one reading per wall-clock second. The adapter in use pulls bursty 1-8 MB/s down and a few hundred
+  // KB/s up; the other one idles. Same shapes as traffic.Sampler: 60 readings of [down, up], today's totals, a tick counter.
+  let UNIT = "bytes", fixed = null;
+  const TRAFFIC = { sec: null, hist: { unigen: [], builtin: [] }, today: { unigen: { down: 3.84e9, up: 2.1e8 }, builtin: { down: 2.4e8, up: 1.1e7 } } };
+  const synth = (busy, t) => busy
+    ? [Math.max(3e5, 4.2e6 + 2.6e6 * Math.sin(t / 7) + 1.4e6 * Math.sin(t / 2.3 + 1) + 0.6e6 * Math.sin(t * 1.7)), Math.max(2e4, 3e5 + 1.6e5 * Math.sin(t / 5 + 2) + 0.7e5 * Math.sin(t * 1.3))]
+    : [1.5e4 * (1.2 + Math.sin(t / 3)), 4e3 * (1.2 + Math.sin(t / 4))];
+  function trafficTo(now) {
+    const sec = Math.floor(now / 1000), busyKey = using();
+    for (let t = TRAFFIC.sec === null ? sec - 59 : TRAFFIC.sec + 1; t <= sec; t++) {
+      for (const k of Object.keys(TRAFFIC.hist)) {
+        const [d, u] = fixed && k === busyKey ? fixed : synth(k === busyKey, t), h = TRAFFIC.hist[k];
+        h.push([Math.round(d), Math.round(u)]);
+        if (h.length > 60) h.shift();
+        if (TRAFFIC.sec !== null) { TRAFFIC.today[k].down += Math.round(d); TRAFFIC.today[k].up += Math.round(u); }
+      }
+    }
+    TRAFFIC.sec = sec;
+    return sec;
+  }
+  def("traffic", 0, () => {
+    const sec = trafficTo(Date.now()), none = window.MOCK_TRAFFIC === "none", first = window.MOCK_TRAFFIC === "measuring";
+    return { using: none ? null : using(), unit: UNIT, tick: sec % 1e6,
+      adapters: none ? [] : plugged().map(a => { const h = TRAFFIC.hist[a.key], last = h[h.length - 1];
+        return { key: a.key, name: a.name, down: first ? null : last[0], up: first ? null : last[1], history: first ? [] : h.map(x => [...x]) }; }),
+      today: none ? {} : Object.fromEntries(plugged().map(a => [a.key, { ...TRAFFIC.today[a.key] }])) };
+  });
+  def("set_traffic_unit", 0, unit => {
+    if (unit !== "bytes" && unit !== "bits") throw new Error("The unit must be bytes or bits.");
+    UNIT = unit;
+    window.onTrafficUnit && window.onTrafficUnit(unit);
+    return { unit };
+  });
   def("is_visible", 0, which => true);
   def("open_main", 0, () => null);
   def("hide_widget", 0, () => null);
@@ -282,5 +316,9 @@ window.mockApi = (() => {
   api._setUsing = (key, kind) => { if (kind !== "bt") WIFI = key; if (kind !== "wifi") RADIO = key; }; // test hook
   api._setConnected = (id, on) => { PAIRED.find(d => d.id === id).connected = on; }; // test hook
   api._setHere = (id, on) => { PAIRED.find(d => d.id === id).here = on; }; // test hook
+  api._setRate = (down, up) => { // test hook
+    fixed = [down, up]; trafficTo(Date.now());
+    TRAFFIC.hist[using()] = Array.from({ length: 60 }, () => [down, up]);
+  };
   return api;
 })();

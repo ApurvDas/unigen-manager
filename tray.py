@@ -10,6 +10,7 @@ TASK = "Unigen Manager"
 MUTEX = "Local\\UnigenManager.Instance"
 SHOW_EVENT = "Local\\UnigenManager.Show"
 WIDGET_W = 342
+TOOLTIP_EVERY = 2  # seconds between tooltip refreshes: the live rate moves; api._status reuses its netsh part for 10 s
 
 
 class _RECT(ctypes.Structure):
@@ -177,7 +178,7 @@ class Tray:
                 self.icon.title = self._status()[:127]  # Windows caps tray tooltips at 128 characters
             except Exception:
                 pass
-            if self._stop.wait(10):
+            if self._stop.wait(TOOLTIP_EVERY):
                 return
 
     def stop(self):

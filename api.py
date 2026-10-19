@@ -3,7 +3,7 @@ pywebview runs each call on its own thread, so slow work never blocks the window
 import functools, json, logging, os, threading, time, traceback
 from pathlib import Path
 
-import bt, hw, speed, tray, wifi, winrun
+import bt, hw, speed, traffic, tray, wifi, winrun
 from version import VERSION
 
 DATA_DIR = Path(os.environ.get("LOCALAPPDATA", ".")) / "UnigenManager"
@@ -15,7 +15,7 @@ _SEC = {"WPA2-Personal": "WPA2", "WPA3-Personal": "WPA3", "Open": "Open", "WPA-P
 
 
 # The page polls these every few seconds: logged only with --debug, or when slow or failing
-_POLLED = {"app_info", "adapters", "networks", "saved", "bt_radio", "bt_paired", "is_visible", "widget_fit", "speed_results"}
+_POLLED = {"app_info", "adapters", "networks", "saved", "bt_radio", "bt_paired", "is_visible", "widget_fit", "speed_results", "traffic"}
 _SECRET = {"connect": 2, "bt_pair_answer": 1}  # argument index never written to app.log (return values never are)
 SLOW = 3.0  # seconds; a polled call taking longer is logged as a warning
 
@@ -54,9 +54,11 @@ def _envelope(fn):
 
 
 class Api:
-    def __init__(self, *, admin=False, results_path=DATA_DIR / "results.json", settings_path=None):
+    def __init__(self, *, admin=False, results_path=DATA_DIR / "results.json", settings_path=None, sampler=None):
         self._admin, self._results, self._window = admin, Path(results_path), None
         self._settings = Path(settings_path or DATA_DIR / "settings.json")  # looked up now, so tests can point DATA_DIR at tmp
+        self._sampler = sampler or traffic.Sampler(self._settings.with_name("traffic.json"))  # app.py passes the running one
+        self._base = None  # (when, text, adapter key, dongle suffix): the tooltip's netsh-backed part, cached by _status
         self._notify = lambda text: None  # app.py sets the tray balloon
         self._speed_lock = threading.Lock()
         self._widget, self._widget_shown, self._hid_at, self._widget_h = None, False, 0.0, 480
@@ -358,17 +360,27 @@ class Api:
             self._widget.show()
             self._widget.evaluate_js("window.onWidgetShown && window.onWidgetShown()")
 
+    STATUS_EVERY = 10.0  # seconds the tooltip's SSID and dongle state (netsh, PnP) are reused; the rate is live
+
     def _status(self):
-        text = "Unigen Manager: not connected"
-        for a in self.adapters().get("data") or []:
-            if a["state"] == "connected":
-                text = f"{a['name']}: {a['ssid']}, {a['signal']}%"
-                break
-        try:
-            state = hw.dongle_state(hw.devices())
-        except (*_KNOWN, OSError):
-            state = None  # unknown: say nothing
-        return text + {"unplugged": " · Dongle unplugged", "not_responding": " · Dongle not responding"}.get(state, "")
+        if self._base is None or time.monotonic() - self._base[0] >= self.STATUS_EVERY:
+            text, key = "Unigen Manager: not connected", None
+            for a in self.adapters().get("data") or []:
+                if a["state"] == "connected":
+                    text, key = f"{a['name']}: {a['ssid']}, {a['signal']}%", a["key"]
+                    break
+            try:
+                state = hw.dongle_state(hw.devices())
+            except (*_KNOWN, OSError):
+                state = None  # unknown: say nothing
+            self._base = (time.monotonic(), text, key,
+                          {"unplugged": " · Dongle unplugged", "not_responding": " · Dongle not responding"}.get(state, ""))
+        _, text, key, suffix = self._base
+        rate = key and self._sampler.rate(key)
+        if rate:
+            unit = self._unit()
+            text += f" · ↓{traffic.fmt_rate(rate[0], unit)} ↑{traffic.fmt_rate(rate[1], unit)}"
+        return text + suffix
 
     @_envelope
     def open_main(self):
@@ -450,3 +462,28 @@ class Api:
     @_envelope
     def speed_results(self):
         return speed.load_results(self._results)
+
+    # ---- traffic ----
+    def _unit(self):
+        try:
+            unit = json.loads(self._settings.read_text(encoding="utf-8")).get("traffic_unit")
+        except (OSError, ValueError, AttributeError):
+            unit = None
+        return unit if unit in traffic.UNITS else "bytes"
+
+    @_envelope
+    def traffic(self):
+        """What the sampler has: per Wi-Fi adapter the rate and the last minute, today's totals, and the unit shown."""
+        snap = self._sampler.snapshot()
+        on = [k for k in (a["key"] for a in snap["adapters"]) if self._sampler.radios().get(k)]
+        choice = hw.load_choice(self._settings, "wifi")  # the adapter in use, as app_info works it out, without netsh
+        using = choice if choice in on else on[0] if on else None
+        return {"using": using, "unit": self._unit(), "tick": snap["tick"], "adapters": snap["adapters"], "today": snap["today"]}
+
+    @_envelope
+    def set_traffic_unit(self, unit):
+        if unit not in traffic.UNITS:
+            raise hw.HwError("The unit must be bytes or bits.")
+        hw.save_choice(self._settings, "traffic_unit", unit)  # keeps the other settings
+        self._push("window.onTrafficUnit && window.onTrafficUnit(" + json.dumps(unit) + ")")
+        return {"unit": unit}

@@ -2,7 +2,7 @@ import json, pathlib, re, threading, time, types
 import pytest
 
 from tests.conftest import fixture, ROOT
-import api, bt, speed, version, winrun, wifi
+import api, bt, speed, traffic, version, winrun, wifi
 import hw as hwm  # the `hw` fixture below shadows the module name inside tests
 
 
@@ -644,6 +644,7 @@ def test_tray_tooltip_adds_the_dongle_only_when_it_is_not_there(hw, monkeypatch)
     devs = hwm.devices()
     monkeypatch.setattr(hwm, "devices", lambda: devs)
     a = api.Api()
+    a.STATUS_EVERY = 0  # no reuse: every call below reads the dongle state again
     assert a._status() == "Built-in MediaTek: HOME-5G, 80%"
     devs["unigen"]["wifi"] = {"id": "unigen-w", "ok": False, "disabled": False, "lost": True}
     assert a._status() == "Built-in MediaTek: HOME-5G, 80% · Dongle not responding"
@@ -652,3 +653,82 @@ def test_tray_tooltip_adds_the_dongle_only_when_it_is_not_there(hw, monkeypatch)
     assert len(a._status()) <= 127  # Windows caps tray tooltips at 128 characters
     monkeypatch.setattr(hwm, "devices", raising(winrun.CmdError("busy")))
     assert a._status() == "Built-in MediaTek: HOME-5G, 80%"
+
+
+# ---- traffic ----
+class FakeSampler:
+    def __init__(self, rates=None, on=None):
+        self.rates, self.on = rates or {}, on if on is not None else {"unigen": False, "builtin": True}
+
+    def rate(self, key):
+        return self.rates.get(key)
+
+    def radios(self):
+        return self.on
+
+    def snapshot(self):
+        return {"tick": 7, "adapters": [{"key": k, "name": wifi.ADAPTER_NAMES[k], "down": 10, "up": 2, "history": [[10, 2]]} for k in self.on],
+                "today": {k: {"down": 5, "up": 1} for k in self.on}}
+
+
+def test_traffic_payload(hw):
+    r = api.Api(sampler=FakeSampler())
+    d = r.traffic()["data"]
+    assert d["using"] == "builtin" and d["unit"] == "bytes" and d["tick"] == 7
+    assert d["adapters"][0] == {"key": "unigen", "name": "Unigen dongle", "down": 10, "up": 2, "history": [[10, 2]]}
+    assert d["today"]["builtin"] == {"down": 5, "up": 1}
+    hwm.save_choice(r._settings, "wifi", "unigen")  # the saved choice is used only while its radio is on
+    assert r.traffic()["data"]["using"] == "builtin"
+    r._sampler.on["unigen"] = True
+    assert r.traffic()["data"]["using"] == "unigen"
+    r._sampler.on = {}
+    d = r.traffic()["data"]
+    assert d["using"] is None and d["adapters"] == [] and d["today"] == {}
+
+
+def test_traffic_works_without_a_running_sampler(hw):
+    d = api.Api().traffic()["data"]  # an unstarted sampler: nothing measured yet
+    assert d["adapters"] == [] and d["using"] is None and d["unit"] == "bytes"
+
+
+def test_set_traffic_unit_saves_keeps_other_keys_and_pushes_to_both_windows(hw):
+    a = api.Api(sampler=FakeSampler())
+    a._window, a._widget = FakeWindow(), FakeWindow()
+    hwm.save_choice(a._settings, "wifi", "unigen")
+    assert a.set_traffic_unit("bits") == {"ok": True, "data": {"unit": "bits"}}
+    assert json.loads(a._settings.read_text(encoding="utf-8")) == {"wifi": "unigen", "traffic_unit": "bits"}
+    assert a.traffic()["data"]["unit"] == "bits"
+    for w in (a._window, a._widget):
+        assert w.scripts == ['window.onTrafficUnit && window.onTrafficUnit("bits")']
+    assert a.set_traffic_unit("furlongs")["ok"] is False
+    assert json.loads(a._settings.read_text(encoding="utf-8"))["traffic_unit"] == "bits"  # a bad value saves nothing
+    a._settings.write_text('{"traffic_unit": "nonsense"}', encoding="utf-8")
+    assert a.traffic()["data"]["unit"] == "bytes"  # a bad value in the file falls back
+
+
+def test_tooltip_shows_the_live_rate_in_the_chosen_unit_and_stays_short(hw, monkeypatch):
+    a = api.Api(sampler=FakeSampler({"builtin": (4_200_000, 300_000)}))
+    assert a._status() == "Built-in MediaTek: HOME-5G, 80% · ↓4.2 MB/s ↑300 KB/s"
+    a.set_traffic_unit("bits")
+    assert a._status() == "Built-in MediaTek: HOME-5G, 80% · ↓33.6 Mbps ↑2.4 Mbps"
+    a._sampler.rates = {"builtin": (999_000_000, 999_000_000)}
+    devs = hwm.devices()
+    del devs["unigen"]
+    monkeypatch.setattr(hwm, "devices", lambda: devs)
+    a._base = None
+    assert len(a._status()) <= 127
+    a._sampler.rates = {}
+    assert a._status() == "Built-in MediaTek: HOME-5G, 80% · Dongle unplugged"  # still measuring: no rate shown
+
+
+def test_tooltip_reuses_the_netsh_part_for_ten_seconds_but_not_the_rate(hw, monkeypatch):
+    a, n = api.Api(sampler=FakeSampler({"builtin": (1_000_000, 0)})), []
+    real = wifi.interfaces
+    monkeypatch.setattr(wifi, "interfaces", lambda: n.append(1) or real())
+    first = a._status()
+    a._sampler.rates = {"builtin": (2_000_000, 0)}
+    assert a._status() != first and "↓2.0 MB/s" in a._status()
+    assert len(n) == 1  # netsh ran once for three tooltips
+    a._base = (a._base[0] - api.Api.STATUS_EVERY - 1,) + a._base[1:]
+    a._status()
+    assert len(n) == 2

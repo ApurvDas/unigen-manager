@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-import api, bt, hw, speed, wifi
+import api, bt, hw, speed, traffic, wifi
 
 pytestmark = pytest.mark.hardware
 
@@ -135,3 +135,29 @@ def test_device_state_read_matches_the_list():
         assert state is not None, r["id"]
         assert pnp._reached(state, True) == (r["status"] == "OK")
         assert pnp._reached(state, False) == (r["problem"] == "CM_PROB_DISABLED")
+
+
+def test_traffic_counters_grow_on_the_real_wifi_adapter():
+    """Windows' byte counters for the Wi-Fi adapter(s) with their radio on go up between two reads (ordinary background traffic)."""
+    import time
+    on = {k: r["guid"] for k, r in wifi.radios().items() if r["on"]}
+    assert on, "no Wi-Fi adapter with its radio on"
+    for key, guid in on.items():
+        first = traffic.counters(guid)
+        grew, deadline = None, time.monotonic() + 15
+        while time.monotonic() < deadline and not grew:
+            time.sleep(0.5)
+            now = traffic.counters(guid)
+            grew = (now[0] - first[0], now[1] - first[1]) if now[0] > first[0] or now[1] > first[1] else None
+        print(f"{key}: {first} -> {now}, grew by {grew} bytes (down, up)")  # shown with -s
+        assert grew and grew[0] >= 0 and grew[1] >= 0, f"{key}: counters did not grow in 15 s"
+
+
+def test_sampler_measures_a_real_rate(tmp_path):
+    import time
+    s = traffic.Sampler(tmp_path / "traffic.json")  # never started or saved: two ticks by hand
+    s.tick()
+    time.sleep(1.2)
+    s.tick()
+    using = [k for k, on in s.radios().items() if on]
+    assert using and all(s.rate(k) is not None and s.rate(k)[0] >= 0 for k in using)

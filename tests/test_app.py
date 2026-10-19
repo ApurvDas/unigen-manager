@@ -3,6 +3,28 @@ import pytest
 import app
 
 
+class FakeSampler:
+    """app.main starts and stops the traffic sampler: tests must not read the real counters or write the real traffic.json."""
+    made = []
+
+    def __init__(self, path=None):
+        self.events = []
+        FakeSampler.made.append(self)
+
+    def start(self): self.events.append("start")
+    def stop(self): self.events.append("stop")
+    def rate(self, key): return None
+    def radios(self): return {}
+    def snapshot(self): return {"tick": 0, "adapters": [], "today": {}}
+
+
+@pytest.fixture(autouse=True)
+def fake_sampler(monkeypatch):
+    FakeSampler.made = []
+    monkeypatch.setattr(app.traffic, "Sampler", FakeSampler)
+    return FakeSampler
+
+
 def test_should_relaunch():
     assert app.should_relaunch([], admin=False) is True
     assert app.should_relaunch([], admin=True) is False
@@ -166,3 +188,39 @@ def test_watchdog_runs_a_pass_at_start_and_notifies_through_the_tray(monkeypatch
     api._notify("The dongle was unplugged. Using the built-in adapter.")
     assert got["balloon"] == ("The dongle was unplugged. Using the built-in adapter.", "Unigen Manager")
     got["quit"]()  # stops the watchdog thread
+
+
+def test_sampler_starts_with_the_windows_goes_to_the_api_and_is_flushed_on_exit(monkeypatch, single, fake_sampler):
+    fake = FakeWebview()
+    monkeypatch.setitem(sys.modules, "webview", fake)
+    monkeypatch.setattr(app, "is_admin", lambda: True)
+    monkeypatch.setattr(app, "setup_logging", lambda *a: None)
+    app.main([])
+    (sampler,) = fake_sampler.made
+    assert fake.windows[0].kw["js_api"]._sampler is sampler  # the API reads the one that runs
+    assert sampler.events == ["start", "stop"]  # webview.start returned: it stopped, which writes the totals
+
+
+def test_quit_stops_the_sampler_before_the_windows_go(monkeypatch, single, fake_sampler):
+    fake, got = FakeWebview(), {}
+    monkeypatch.setitem(sys.modules, "webview", fake)
+    monkeypatch.setattr(app, "is_admin", lambda: True)
+    monkeypatch.setattr(app, "setup_logging", lambda *a: None)
+    monkeypatch.setattr(app.tray, "watch_show", lambda *a: None)
+
+    class FakeTray:
+        def __init__(self, **kw):
+            got["quit"] = kw["quit_app"]
+            self.icon = types.SimpleNamespace(notify=lambda *a: None)
+        def start(self): pass
+        def stop(self): pass
+
+    monkeypatch.setattr(app.tray, "Tray", FakeTray)
+    monkeypatch.setattr(app.hw, "Follower", lambda *a, **k: types.SimpleNamespace(step=lambda: None))
+    app.main([])
+    (sampler,) = fake_sampler.made
+    for w in fake.windows:
+        w.destroy = lambda: sampler.events.append("destroy")
+    fake.after_start()
+    got["quit"]()
+    assert sampler.events.index("stop", 2) < sampler.events.index("destroy")

@@ -108,3 +108,18 @@ def test_icon_image():
     img = tray.icon_image(64)
     assert img.size == (64, 64) and img.mode == "RGBA"
     assert img.getbbox() is not None  # something was drawn
+
+
+def test_tooltip_loop_refreshes_every_two_seconds_and_caps_the_text():
+    import types
+    waits = []
+
+    class Stop:
+        def wait(self, secs):
+            waits.append(secs)
+            return len(waits) >= 2
+
+    t = tray.Tray.__new__(tray.Tray)
+    t._status, t._stop, t.icon = (lambda: "x" * 200), Stop(), types.SimpleNamespace(title=None)
+    t._tooltip_loop()
+    assert waits == [2, 2] == [tray.TOOLTIP_EVERY] * 2 and t.icon.title == "x" * 127
