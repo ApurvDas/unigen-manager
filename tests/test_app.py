@@ -150,8 +150,8 @@ def test_watchdog_runs_a_pass_at_start_and_notifies_through_the_tray(monkeypatch
         def stop(self): pass
 
     class FakeFollower:
-        def __init__(self, path, notify, *, admin):
-            got["args"] = (path, notify, admin)
+        def __init__(self, path, notify, *, admin, push):
+            got["args"] = (path, notify, admin, push)
         def step(self): steps.set()
 
     monkeypatch.setattr(app.tray, "Tray", FakeTray)
@@ -162,7 +162,7 @@ def test_watchdog_runs_a_pass_at_start_and_notifies_through_the_tray(monkeypatch
     fake.after_start()
     api = fake.windows[0].kw["js_api"]
     assert steps.wait(2)  # the first pass does not wait 5 s
-    assert got["args"] == (api._settings, api._follow_notify, True)
+    assert got["args"] == (api._settings, api._follow_notify, True, api._push_step)
     api._notify("The dongle was unplugged. Using the built-in adapter.")
     assert got["balloon"] == ("The dongle was unplugged. Using the built-in adapter.", "Unigen Manager")
     got["quit"]()  # stops the watchdog thread

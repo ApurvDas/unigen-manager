@@ -1,4 +1,4 @@
-import json, pathlib, re, threading
+import json, pathlib, re, threading, time, types
 import pytest
 
 from tests.conftest import fixture, ROOT
@@ -328,6 +328,7 @@ def test_bt_connect_uses_classic_address_of_twin(monkeypatch):
     ("off", "Bluetooth is off. Turn it on, then connect."),
     ("unknown", "Bluetooth isn't ready yet. If you just switched adapters, it's still moving: try again in a moment.")])
 def test_bt_connect_with_bluetooth_off_or_moving_says_so(monkeypatch, state, error):
+    fake_time(monkeypatch, [0.0])
     monkeypatch.setattr(bt, "devices", lambda: [dict(r) for r in ROWS])
     monkeypatch.setattr(bt, "power", lambda: state)
     monkeypatch.setattr(bt, "connect", lambda *a, **k: pytest.fail("must not try, nor open Settings"))
@@ -412,8 +413,8 @@ def test_switch_bt_needs_admin(hw, monkeypatch):
 
 def test_switch_wifi_pushes_steps_and_final(hw, monkeypatch):
     def fake_use(target, *, on_step, on_later, path):
-        on_step("Turning on the Built-in MediaTek…")
-        on_step("Done. Using the Built-in MediaTek.")
+        on_step("Turning on the Built-in MediaTek…", step=1, of=2, label="Turning on the Built-in MediaTek")
+        on_step("Turning off the Unigen dongle…", step=2, of=2, label="Turning off the Unigen dongle", later=True)
         seen.append(on_later)
         return target
     seen = []
@@ -421,14 +422,52 @@ def test_switch_wifi_pushes_steps_and_final(hw, monkeypatch):
     a = api.Api(admin=True)
     a._window, a._widget = Win(), Win()
     assert a.switch_wifi("builtin") == {"ok": True, "data": {"using": "builtin"}}
-    for w in (a._window, a._widget):  # both windows hear every step, then the final one
+    for w in (a._window, a._widget):  # both windows hear every step; the last one finishes in the background, so no end yet
         assert pushed(w) == [
-            {"kind": "wifi", "text": "Turning on the Built-in MediaTek…", "done": False, "error": False},
-            {"kind": "wifi", "text": "Done. Using the Built-in MediaTek.", "done": False, "error": False},
-            {"kind": "wifi", "text": "Done. Using the Built-in MediaTek.", "done": True, "error": False}]
+            {"kind": "wifi", "text": "Turning on the Built-in MediaTek…", "done": False, "error": False, "step": 1, "of": 2,
+             "label": "Turning on the Built-in MediaTek"},
+            {"kind": "wifi", "text": "Turning off the Unigen dongle…", "done": False, "error": False, "step": 2, "of": 2,
+             "label": "Turning off the Unigen dongle"}]
         assert all(s.startswith("window.onSwitchStep && window.onSwitchStep(") for s in w.scripts)
-    seen[0]("The Unigen dongle is off.", True)  # later, from the background thread: windows reload
-    assert pushed(a._window)[-1] == {"kind": "wifi", "text": "The Unigen dongle is off.", "done": True, "error": False}
+    seen[0]("The Unigen dongle is off.", True)  # later, from the background thread: the move is over, windows reload
+    assert pushed(a._window)[-1] == {"kind": "wifi", "text": "Wi-Fi moved to the Built-in MediaTek.", "done": True, "error": False,
+                                     "step": 2, "of": 2, "label": "Turning off the Unigen dongle"}
+    seen[0]("The Unigen dongle couldn't be turned off; Windows may still use it.", False)
+    assert pushed(a._window)[-1]["error"] is True and pushed(a._window)[-1]["text"].startswith("The Unigen dongle couldn't")
+
+
+def test_switch_wifi_with_no_old_wifi_to_turn_off_ends_when_it_returns(hw, monkeypatch):
+    def fake_use(target, *, on_step, on_later, path):
+        on_step("Turning on the Built-in MediaTek…", step=1, of=2, label="Turning on the Built-in MediaTek")
+        on_step("Done. Using the Built-in MediaTek.", step=2, of=2, label="Done")
+        return target
+    monkeypatch.setattr(hwm, "use_wifi", fake_use)
+    a = api.Api(admin=True)
+    a._window = Win()
+    a.switch_wifi("builtin")
+    assert pushed(a._window)[-1] == {"kind": "wifi", "text": "Wi-Fi moved to the Built-in MediaTek.", "done": True, "error": False,
+                                     "step": 2, "of": 2, "label": "Done"}
+
+
+def test_a_failed_switch_names_the_step_it_stopped_at(hw, monkeypatch):
+    def fake_use(target, *, on_step, on_later, path):
+        on_step("Finding HOME-5G…", step=3, of=5, label="Finding HOME-5G")
+        raise hwm.HwError("The Built-in MediaTek can't see any Wi-Fi network.")
+    monkeypatch.setattr(hwm, "use_wifi", fake_use)
+    a = api.Api(admin=True)
+    a._window = Win()
+    assert a.switch_wifi("builtin")["ok"] is False
+    assert pushed(a._window)[-1] == {"kind": "wifi", "text": "The Built-in MediaTek can't see any Wi-Fi network.", "done": True,
+                                     "error": True, "step": 3, "of": 5, "label": "Finding HOME-5G"}
+
+
+def test_a_switch_pressed_while_another_runs_doesnt_end_the_running_one(hw, monkeypatch):
+    for method, use in (("switch_wifi", "use_wifi"), ("switch_bt", "use_bt")):
+        monkeypatch.setattr(hwm, use, raising(hwm._busy()))
+        a = api.Api(admin=True)
+        a._window = Win()
+        assert getattr(a, method)("builtin")["error"].startswith("A switch is still finishing")
+        assert pushed(a._window) == []  # a done step would close the bar of the move that is really running
 
 
 def test_switch_wifi_error_pushes_error_and_returns_message(hw, monkeypatch):
@@ -437,7 +476,7 @@ def test_switch_wifi_error_pushes_error_and_returns_message(hw, monkeypatch):
     a = api.Api(admin=True)
     a._window = Win()
     assert a.switch_wifi("builtin") == {"ok": False, "error": msg}
-    assert pushed(a._window)[-1] == {"kind": "wifi", "text": msg, "done": True, "error": True}
+    assert pushed(a._window)[-1] == {"kind": "wifi", "text": msg, "done": True, "error": True, "step": None, "of": None, "label": None}
 
 
 def test_switch_wifi_passes_the_settings_path(hw, monkeypatch, tmp_path):
@@ -448,7 +487,9 @@ def test_switch_wifi_passes_the_settings_path(hw, monkeypatch, tmp_path):
 
 
 def test_switch_bt_returns_at_once_and_pushes_the_end_of_the_move(hw, monkeypatch):
-    def fake_use(target, *, on_later, path):
+    def fake_use(target, *, on_step, on_later, path):
+        on_step("Moving Bluetooth to the Built-in MediaTek. This can take up to a minute.", step=0, of=4, label="Starting")
+        on_step("Turning off the Unigen dongle radio…", step=2, of=4, label="Turning off the Unigen dongle radio")
         seen.append(on_later)
     seen = []
     monkeypatch.setattr(hwm, "use_bt", fake_use)
@@ -456,28 +497,58 @@ def test_switch_bt_returns_at_once_and_pushes_the_end_of_the_move(hw, monkeypatc
     a._window, a._widget = Win(), Win()
     assert a.switch_bt("builtin") == {"ok": True, "data": {"using": "builtin"}}
     for w in (a._window, a._widget):  # not done yet: the page waits for the move
-        assert pushed(w) == [{"kind": "bt", "text": "Moving Bluetooth to the Built-in MediaTek. This can take up to a minute.",
-                              "done": False, "error": False}]
+        assert pushed(w) == [
+            {"kind": "bt", "text": "Moving Bluetooth to the Built-in MediaTek. This can take up to a minute.", "done": False,
+             "error": False, "step": 0, "of": 4, "label": "Starting"},
+            {"kind": "bt", "text": "Turning off the Unigen dongle radio…", "done": False, "error": False, "step": 2, "of": 4,
+             "label": "Turning off the Unigen dongle radio"}]
     seen[0]("Bluetooth moved to the Built-in MediaTek.", True)
-    assert pushed(a._window)[-1] == {"kind": "bt", "text": "Bluetooth moved to the Built-in MediaTek.", "done": True, "error": False}
+    assert pushed(a._window)[-1] == {"kind": "bt", "text": "Bluetooth moved to the Built-in MediaTek.", "done": True, "error": False,
+                                     "step": 2, "of": 4, "label": "Turning off the Unigen dongle radio"}
     seen[0]("Bluetooth couldn't move and stays on the Unigen dongle. Switch again to retry.", False)
-    assert pushed(a._widget)[-1]["error"] is True and pushed(a._widget)[-1]["kind"] == "bt"
+    last = pushed(a._widget)[-1]
+    assert last["error"] is True and last["kind"] == "bt" and last["step"] == 2  # the failed block is the step it stopped at
 
 
 def test_switch_bt_error_pushes_error_and_returns_message(hw, monkeypatch):
-    msg = "A switch is still finishing. Bluetooth can take up to a minute; try again in a moment."
+    msg = "The Built-in MediaTek has no Bluetooth device to turn on."
     monkeypatch.setattr(hwm, "use_bt", raising(hwm.HwError(msg)))
     a = api.Api(admin=True)
     a._window = Win()
     assert a.switch_bt("builtin") == {"ok": False, "error": msg}
-    assert pushed(a._window)[-1] == {"kind": "bt", "text": msg, "done": True, "error": True}
+    assert pushed(a._window)[-1] == {"kind": "bt", "text": msg, "done": True, "error": True, "step": None, "of": None, "label": None}
 
 
 def test_switch_bt_passes_the_settings_path(hw, monkeypatch, tmp_path):
     seen = {}
-    monkeypatch.setattr(hwm, "use_bt", lambda target, *, on_later, path: seen.update(path=path))
+    monkeypatch.setattr(hwm, "use_bt", lambda target, *, on_step, on_later, path: seen.update(path=path))
     api.Api(admin=True, settings_path=tmp_path / "s.json").switch_bt("unigen")
     assert seen["path"] == tmp_path / "s.json"
+
+
+def fake_time(monkeypatch, now):  # api's own clock, so the wait costs no real time and the rest of pytest keeps the real one
+    monkeypatch.setattr(api, "time", types.SimpleNamespace(monotonic=lambda: now[0], sleep=lambda s: now.__setitem__(0, now[0] + s),
+                                                           time=time.time))
+
+
+def test_bt_connect_waits_for_windows_to_have_the_radio_then_connects(monkeypatch):
+    """After a switch Windows' radio object appears a few seconds late (the 12:15 log): Connect waits for it."""
+    seen, now, states = [], [0.0], iter(["unknown", "unknown", "unknown", "on"])
+    monkeypatch.setattr(bt, "devices", lambda: [dict(r) for r in ROWS])
+    monkeypatch.setattr(bt, "power", lambda: next(states))
+    monkeypatch.setattr(bt, "connect", lambda addr, name: seen.append(name))
+    fake_time(monkeypatch, now)
+    assert api.Api().bt_connect("Bluetooth#c")["ok"] is True and seen == ["Galaxy Buds2 Pro"] and now[0] == 1.5
+
+
+def test_bt_connect_gives_up_after_eight_seconds_without_a_radio(monkeypatch):
+    now = [0.0]
+    monkeypatch.setattr(bt, "devices", lambda: [dict(r) for r in ROWS])
+    monkeypatch.setattr(bt, "power", lambda: "unknown")
+    monkeypatch.setattr(bt, "connect", lambda *a, **k: pytest.fail("no radio, nothing to connect through"))
+    fake_time(monkeypatch, now)
+    r = api.Api().bt_connect("Bluetooth#c")
+    assert r["ok"] is False and r["error"].startswith("Bluetooth isn't ready yet") and now[0] == api.READY_WAIT
 
 
 def test_app_info_lists_off_adapter(hw, monkeypatch, tmp_path):

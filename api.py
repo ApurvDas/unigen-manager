@@ -9,6 +9,7 @@ from version import VERSION
 DATA_DIR = Path(os.environ.get("LOCALAPPDATA", ".")) / "UnigenManager"
 log = logging.getLogger("unigen")
 PAIR_WAIT = 60  # seconds a pairing prompt waits for the user
+READY_WAIT = 8.0  # seconds Connect waits for Windows' Bluetooth radio to appear after a switch
 _KNOWN = (wifi.WifiError, wifi.ParseError, bt.BtError, hw.HwError, speed.SpeedError, winrun.CmdError)
 _SEC = {"WPA2-Personal": "WPA2", "WPA3-Personal": "WPA3", "Open": "Open", "WPA-Personal": "WPA", "WPA2-Enterprise": "WPA2-Ent"}
 
@@ -116,9 +117,11 @@ class Api:
         except Exception as e:
             log.debug("window gone, skipped a push: %s", type(e).__name__)
 
-    def _push_step(self, kind, text, done=False, error=False):
-        """One step of a switch ("wifi" or "bt"), so each window shows it under the right switch."""
-        self._push("window.onSwitchStep && window.onSwitchStep(" + json.dumps({"kind": kind, "text": text, "done": done, "error": error}) + ")")
+    def _push_step(self, kind, text, done=False, error=False, step=None, of=None, label=None):
+        """One step of a switch ("wifi" or "bt"), so each window shows it under the right switch. step is the number of
+        the step (1..of) this text belongs to, label its name; on a done step they name the one the move stopped at."""
+        self._push("window.onSwitchStep && window.onSwitchStep(" + json.dumps(
+            {"kind": kind, "text": text, "done": done, "error": error, "step": step, "of": of, "label": label}) + ")")
 
     def _follow_notify(self, text, changed):
         """The watchdog switched (or failed to switch) by itself: tell the user, and make both windows reload."""
@@ -315,12 +318,21 @@ class Api:
         d = self._device(dev_id)
         if not d.get("here", True):  # no audio driver on this radio: Connect can't work, Settings can't either
             raise bt.BtError(f"{d['name']} is paired with the {d['radio_name']}, not this one. Put it in pairing mode, then press Re-pair.")
-        state = bt.power()
+        state = self._radio_ready()
         if state == "off":
             raise bt.BtError("Bluetooth is off. Turn it on, then connect.")
-        if state != "on":  # no radio yet: after a switch Bluetooth moves in the background
+        if state != "on":  # still no radio: after a switch Bluetooth moves in the background
             raise bt.BtError("Bluetooth isn't ready yet. If you just switched adapters, it's still moving: try again in a moment.")
         bt.connect(d["address"], d["name"])
+
+    @staticmethod
+    def _radio_ready():
+        """bt.power(), polled for up to READY_WAIT s while Windows has no radio object yet (it follows a switch by a
+        few seconds): "on", "off", or "unknown" if it never showed up."""
+        deadline = time.monotonic() + READY_WAIT
+        while (state := bt.power()) == "unknown" and time.monotonic() < deadline:
+            time.sleep(0.5)
+        return state
 
     @_envelope
     def bt_disconnect(self, dev_id):
@@ -396,29 +408,27 @@ class Api:
     def switch_wifi(self, key):
         """Make this adapter the one Wi-Fi uses. Every step is pushed to both windows."""
         self._need_admin()
-        last = []
-
-        def step(text):
-            last[:] = [text]
-            self._push_step("wifi", text)
+        m = hw.Mover(self._push_step, "wifi", f"Wi-Fi moved to the {self._name(key, key)}.")
         try:
-            hw.use_wifi(key, on_step=step, path=self._settings,  # the old Wi-Fi goes off after this returns
-                        on_later=lambda text, ok: self._push_step("wifi", text, done=True, error=not ok))
+            hw.use_wifi(key, on_step=m.step, path=self._settings,  # the old Wi-Fi goes off after this returns
+                        on_later=m.end)
         except hw.HwError as e:
-            self._push_step("wifi", str(e), done=True, error=True)
+            if not isinstance(e, hw.Busy):  # another move is running: its bar must stay
+                m.end(str(e), False)
             raise
-        self._push_step("wifi", last[0] if last else "", done=True)
+        m.returned()
         return {"using": key}
 
     @_envelope
     def switch_bt(self, key):
         """Move Bluetooth to this adapter's radio. It returns at once; the move's end is pushed as a done step."""
         self._need_admin()
-        self._push_step("bt", f"Moving Bluetooth to the {self._name(key, key)}. This can take up to a minute.")  # before the move can end
+        m = hw.Mover(self._push_step, "bt")
         try:
-            hw.use_bt(key, path=self._settings, on_later=lambda text, ok: self._push_step("bt", text, done=True, error=not ok))
+            hw.use_bt(key, path=self._settings, on_step=m.step, on_later=m.end)
         except hw.HwError as e:
-            self._push_step("bt", str(e), done=True, error=True)
+            if not isinstance(e, hw.Busy):
+                m.end(str(e), False)
             raise
         return {"using": key}
 

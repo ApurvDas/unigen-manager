@@ -151,7 +151,7 @@ class World:
     """Fake PC: the dongle is plugged in, its devices are off, the built-in adapter is on and joined to HOME-5G."""
 
     def __init__(self, monkeypatch, tmp_path, *, appear=True, connected=True, dongle_profile=False):
-        self.calls, self.steps, self.appear = [], [], appear
+        self.calls, self.steps, self.counted, self.appear = [], [], [], appear
         self.path = tmp_path / "settings.json"
         self.state = {"unigen": {"wifi": False, "bt": False}, "builtin": {"wifi": True, "bt": True}}
         self.ids = {"unigen": {"wifi": UNI_WIFI, "bt": UNI_BT}, "builtin": {"wifi": MT_WIFI, "bt": MT_BT}}
@@ -204,14 +204,15 @@ class World:
         if self.fail_connect:
             raise wifi.WifiError(f"Couldn't connect to {ssid}.")
 
-    def bt_switch(self, key):
+    def bt_switch(self, key, **kw):
         self.bt_calls.append(key)
         self.calls.append(("bt", key))
         if self.fail_bt and key == "unigen":
             raise bt.BtError("The Unigen dongle radio didn't start.")
 
-    def on_step(self, text):
+    def on_step(self, text, step=None, of=None, label=None, later=False):
         self.steps.append(text)
+        self.counted.append((step, of, label, later))
 
     def use(self, target="unigen"):
         self.later_notes = []
@@ -235,7 +236,11 @@ def test_use_wifi_full_switch_order(world):
                            ("disable", MT_WIFI)]
     assert hw.load_choice(world.path, "wifi") == "unigen"
     assert hw.load_choice(world.path, "bt") is None  # Bluetooth is not touched, nor its choice saved
-    assert world.steps == ["Turning on the Unigen dongle…", "Connecting to HOME-5G…", "Done. Using the Unigen dongle."]
+    assert world.steps == ["Turning on the Unigen dongle…", "Waiting for it to start…", "Finding HOME-5G…", "Connecting to HOME-5G…",
+                           "Turning off the Built-in MediaTek…"]
+    assert world.counted == [(1, 5, "Turning on the Unigen dongle", False), (2, 5, "Waiting for it to start", False),
+                             (3, 5, "Finding HOME-5G", False), (4, 5, "Connecting to HOME-5G", False),
+                             (5, 5, "Turning off the Built-in MediaTek", True)]  # the last one ends through on_later
     assert world.later_notes == [("The Built-in MediaTek is off.", True)]
 
 
@@ -432,7 +437,7 @@ def test_use_bt_choice_is_saved_only_when_the_move_worked(world):
 
 
 def test_use_bt_old_radio_stuck_passes_on_what_to_do(world, monkeypatch):
-    def stuck(key):
+    def stuck(key, **kw):
         raise bt.StuckRadio("Windows didn't finish turning off the Built-in MediaTek radio. Switch again in a minute.")
     monkeypatch.setattr(bt, "switch", stuck)
     world.use_bt()
@@ -442,7 +447,7 @@ def test_use_bt_old_radio_stuck_passes_on_what_to_do(world, monkeypatch):
 
 def test_use_bt_hung_in_a_driver_frees_the_switch_and_says_replug(world, monkeypatch):
     stuck = threading.Event()
-    monkeypatch.setattr(bt, "switch", lambda key: stuck.wait(5))
+    monkeypatch.setattr(bt, "switch", lambda key, **kw: stuck.wait(5))
     monkeypatch.setattr(hw, "BT_STUCK", 0.05)
     try:
         world.use_bt()
@@ -456,7 +461,7 @@ def test_use_bt_hung_in_a_driver_frees_the_switch_and_says_replug(world, monkeyp
 
 
 def test_use_bt_unexpected_error_is_reported_not_called_stuck(world, monkeypatch):
-    def boom(key): raise RuntimeError("boom")
+    def boom(key, **kw): raise RuntimeError("boom")
     monkeypatch.setattr(bt, "switch", boom)
     world.use_bt()  # BT_STUCK left at 150: must not wait
     assert world.later_notes == [("Bluetooth couldn't move and stays on the Built-in MediaTek. Switch again to retry.", False)]
@@ -865,3 +870,106 @@ def test_follow_tells_the_windows_when_the_dongle_is_plugged_in(monkeypatch, tmp
     f.step()
     f.step()
     assert pc.notes[-1] == ("Dongle plugged in.", True) and len(pc.notes) == 2 and pc.used == []
+
+
+# ---- steps ----
+def test_use_wifi_steps_without_a_network_to_carry_over(monkeypatch, tmp_path):
+    w = World(monkeypatch, tmp_path, connected=False)
+    w.use()
+    assert [c[:3] for c in w.counted] == [(1, 3, "Turning on the Unigen dongle"), (2, 3, "Waiting for it to start"),
+                                          (3, 3, "Turning off the Built-in MediaTek")]
+
+
+def test_use_wifi_steps_without_an_old_wifi_to_turn_off_end_with_done(world):
+    world.state = {"unigen": {"wifi": False, "bt": False}, "builtin": {"wifi": False, "bt": True}}  # nothing running to turn off
+    world.ifaces = []
+    world.use()
+    assert world.counted[-1] == (2, 2, "Done", False) and world.steps[-1] == "Done. Using the Unigen dongle."
+
+
+def test_use_wifi_already_in_use_is_one_step_of_one(world):
+    world.state = {"unigen": {"wifi": True, "bt": False}, "builtin": {"wifi": False, "bt": True}}
+    world.use()
+    assert world.counted == [(1, 1, "Already in use", False)]
+
+
+def test_use_wifi_restart_fallback_stays_in_step_two(monkeypatch, tmp_path):
+    w = World(monkeypatch, tmp_path, appear=False)
+    with pytest.raises(hw.HwError):
+        w.use()
+    assert [c[0] for c in w.counted] == [1, 2, 2]  # the restart-once retry repeats "waiting", it adds no step
+
+
+def test_use_bt_passes_the_phases_through_and_announces_the_start(world, monkeypatch):
+    got = []
+    monkeypatch.setattr(bt, "switch", lambda key, on_step: on_step("Turning off the Built-in MediaTek radio…", step=2, of=4, label="x"))
+    hw.use_bt("unigen", on_step=lambda text, **k: got.append((text, k.get("step"))), on_later=lambda *a: None, path=world.path,
+              spawn=lambda f: f())
+    assert got == [("Moving Bluetooth to the Unigen dongle. This can take up to a minute.", 0), ("Turning off the Built-in MediaTek radio…", 2)]
+
+
+def test_a_second_switch_is_busy_not_a_failed_move(world):
+    assert hw._lock.acquire(blocking=False)
+    try:
+        with pytest.raises(hw.Busy):
+            world.use_bt()
+    finally:
+        hw._lock.release()
+
+
+def test_mover_names_the_step_a_move_stopped_at():
+    got = []
+    m = hw.Mover(lambda kind, text, **k: got.append((kind, text, k)), "bt")
+    m.step("Turning off…", step=2, of=4, label="Turning off")
+    m.end("Windows didn't turn it off.", False)
+    assert got[-1] == ("bt", "Windows didn't turn it off.", {"done": True, "error": True, "step": 2, "of": 4, "label": "Turning off"})
+    ok = hw.Mover(lambda kind, text, **k: got.append((text, k.get("done", False))), "wifi", "Wi-Fi moved to the Unigen dongle.")
+    ok.step("Turning off the Built-in MediaTek…", step=3, of=3, label="x", later=True)
+    ok.returned()
+    assert got[-1][1] is False  # a tail is pending: the move isn't over
+    ok.end("The Built-in MediaTek is off.", True)
+    assert got[-1] == ("Wi-Fi moved to the Unigen dongle.", True)
+    ok.step("Done.", step=3, of=3, label="Done")
+    ok.returned()
+    assert got[-1] == ("Wi-Fi moved to the Unigen dongle.", True)  # no tail: Wi-Fi works, so it's over
+
+
+def test_watchdog_moves_push_the_same_steps_as_a_pressed_switch(tmp_path):
+    pushed = []
+
+    def use_bt(target, *, on_step, on_later, path):
+        on_step("Moving Bluetooth to the Unigen dongle. This can take up to a minute.", step=0, of=4, label="Starting")
+        on_step("Turning off the Built-in MediaTek radio…", step=2, of=4, label="Turning off the Built-in MediaTek radio")
+        on_later("Bluetooth moved to the Unigen dongle.", True)
+
+    def use_wifi(target, *, on_step, on_later, path):
+        on_step("Turning on the Unigen dongle…", step=1, of=2, label="Turning on the Unigen dongle")
+        on_step("Turning off the Built-in MediaTek…", step=2, of=2, label="Turning off the Built-in MediaTek", later=True)
+        on_later("The Built-in MediaTek is off.", True)
+    f = hw.Follower(tmp_path / "s.json", lambda t, c: None, admin=True, use_wifi=use_wifi, use_bt=use_bt,
+                    push=lambda kind, text, **k: pushed.append((kind, text, k.get("step"), k.get("done", False))))
+    f._switch("bt", "unigen", "")
+    assert pushed == [("bt", "Moving Bluetooth to the Unigen dongle. This can take up to a minute.", 0, False),
+                      ("bt", "Turning off the Built-in MediaTek radio…", 2, False), ("bt", "Bluetooth moved to the Unigen dongle.", 2, True)]
+    pushed.clear()
+    f._switch("wifi", "unigen", "")
+    assert [(k, t, s, d) for k, t, s, d in pushed] == [("wifi", "Turning on the Unigen dongle…", 1, False),
+                                                      ("wifi", "Turning off the Built-in MediaTek…", 2, False),
+                                                      ("wifi", "Wi-Fi moved to the Unigen dongle.", 2, True)]  # one end, from the tail
+
+
+def test_watchdog_failure_ends_the_bar_but_a_busy_lock_does_not(tmp_path):
+    pushed = []
+    notes = []
+
+    def refuse(target, **kw):
+        raise hw.HwError("The Unigen dongle isn't plugged in.")
+
+    def busy(target, **kw):
+        raise hw._busy()
+    for use, ends in ((refuse, 1), (busy, 0)):
+        pushed.clear()
+        f = hw.Follower(tmp_path / "s.json", lambda t, c: notes.append(t), admin=True, use_wifi=use, use_bt=use,
+                        push=lambda kind, text, **k: pushed.append(k.get("done")))
+        f._switch("bt", "unigen", "")
+        assert pushed.count(True) == ends

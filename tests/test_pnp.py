@@ -35,8 +35,8 @@ class Dev:
         self.reads += 1
         return self.states.pop(0) if len(self.states) > 1 else self.states[0]
 
-    def set(self, on, wait=30.0):
-        pnp.set_enabled(DEV, on, wait, sleep=self.sleep, clock=lambda: self.now)
+    def set(self, on, wait=30.0, **kw):
+        pnp.set_enabled(DEV, on, wait, sleep=self.sleep, clock=lambda: self.now, wall=lambda: 1000 + self.now, **kw)
 
     def sleep(self, s):
         self.now += s
@@ -112,3 +112,28 @@ def test_set_enabled_waits_for_a_device_windows_cant_find_yet(monkeypatch):
     d = Dev(monkeypatch, [None, None, ON])
     d.set(True)
     assert d.reads == 3
+
+
+def test_set_enabled_abort_ends_the_wait_once_the_second_call_is_made(monkeypatch):
+    d = Dev(monkeypatch, [ON], CmdError("The data is invalid."))  # vetoed twice; without abort it would wait the full 45 s
+    asked = []
+    with pytest.raises(CmdError, match="The data is invalid."):
+        d.set(False, wait=45, abort=lambda since: asked.append(since) or True)
+    assert len(d.changes) == 2 and d.now == 3.0  # the second call is at 3 s; the very next tick gave up
+    assert asked == [1003.0]  # asked about the call that just ended: events older than it don't count
+
+
+def test_set_enabled_abort_is_not_asked_before_the_second_call_and_never_adds_a_call(monkeypatch):
+    d = Dev(monkeypatch, [ON], CmdError("The data is invalid."))
+    with pytest.raises(CmdError):
+        d.set(False, wait=45, abort=lambda since: True)
+    assert len(d.changes) == 2  # the veto probe sees the first call's veto at once, but the second call still goes out
+    d = Dev(monkeypatch, [ON])
+    with pytest.raises(CmdError, match="The device didn't turn off."):
+        d.set(False, wait=45, abort=lambda since: d.now >= 10)
+    assert len(d.changes) == 2 and d.now == 10  # a False abort changes nothing
+
+
+def test_set_enabled_that_reaches_the_state_ignores_abort(monkeypatch):
+    d = Dev(monkeypatch, [ON, OFF])
+    d.set(False, abort=lambda since: pytest.fail("the state arrived, nothing to ask"))

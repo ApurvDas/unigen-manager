@@ -1,6 +1,8 @@
 """Bluetooth: radios (switch with rollback), devices (list, pair, remove), audio connect/disconnect."""
-import ctypes, logging, os, threading, time, uuid
+import ctypes, logging, os, re, threading, time, uuid
 from ctypes import wintypes
+from datetime import datetime, timezone
+from html import unescape
 
 import btwinrt
 import pnp, winrun
@@ -12,6 +14,8 @@ _switch_lock = threading.Lock()
 SERVICE_TOGGLE = True  # Way 2 of audio connect; the hardware check in Task 7 decides whether it stays.
 _OFF_WAIT = 45  # s: disabling a radio tears down its paired devices' audio first, which can take 25 s
 _DROP_WAIT = 10  # s: how long a switch waits for the earbuds it disconnected to read disconnected
+STEPS = 4  # what a switch reports: devices disconnect, old radio off, new radio on, devices reconnect
+_VETO_EVERY = 2  # s: least time between two looks at the event log while a radio refuses to turn off
 _SETTLE = 2  # s: pause after they drop (and before reconnecting on the new radio) so audiodg lets go of / finds the audio endpoint
 LMP = {6: "4.0", 7: "4.1", 8: "4.2", 9: "5.0", 10: "5.1", 11: "5.2", 12: "5.3", 13: "5.4", 14: "6.0"}
 AUDIO_SERVICES = ["0000110B-0000-1000-8000-00805F9B34FB", "0000111E-0000-1000-8000-00805F9B34FB"]  # A2DP sink, Hands-free
@@ -75,7 +79,36 @@ def switch(target, **kw):
         _switch_lock.release()
 
 
-def _switch(target, *, wait=20.0, clock=time.monotonic, sleep=time.sleep):
+def _veto_probe(instance_id, *, run=winrun.run, clock=time.monotonic):
+    """The abort hook for pnp.set_enabled while the old radio goes off: True once Windows has said no. A veto is the
+    System event Kernel-PnP 225 naming the radio's instance id; the disable can't succeed after that, so waiting out
+    _OFF_WAIT only keeps the user waiting. Read-only, at most one look per _VETO_EVERY s, only for events newer than
+    `since` (when the last disable call began). Any trouble reading the log: False, the wait carries on."""
+    last = None
+
+    def vetoed(since):
+        nonlocal last
+        if last is not None and clock() - last < _VETO_EVERY:
+            return False
+        last = clock()
+        try:
+            xml = run(["wevtutil", "qe", "System", "/q:*[System[(EventID=225)]]", "/rd:true", "/c:5", "/f:xml"], timeout=10)
+        except winrun.CmdError:
+            return False
+        for ev in unescape(xml).split("<Event ")[1:]:
+            at = re.search(r"SystemTime=['\"]([\d-]+T[\d:]+)(\.\d{1,6})?", ev)
+            if at and instance_id.lower() in ev.lower() and "Kernel-PnP" in ev:
+                when = datetime.fromisoformat(at.group(1)).replace(tzinfo=timezone.utc).timestamp() + float(at.group(2) or 0)
+                if when >= since:
+                    return True
+        return False
+    return vetoed
+
+
+def _switch(target, *, wait=20.0, clock=time.monotonic, sleep=time.sleep, on_step=lambda *a, **k: None):
+    """on_step(text, step=n, of=STEPS, label=...) is called as each phase starts; a phase with nothing to do (no device
+    connected, no other radio on) is never announced."""
+    step = lambda n, label: on_step(f"{label}…", step=n, of=STEPS, label=label)
     rs = radios()
     tgt = next((r for r in rs if r["key"] == target), None)
     if tgt is None:
@@ -83,22 +116,25 @@ def _switch(target, *, wait=20.0, clock=time.monotonic, sleep=time.sleep):
     others = [r for r in rs if r["ok"] and r["key"] != target]
     if tgt["ok"] and not others and _radio_up():
         return target
-    held = _disconnect_first(clock, sleep) if others else []
+    held = _disconnect_first(clock, sleep, step) if others else []
     try:
         for r in others:  # Windows runs one Bluetooth radio at a time
-            _set(r["id"], False, wait=_OFF_WAIT)
+            step(2, f"Turning off the {_label(r['key'])} radio")
+            _set(r["id"], False, wait=_OFF_WAIT, abort=_veto_probe(r["id"]))
     except winrun.CmdError:  # it's mid-teardown: turning it back on is what hung the dongle's driver, so leave it
         raise StuckRadio(f"Windows didn't turn off the {_label(others[0]['key'])} radio, usually because audio is still "
                          "playing through it. Stop the audio or disconnect your earbuds, then switch again. Only if "
                          "Bluetooth stays off, re-plug the dongle or restart the PC.") from None
     try:
+        step(3, f"Starting the {_label(target)} radio")
         if tgt["failed"]:  # never started (e.g. code 10): restart it. A stopping radio has no problem code and is left alone
             _set(tgt["id"], False)
         _set(tgt["id"], True)
         deadline = clock() + wait
         while clock() < deadline:
-            if any(r["key"] == target and r["ok"] for r in radios()) and _radio_up():  # one radio runs at a time
-                _reconnect(held, sleep)
+            # Windows' radio object follows the device by a few seconds ("unknown" until then) and Connect fails before it
+            if any(r["key"] == target and r["ok"] for r in radios()) and _radio_up() and power() != "unknown":  # one radio runs at a time
+                _reconnect(held, sleep, step)
                 return target
             sleep(1)
     except winrun.CmdError:
@@ -118,40 +154,60 @@ def _switch(target, *, wait=20.0, clock=time.monotonic, sleep=time.sleep):
     raise BtError(f"The {_label(target)} radio didn't start.{back}")
 
 
-def _disconnect_first(clock, sleep):
+def _disconnect_first(clock, sleep, step=lambda n, label: None):
     """Disconnect the connected paired devices before the radio they're on goes off: Windows vetoes removing a radio
     while audiodg holds a connected device's audio endpoint (Kernel-PnP 225), and retrying the disable doesn't help.
-    Best effort, never opens Windows Settings. Returns the (address, name) of every device that was connected."""
+    A device that still reads connected after _DROP_WAIT gets the service toggle too, which unloads its audio drivers
+    (connect() turns them back on). Best effort, never opens Windows Settings. Each way used, and whether the device
+    dropped, goes to app.log. Returns the (address, name) of every device that was connected."""
     log = logging.getLogger("unigen")
     try:
         live = [r for r in btwinrt.paired() if r["connected"]]
     except BtError as e:
         log.warning("couldn't list connected devices before the switch: %s", e)
         return []
+    if not live:
+        return []
+    step(1, "Disconnecting your devices")
     gone = []
     for r in live:
         try:
-            disconnect(r["address"], r["name"], open_settings=None)
+            way = disconnect(r["address"], r["name"], open_settings=None)
             gone.append(r["address"])
+            log.info("disconnect %s: asked through the %s", r["name"], way or "audio driver")
         except Exception as e:  # a mouse has no audio to drop; whatever fails, the switch goes on
             log.warning("couldn't disconnect %s before the switch: %s", r["name"], e)
+
+    def connected():  # the addresses in `gone` that still read connected; None if the list can't be read
+        try:
+            return [r["address"] for r in btwinrt.paired() if r["connected"] and r["address"] in gone]
+        except BtError:
+            return None
     if gone:
-        deadline = clock() + _DROP_WAIT
-        while clock() < deadline:
-            try:
-                if not any(r["connected"] and r["address"] in gone for r in btwinrt.paired()):
-                    break
-            except BtError:
-                break
+        deadline, left = clock() + _DROP_WAIT, connected()
+        while left and clock() < deadline:
             sleep(1)
+            left = connected()
+        for r in live:
+            if left and r["address"] in left:
+                log.warning("%s still connected after %d s; unloading its audio services", r["name"], _DROP_WAIT)
+                try:
+                    _set_audio(r["address"], [0])
+                except (BtError, OSError, ValueError, ctypes.ArgumentError, AttributeError) as e:
+                    log.warning("service toggle for %s failed: %s: %s", r["name"], type(e).__name__, e)
         sleep(_SETTLE)
+        after = connected() if left else []
+        for r in live:
+            if r["address"] in gone:
+                log.info("%s %s", r["name"], "is still connected" if r["address"] in (after or []) else "dropped")
     return [(r["address"], r["name"]) for r in live]
 
 
-def _reconnect(devs, sleep):
+def _reconnect(devs, sleep, step=lambda n, label: None):
     """Best effort: bring the devices that were connected back on the radio that just came up. One that isn't paired
     on it raises NotPairedHere; the UI already offers Re-pair, so that's just logged."""
     if devs:
+        step(4, "Reconnecting your devices")
         sleep(_SETTLE)
     for address, name in devs:
         try:
@@ -354,14 +410,14 @@ def _toggle(address_hex, name, connect, open_settings):
     verb = "connect" if connect else "disconnect"
     if not _radio_up():
         raise BtError(f"No Bluetooth radio is working, so {name} can't {verb}. Switch adapters again, or re-plug the dongle.")
-    ways = [lambda: _ks_oneshot(address_hex, connect)]
+    ways = [("audio driver", lambda: _ks_oneshot(address_hex, connect))]
     if SERVICE_TOGGLE:
-        ways.append(lambda: _set_audio(address_hex, [0, 1] if connect else [0]))
+        ways.append(("service toggle", lambda: _set_audio(address_hex, [0, 1] if connect else [0])))
     unknown = False
-    for way in ways:
+    for how, way in ways:
         try:
             way()
-            return
+            return how  # which way worked, for the switch's log
         except (BtError, OSError, ValueError, ctypes.ArgumentError, AttributeError) as e:
             logging.getLogger("unigen").warning("audio %s failed: %s: %s", verb, type(e).__name__, e)
             unknown = unknown or isinstance(e, NotPairedHere)
@@ -374,8 +430,8 @@ def _toggle(address_hex, name, connect, open_settings):
 
 
 def connect(address_hex, name, *, open_settings=os.startfile):
-    _toggle(address_hex, name, True, open_settings)
+    return _toggle(address_hex, name, True, open_settings)
 
 
 def disconnect(address_hex, name, *, open_settings=os.startfile):
-    _toggle(address_hex, name, False, open_settings)
+    return _toggle(address_hex, name, False, open_settings)

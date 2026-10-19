@@ -120,7 +120,7 @@ def main(argv=None):
         icon.start()
         api._notify = lambda text: icon.icon.notify(text, "Unigen Manager")
         threading.Thread(target=tray.watch_show, args=(api._show_main, stop), daemon=True).start()
-        follower = hw.Follower(api._settings, api._follow_notify, admin=api._admin)
+        follower = hw.Follower(api._settings, api._follow_notify, admin=api._admin, push=api._push_step)
 
         def follow():  # a pass now (enforces the saved choice after a restart), then every 5 s
             while True:

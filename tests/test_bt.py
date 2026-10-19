@@ -5,6 +5,8 @@ import bt
 import btwinrt
 from winrun import CmdError
 
+REAL_VETO_PROBE = bt._veto_probe  # the autouse fixture below replaces it, so no test reads the real event log by accident
+
 RADIOS_OK_UNIGEN = [
     {"id": "USB\\VID_368B&PID_8D81&MI_00\\6&28B24B5D&0&0000", "name": "Generic Bluetooth Adapter", "status": "OK", "problem": "CM_PROB_NONE", "lmp": 13},
     {"id": "USB\\VID_13D3&PID_3563&MI_00\\6&1D754FA2&0&0000", "name": "MediaTek Bluetooth Adapter", "status": "Error", "problem": "CM_PROB_DISABLED", "lmp": 11},
@@ -19,13 +21,16 @@ class FakePs:
     def rows(self):
         return self.states.pop(0) if len(self.states) > 1 else self.states[0]
 
-    def set(self, dev_id, on, wait=30.0):
+    def set(self, dev_id, on, wait=30.0, abort=None):
         self.calls.append(("enable" if on else "disable", dev_id, wait))
 
 
 @pytest.fixture(autouse=True)
 def radio_up(monkeypatch):
     monkeypatch.setattr(bt, "_radio_up", lambda: True)  # Windows has a working radio unless a test says otherwise
+    monkeypatch.setattr(bt, "power", lambda: "on")  # and its radio object follows the device at once
+    monkeypatch.setattr(bt, "_set_audio", lambda a, f: pytest.fail("the service toggle is only for a device that didn't drop"))
+    monkeypatch.setattr(bt, "_veto_probe", lambda instance_id: lambda since: False)  # never read the real event log
     monkeypatch.setattr(btwinrt, "paired", lambda: [])  # nothing is connected unless a test says so (never ask the real radio)
 
 
@@ -122,7 +127,7 @@ def test_switch_waits_20_s_for_the_target_by_default(monkeypatch):
 def test_switch_rolls_back_when_enable_raises(monkeypatch):
     fake = use_fake(monkeypatch, FakePs([RADIOS_OK_UNIGEN]))
 
-    def flaky(dev_id, on, wait=30.0):
+    def flaky(dev_id, on, wait=30.0, abort=None):
         fake.calls.append(("enable" if on else "disable", dev_id, wait))
         if on and "13D3" in dev_id:
             raise CmdError("enable failed")
@@ -135,7 +140,7 @@ def test_switch_rolls_back_when_enable_raises(monkeypatch):
 def test_switch_leaves_an_old_radio_that_wont_finish_turning_off_alone(monkeypatch):
     fake = use_fake(monkeypatch, FakePs([RADIOS_OK_UNIGEN]))
 
-    def stuck(dev_id, on, wait=30.0):
+    def stuck(dev_id, on, wait=30.0, abort=None):
         fake.calls.append(("enable" if on else "disable", dev_id, wait))
         if not on and "368B" in dev_id:
             raise CmdError("The device didn't turn off.")
@@ -154,7 +159,7 @@ def connected_world(monkeypatch, fake, still=0):
     connected for `still` more polls after a disconnect."""
     events, left = [], [still]
     use_fake(monkeypatch, fake)
-    monkeypatch.setattr(fake, "set", lambda dev_id, on, wait=30.0: events.append(("enable" if on else "disable", dev_id[:21])))
+    monkeypatch.setattr(fake, "set", lambda dev_id, on, wait=30.0, abort=None: events.append(("enable" if on else "disable", dev_id[:21])))
     monkeypatch.setattr(bt, "_set", fake.set)
 
     def paired():
@@ -179,10 +184,46 @@ def test_switch_disconnects_connected_devices_before_turning_the_old_radio_off(m
 
 def test_switch_gives_up_waiting_for_a_device_that_wont_disconnect(monkeypatch):
     events = connected_world(monkeypatch, FakePs([RADIOS_OK_UNIGEN, flipped(False, False), flipped(False, True)]), still=10**6)
+    monkeypatch.setattr(bt, "_set_audio", lambda a, f: events.append(("services", a, f)))
     now = [0.0]
     bt.switch("builtin", clock=lambda: now[0], sleep=lambda s: now.__setitem__(0, now[0] + s))
-    assert [e[0] for e in events] == ["disconnect", "disable", "enable", "connect"]
-    assert now[0] >= bt._DROP_WAIT
+    assert [e[0] for e in events] == ["disconnect", "services", "disable", "enable", "connect"]
+    assert events[1] == ("services", "AABBCCDDEEFF", [0]) and now[0] >= bt._DROP_WAIT  # unloads its audio drivers so audiodg lets go
+
+
+def test_service_toggle_is_only_for_devices_that_didnt_drop(monkeypatch):
+    events = connected_world(monkeypatch, FakePs([RADIOS_OK_UNIGEN, flipped(False, False), flipped(False, True)]))
+    reads = [0]
+
+    def paired():  # Buds drop after the first read, the mouse never does
+        reads[0] += 1
+        return [dict(buds(), address="A1", connected=reads[0] < 2), dict(buds(), address="B2", name="Mouse")]
+    monkeypatch.setattr(btwinrt, "paired", paired)
+    toggled = []
+    monkeypatch.setattr(bt, "_set_audio", lambda a, f: toggled.append((a, f)))
+    now = [0.0]
+    bt.switch("builtin", clock=lambda: now[0], sleep=lambda s: now.__setitem__(0, now[0] + s))
+    assert toggled == [("B2", [0])]
+
+
+def test_a_failing_service_toggle_doesnt_stop_the_switch(monkeypatch):
+    events = connected_world(monkeypatch, FakePs([RADIOS_OK_UNIGEN, flipped(False, False), flipped(False, True)]), still=10**6)
+    monkeypatch.setattr(bt, "_set_audio", lambda a, f: (_ for _ in ()).throw(bt.BtError("Windows refused (error 87).")))
+    now = [0.0]
+    assert bt.switch("builtin", clock=lambda: now[0], sleep=lambda s: now.__setitem__(0, now[0] + s)) == "builtin"
+
+
+def test_the_disconnect_is_logged_with_its_way_and_whether_the_device_dropped(monkeypatch, caplog):
+    caplog.set_level("INFO", logger="unigen")
+    events = connected_world(monkeypatch, FakePs([RADIOS_OK_UNIGEN, flipped(False, False), flipped(False, True)]), still=1)
+    bt.switch("builtin", sleep=lambda s: None)
+    assert "disconnect Buds: asked through the audio driver" in caplog.text and "Buds dropped" in caplog.text
+    caplog.clear()
+    monkeypatch.setattr(bt, "_set_audio", lambda a, f: None)
+    connected_world(monkeypatch, FakePs([RADIOS_OK_UNIGEN, flipped(False, False), flipped(False, True)]), still=10**6)
+    now = [0.0]
+    bt.switch("builtin", clock=lambda: now[0], sleep=lambda s: now.__setitem__(0, now[0] + s))
+    assert "Buds still connected after 10 s; unloading its audio services" in caplog.text and "Buds is still connected" in caplog.text
 
 
 def test_switch_goes_on_when_a_disconnect_raises(monkeypatch):
@@ -362,3 +403,141 @@ def test_devices_survive_battery_read_failure(monkeypatch):
     def boom(): raise OSError("setupapi")
     monkeypatch.setattr(bt.pnp, "battery_levels", boom)
     assert bt.devices()[0]["battery"] is None
+
+
+# ---- steps, fail-fast veto, "done" waits for Windows' radio ----
+def run_switch(monkeypatch, fake, **kw):
+    steps = []
+    now = [0.0]
+    on_step = lambda text, step, of, label: steps.append((step, of, label, text))
+    try:
+        bt.switch("builtin", clock=lambda: now[0], sleep=lambda s: now.__setitem__(0, now[0] + s), on_step=on_step, **kw)
+    except bt.BtError as e:
+        return steps, e
+    return steps, None
+
+
+def test_switch_reports_its_four_steps_in_order(monkeypatch):
+    connected_world(monkeypatch, FakePs([RADIOS_OK_UNIGEN, flipped(False, False), flipped(False, True)]))
+    steps, err = run_switch(monkeypatch, None)
+    assert err is None and steps == [
+        (1, 4, "Disconnecting your devices", "Disconnecting your devices…"),
+        (2, 4, "Turning off the Unigen dongle radio", "Turning off the Unigen dongle radio…"),
+        (3, 4, "Starting the Built-in MediaTek radio", "Starting the Built-in MediaTek radio…"),
+        (4, 4, "Reconnecting your devices", "Reconnecting your devices…")]
+
+
+def test_switch_skips_the_steps_that_have_nothing_to_do(monkeypatch):
+    connected_world(monkeypatch, FakePs([RADIOS_OK_UNIGEN, flipped(False, False), flipped(False, True)]))
+    monkeypatch.setattr(btwinrt, "paired", lambda: [buds(connected=False)])  # nothing connected: steps 1 and 4 never start
+    steps, err = run_switch(monkeypatch, None)
+    assert err is None and [s[0] for s in steps] == [2, 3]
+    use_fake(monkeypatch, FakePs([flipped(False, False), flipped(False, True)]))  # no other radio is on: step 2 is skipped too
+    steps, err = run_switch(monkeypatch, None)
+    assert [s[0] for s in steps] == [3]
+
+
+def test_a_failed_switch_has_reported_the_step_it_failed_at(monkeypatch):
+    fake = use_fake(monkeypatch, FakePs([RADIOS_OK_UNIGEN, flipped(False, False)]))
+    steps, err = run_switch(monkeypatch, fake, wait=3)
+    assert isinstance(err, bt.BtError) and steps[-1][:3] == (3, 4, "Starting the Built-in MediaTek radio")  # rollback adds no step
+
+    def stuck(dev_id, on, wait=30.0, abort=None):
+        raise CmdError("The device didn't turn off.")
+    fake = use_fake(monkeypatch, FakePs([RADIOS_OK_UNIGEN]))
+    monkeypatch.setattr(bt, "_set", stuck)
+    steps, err = run_switch(monkeypatch, fake)
+    assert isinstance(err, bt.StuckRadio) and steps[-1][:2] == (2, 4)
+
+
+def test_switch_gives_the_old_radio_a_veto_probe_and_nothing_else_does(monkeypatch):
+    seen = []
+    use_fake(monkeypatch, FakePs([RADIOS_OK_UNIGEN, flipped(False, False), flipped(False, True)]))
+    monkeypatch.setattr(bt, "_set", lambda dev_id, on, wait=30.0, abort=None: seen.append((dev_id[:21], on, wait, abort)))
+    monkeypatch.setattr(bt, "_veto_probe", lambda instance_id: ("probe", instance_id))
+    bt.switch("builtin", sleep=lambda s: None)
+    off, on = seen
+    assert off[:3] == (r"USB\VID_368B&PID_8D81", False, 45) and off[3] == ("probe", RADIOS_OK_UNIGEN[0]["id"])
+    assert on[3] is None  # the target's enable has no abort
+
+
+def test_a_veto_ends_the_wait_with_the_audio_message(monkeypatch):
+    """Through the real pnp.set_enabled: the radio never turns off, Windows vetoes both calls, the probe sees it."""
+    import pnp
+    use_fake(monkeypatch, FakePs([RADIOS_OK_UNIGEN]))
+    now, calls = [0.0], []
+    monkeypatch.setattr(pnp, "_status", lambda i: (pnp._DN_STARTED, 0))  # still running
+    monkeypatch.setattr(pnp, "_change", lambda i, on: calls.append(on) or (_ for _ in ()).throw(CmdError("The data is invalid.")))
+    vetoed = []
+    monkeypatch.setattr(bt, "_veto_probe", lambda instance_id: lambda since: vetoed.append(since) or True)
+    monkeypatch.setattr(bt, "_set", lambda i, on, wait=30.0, abort=None: pnp.set_enabled(
+        i, on, wait, abort=abort, sleep=lambda s: now.__setitem__(0, now[0] + s), clock=lambda: now[0], wall=lambda: now[0]))
+    with pytest.raises(bt.StuckRadio, match="audio is still playing"):
+        bt.switch("builtin", sleep=lambda s: None)
+    assert calls == [False, False] and now[0] == 3.0 and len(vetoed) == 1  # two calls, no extra, gave up at once; 45 s not waited
+
+
+EVENT = r"""<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System>
+<Provider Name='Microsoft-Windows-Kernel-PnP'/><EventID>225</EventID>
+<TimeCreated SystemTime='{when}'/></System><EventData>
+<Data Name='ImageName'>\Device\HarddiskVolume3\Windows\System32\audiodg.exe</Data>
+<Data Name='DeviceInstanceId'>{dev}</Data></EventData></Event>"""
+OLD_RADIO = RADIOS_OK_UNIGEN[0]["id"]
+OTHER_RADIO = RADIOS_OK_UNIGEN[1]["id"]
+T0 = 1_760_000_000.0  # 2025-10-09 08:53:20 UTC
+
+
+def stamp(t):
+    from datetime import datetime, timezone
+    return datetime.fromtimestamp(t, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.1234567Z")
+
+
+def probe_world(events, **kw):
+    ran = []
+    xml = "".join(EVENT.replace("{when}", stamp(t)).replace("{dev}", d.replace("&", "&amp;")) for t, d in events)
+
+    def run(args, *, timeout):
+        ran.append(args)
+        return xml
+    return ran, REAL_VETO_PROBE(OLD_RADIO, run=run, **kw)
+
+
+def test_veto_probe_counts_only_a_225_for_this_radio_since_the_call_began():
+    ran, probe = probe_world([(T0 - 50, OLD_RADIO), (T0 + 8, OTHER_RADIO)])
+    assert probe(T0) is False  # an older veto and one for another device
+    assert ran == [["wevtutil", "qe", "System", "/q:*[System[(EventID=225)]]", "/rd:true", "/c:5", "/f:xml"]]  # read-only, nothing else
+    _, probe = probe_world([(T0 + 8, OLD_RADIO)])
+    assert probe(T0) is True
+    _, probe = probe_world([(T0 + 8, OLD_RADIO.lower())])  # case doesn't matter
+    assert probe(T0) is True
+
+
+def test_veto_probe_looks_at_most_every_two_seconds():
+    now = [0.0]
+    ran, probe = probe_world([(T0 - 50, OLD_RADIO)], clock=lambda: now[0])
+    probe(T0), probe(T0)
+    now[0] = 1.9
+    probe(T0)
+    assert len(ran) == 1
+    now[0] = 2.1
+    probe(T0)
+    assert len(ran) == 2
+
+
+def test_veto_probe_never_raises_when_the_log_cant_be_read():
+    probe = REAL_VETO_PROBE(OLD_RADIO, run=lambda *a, **k: (_ for _ in ()).throw(CmdError("Access is denied.")))
+    assert probe(T0) is False
+
+
+def test_switch_isnt_done_until_windows_has_the_radio(monkeypatch):
+    connected_world(monkeypatch, FakePs([RADIOS_OK_UNIGEN, flipped(False, False), flipped(False, True)]))
+    states = iter(["unknown", "unknown", "on"])
+    monkeypatch.setattr(bt, "power", lambda: next(states))
+    steps, now = [], [0.0]
+    bt.switch("builtin", clock=lambda: now[0], sleep=lambda s: now.__setitem__(0, now[0] + s),
+              on_step=lambda text, step, of, label: steps.append((step, now[0])))
+    assert steps[-1][0] == 4 and steps[-1][1] >= 2 + 2  # reconnecting began only after the two "unknown" polls (+ the drop settle)
+    use_fake(monkeypatch, FakePs([RADIOS_OK_UNIGEN, flipped(False, False), flipped(False, True)]))
+    monkeypatch.setattr(bt, "power", lambda: "unknown")  # Windows never gets a radio: the switch fails and rolls back
+    with pytest.raises(bt.BtError, match="Built-in MediaTek radio didn't start. Switched back"):
+        bt.switch("builtin", sleep=lambda s: None, clock=iter(range(100)).__next__)

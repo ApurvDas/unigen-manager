@@ -170,7 +170,8 @@ def _reached(state, on):
     return bool(status & _DN_HAS_PROBLEM) and problem == _CM_PROB_DISABLED
 
 
-def set_enabled(instance_id, on, wait=30.0, *, sleep=time.sleep, clock=time.monotonic, retry=3.0, tries=2):
+def set_enabled(instance_id, on, wait=30.0, *, sleep=time.sleep, clock=time.monotonic, retry=3.0, tries=2,
+                abort=lambda since: False, wall=time.time):
     """Enable or disable a device the way Device Manager does (it stays that way after a restart). Admin only.
     Success is the device reaching the wanted state within `wait` seconds, whatever the call returned.
     Windows refuses to remove a Bluetooth radio while something holds a paired device's audio driver open (it gives
@@ -178,20 +179,22 @@ def set_enabled(instance_id, on, wait=30.0, *, sleep=time.sleep, clock=time.mono
     arrived `retry` seconds after a call, the call is made again, `tries` calls in all; after that it only waits.
     (Not sooner and not more: a radio Windows is still tearing down must be left alone; poking it again hung the
     dongle's Bluetooth driver until the PC restarted.) A device already in the wanted state is left alone.
+    abort(since) is asked on each tick once the last call has been made (`since`: wall time it began); True ends the wait
+    at once, as a timeout would. It never adds a call: the caller uses it to see that Windows has vetoed the change.
     Raises winrun.CmdError with Windows' sentence, or "The device didn't turn on/off."."""
     from winrun import CmdError
     if _reached(_status(instance_id), on):
         return
     deadline, calls = clock() + wait, 0
     while True:
-        err, calls = None, calls + 1
+        err, calls, began = None, calls + 1, wall()
         try:
             _change(instance_id, on)
         except CmdError as e:
             err = e
         again = clock() + retry
         while not _reached(_status(instance_id), on):
-            if clock() >= deadline:
+            if clock() >= deadline or (calls >= tries and abort(began)):
                 raise err or CmdError(f"The device didn't turn {'on' if on else 'off'}.")
             if clock() >= again and calls < tries:
                 break  # ask again: a refused change usually goes through on the next call

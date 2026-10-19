@@ -163,15 +163,43 @@ def _wait_iface(key, wait, clock, sleep):
     return None
 
 
+class Busy(HwError):
+    """Another switch holds the lock. Nothing of its own happened, so the windows must not show it as a failed move."""
+
+
 def _busy():
-    return HwError("A switch is still finishing. Bluetooth can take up to a minute; try again in a moment.")
+    return Busy("A switch is still finishing. Bluetooth can take up to a minute; try again in a moment.")
 
 
-def use_wifi(target, *, on_step=lambda text: None, on_later=lambda text, ok: None, path, wait=20.0, clock=time.monotonic,
+class Mover:
+    """Relays the steps of one switch ("wifi" or "bt") to push(kind, text, done=, error=, step=, of=, label=) and remembers
+    the last one, so the end of the move (or its failure) names the step it stopped at. `tail` says the last step reported
+    finishes through on_later (the old Wi-Fi going off), so the move is not over when use_wifi returns. ok_text replaces
+    the text of a good ending."""
+
+    def __init__(self, push, kind, ok_text=None):
+        self._push, self.kind, self.ok_text, self.text, self.info, self.tail = push, kind, ok_text, "", {}, False
+
+    def step(self, text, step=None, of=None, label=None, later=False):
+        self.text, self.info, self.tail = text, {"step": step, "of": of, "label": label}, later
+        self._push(self.kind, text, **self.info)
+
+    def end(self, text, ok):
+        self._push(self.kind, self.ok_text if ok and self.ok_text else text, done=True, error=not ok, **self.info)
+
+    def returned(self):
+        """use_wifi came back: Wi-Fi works, and unless the old one is still going off, the move is over."""
+        if not self.tail:
+            self.end(self.text, True)
+
+
+def use_wifi(target, *, on_step=lambda *a, **k: None, on_later=lambda text, ok: None, path, wait=20.0, clock=time.monotonic,
              sleep=time.sleep, spawn=lambda f: threading.Thread(target=f, name="wifi-move", daemon=True).start()):
     """Make `target` the adapter Wi-Fi uses. Any failure leaves the old adapter working. Returns once Wi-Fi works;
     the old Wi-Fi then goes off in the background (spawn). on_later(text, ok) reports how that went; the lock is held
-    until it's over, so a second switch (Wi-Fi or Bluetooth) can't overlap it. Bluetooth is not touched."""
+    until it's over, so a second switch (Wi-Fi or Bluetooth) can't overlap it. Bluetooth is not touched.
+    on_step(text, step=n, of=total, label=...) reports each step as it starts; the last one, the old Wi-Fi going off
+    (later=True), ends through on_later."""
     if not _lock.acquire(blocking=False):
         raise _busy()
     move = None
@@ -185,12 +213,12 @@ def use_wifi(target, *, on_step=lambda text: None, on_later=lambda text, ok: Non
             _lock.release()
 
 
-def use_bt(target, *, on_later=lambda text, ok: None, path,
+def use_bt(target, *, on_step=lambda *a, **k: None, on_later=lambda text, ok: None, path,
            spawn=lambda f: threading.Thread(target=f, name="bt-move", daemon=True).start()):
     """Make `target` the Bluetooth radio in use. Returns at once: the move runs in the background (spawn), because taking
     a radio off can take a minute while Windows removes its paired devices' audio drivers. on_later(text, ok) reports
-    how it went; the lock is held until then. The choice is saved only when the move worked, so the watchdog never
-    retries a failed one."""
+    how it went; the lock is held until then. on_step reports bt.switch's phases (bt.STEPS of them). The choice is saved
+    only when the move worked, so the watchdog never retries a failed one."""
     if not _lock.acquire(blocking=False):
         raise _busy()
     started = False
@@ -200,7 +228,8 @@ def use_bt(target, *, on_later=lambda text, ok: None, path,
             raise HwError(f"The {_name(target)} isn't plugged in.")
         if not devs[target]["bt"]:
             raise HwError(f"The {_name(target)} has no Bluetooth device to turn on.")
-        spawn(lambda: _finish_bt(target, path, on_later))
+        on_step(f"Moving Bluetooth to the {_name(target)}. This can take up to a minute.", step=0, of=bt.STEPS, label="Starting")  # before the move can end
+        spawn(lambda: _finish_bt(target, path, on_later, on_step))
         started = True
     finally:
         if not started:
@@ -243,13 +272,13 @@ def _finish(target, old, wifi_dev, on_later):
             "and plug it back in (or restart the PC), then switch again.", f"The {_name(old)} is off.", on_later)
 
 
-def _finish_bt(target, path, on_later):
+def _finish_bt(target, path, on_later, on_step=lambda *a, **k: None):
     """The Bluetooth move: bt.switch puts the old radio back if the new one doesn't start."""
     old = "builtin" if target == "unigen" else "unigen"
 
     def work():
         try:
-            bt.switch(target)
+            bt.switch(target, on_step=on_step)
         except Exception as e:
             log.warning("moving Bluetooth to %s failed: %s", target, e, exc_info=True)
             return [str(e) if isinstance(e, bt.StuckRadio)
@@ -271,12 +300,21 @@ def _use(target, on_step, path, wait, clock, sleep):
         raise HwError(f"The {_name(target)} has no Wi-Fi device to turn on.{back}")
     if t["wifi"]["ok"] and not (o.get("wifi") and o["wifi"]["ok"]):  # already in use
         save_choice(path, "wifi", target)
-        on_step(f"Done. Using the {_name(target)}.")
+        on_step(f"Done. Using the {_name(target)}.", step=1, of=1, label="Already in use")
         return target, None
     old_iface = _iface(old) if old else None
+    ssid = old_iface.get("ssid") if old_iface and old_iface.get("state") == "connected" else None
+    wifi_dev = o["wifi"] if o.get("wifi") and not o["wifi"]["disabled"] else None  # the old Wi-Fi goes off in the background
+    of = 2 + 2 * bool(ssid) + bool(wifi_dev)
+    say = lambda n, label, **k: on_step(f"{label}…", step=n, of=of, label=label, **k)
     bail = lambda: _undo(t, target)  # Wi-Fi failed: only the target's Wi-Fi needs undoing
-    up = lambda: wifi_on(target, t["wifi"], wait=wait, clock=clock, sleep=sleep) and _wait_iface(target, wait, clock, sleep)
-    on_step(f"Turning on the {_name(target)}…")
+
+    def up():
+        if not wifi_on(target, t["wifi"], wait=wait, clock=clock, sleep=sleep):
+            return False
+        say(2, "Waiting for it to start")
+        return _wait_iface(target, wait, clock, sleep)
+    say(1, f"Turning on the {_name(target)}")
     try:
         if not up():
             finished, err = _bounded(lambda: _settled(disable, t["wifi"]["id"], sleep), RESTART_LIMIT)  # restart once: clears a half-started driver
@@ -293,9 +331,8 @@ def _use(target, on_step, path, wait, clock, sleep):
         bail()
         raise HwError(f"Couldn't turn on the {_name(target)}.{back}") from None
     try:
-        ssid = old_iface.get("ssid") if old_iface and old_iface.get("state") == "connected" else None
         if ssid:
-            on_step(f"Connecting to {ssid}…")
+            say(3, f"Finding {ssid}")
             ti = _iface(target)
             names = wifi.profiles().get(ti["name"], [])
             if ssid not in names and wifi.profile_name(ssid) not in names:
@@ -304,14 +341,17 @@ def _use(target, on_step, path, wait, clock, sleep):
                 bail()
                 fix = "Unplug it and plug it back in" if target == "unigen" else "Restart the PC"
                 raise HwError(f"The {_name(target)} can't see any Wi-Fi network. {fix}, then switch again.{back}")
+            say(4, f"Connecting to {ssid}")
             wifi.connect(ti["name"], ssid, saved=True)
     except _FAIL as e:
         log.warning("switch to %s failed: %s", target, e, exc_info=True)
         bail()
         raise HwError(f"Couldn't finish switching to the {_name(target)}.{back}") from None
     save_choice(path, "wifi", target)  # Wi-Fi works: the old one goes off in the background
-    on_step(f"Done. Using the {_name(target)}.")
-    wifi_dev = o["wifi"] if o.get("wifi") and not o["wifi"]["disabled"] else None
+    if wifi_dev:
+        say(of, f"Turning off the {_name(old)}", later=True)
+    else:
+        on_step(f"Done. Using the {_name(target)}.", step=of, of=of, label="Done")
     return target, (target, old, wifi_dev) if wifi_dev else None
 
 
@@ -356,8 +396,9 @@ class Follower:
     """One pass every few seconds (step): keeps the saved choices true after a restart, and follows the dongle
     being unplugged (turn the built-in adapter on) and plugged back in (restore each switch that was on the dongle)."""
 
-    def __init__(self, path, notify, *, admin, use_wifi=use_wifi, use_bt=use_bt):
+    def __init__(self, path, notify, *, admin, use_wifi=use_wifi, use_bt=use_bt, push=lambda *a, **k: None):
         self._path, self._notify, self._admin, self._use = path, notify, admin, {"wifi": use_wifi, "bt": use_bt}
+        self._push = push  # the steps of its own switches, so the windows show them like any other move
         self._first, self._was_present, self._told, self._lost = True, None, False, 0
         self._queue = []  # switches to put right, one per pass: a Wi-Fi switch's tail holds the lock before Bluetooth can go
 
@@ -373,12 +414,17 @@ class Follower:
         log.info("watchdog: switching %s to %s", kind, choice)
         # Wi-Fi is done when the call returns; Bluetooth moves in the background and says so itself
         later = (lambda text, ok: ok or self._notify(text, False)) if kind == "wifi" else (lambda text, ok: self._notify(text, ok))
+        m = Mover(self._push, kind, f"Wi-Fi moved to the {_name(choice)}." if kind == "wifi" else None)
         try:
-            self._use[kind](choice, path=self._path, on_later=later)
+            self._use[kind](choice, path=self._path, on_step=m.step, on_later=lambda text, ok: (m.end(text, ok), later(text, ok)))
         except HwError as e:
             log.warning("watchdog: %s switch to %s failed: %s", kind, choice, e)
+            if not isinstance(e, Busy):
+                m.end(str(e), False)
             self._notify(str(e), False)
         else:
+            if kind == "wifi":
+                m.returned()
             if ok_text:
                 self._notify(ok_text, True)
 
