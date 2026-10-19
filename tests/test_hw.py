@@ -648,13 +648,83 @@ def test_follow_replug_switches_back_once(monkeypatch, tmp_path):
     pc.state["builtin"] = True  # what the unplug step enabled
     pc.plugged = True
     f.step()
-    assert pc.used == [("wifi", "unigen")]  # Wi-Fi first: its tail holds the lock, so Bluetooth waits for the next pass
+    assert pc.used == [("wifi", "unigen"), ("bt", "unigen")]  # Wi-Fi first; Bluetooth follows in the same pass
     f.step()
     f.step()
     f.step()
     assert pc.used == [("wifi", "unigen"), ("bt", "unigen")]
     assert pc.notes == [("The dongle was unplugged. Using the built-in adapter.", True),
                         ("Dongle plugged in. Using the dongle.", True)]  # one notice, not two
+
+
+def test_watchdog_starts_the_bluetooth_restore_as_soon_as_the_wifi_tail_frees_the_lock(monkeypatch, tmp_path):
+    """After a re-plug the Wi-Fi tail (the old Wi-Fi going off) holds the lock; Bluetooth must not wait for the next 5 s pass."""
+    pc = Pc(monkeypatch, tmp_path)
+    slept = []
+
+    def use_wifi(target, **kw):  # like hw.use_wifi: returns with the tail still holding the lock
+        pc.used.append(("wifi", target))
+        hw._lock.acquire()
+
+    def use_bt(target, **kw):
+        assert not hw._lock.locked()  # Bluetooth only starts once the tail let go
+        pc.used.append(("bt", target))
+
+    def sleep(s):
+        slept.append(s)
+        if len(slept) == 3:
+            hw._lock.release()  # the tail finishes during the wait
+    now = [0.0]
+    f = hw.Follower(pc.path, lambda t, c: None, admin=True, use_wifi=use_wifi, use_bt=use_bt, sleep=sleep,
+                    clock=lambda: now.__setitem__(0, now[0] + 0.25) or now[0])
+    f.step()
+    pc.plugged = False
+    f.step()
+    pc.state["builtin"] = True
+    pc.plugged = True
+    f.step()
+    assert pc.used == [("wifi", "unigen"), ("bt", "unigen")] and len(slept) == 3  # one wait, then straight on
+    assert not hw._lock.locked()
+
+
+def test_watchdog_gives_up_waiting_for_a_lock_that_never_frees(monkeypatch, tmp_path):
+    pc = Pc(monkeypatch, tmp_path)
+    now = [0.0]
+
+    def use_wifi(target, **kw):
+        pc.used.append(("wifi", target))
+        hw._lock.acquire()
+    f = hw.Follower(pc.path, lambda t, c: None, admin=True, use_wifi=use_wifi, use_bt=pc.use_bt,
+                    sleep=lambda s: now.__setitem__(0, now[0] + s), clock=lambda: now[0])
+    try:
+        f.step()
+        pc.plugged = False
+        f.step()
+        pc.state["builtin"] = True
+        pc.plugged = True
+        f.step()
+        assert pc.used == [("wifi", "unigen")] and now[0] >= hw.BT_STUCK  # bounded; the next pass tries again
+    finally:
+        hw._lock.release()
+
+
+def test_mover_logs_each_steps_duration_and_the_total(caplog):
+    caplog.set_level("INFO", logger="unigen")
+    now = [100.0]
+    m = hw.Mover(lambda *a, **k: None, "bt", clock=lambda: now[0])
+    m.step("Moving…", step=0, of=4, label="Starting")  # the pre-move note isn't a step
+    now[0] += 0.1
+    m.step("Turning off…", step=2, of=4, label="Turning off the Built-in MediaTek radio")
+    now[0] += 31.4
+    m.step("Starting…", step=3, of=4, label="Starting the Unigen dongle radio")
+    now[0] += 3.0
+    m.end("Bluetooth moved to the Unigen dongle.", True)
+    assert "bt step 2/4 Turning off the Built-in MediaTek radio: 31.4 s" in caplog.text
+    assert "bt step 3/4 Starting the Unigen dongle radio: 3.0 s" in caplog.text
+    assert "step 0/4" not in caplog.text and "bt move done: 34.5 s in all" in caplog.text
+    caplog.clear()
+    m.end("again", True)  # a second end doesn't repeat the step line
+    assert "step 3/4" not in caplog.text
 
 
 @pytest.mark.parametrize("wifi_choice, bt_choice, restored", [
@@ -698,14 +768,14 @@ def test_follow_failed_replug_retries_after_next_unplug(monkeypatch, tmp_path):
     f.step()
     pc.plugged = True
     f.step()
-    assert pc.used == [("wifi", "unigen"), ("wifi", "unigen")]  # the queue is dropped at the unplug, then filled again
+    assert pc.used == [("wifi", "unigen"), ("bt", "unigen")] * 2  # the queue is dropped at the unplug, then filled again
 
 
 def test_follow_startup_enforces_each_choice(monkeypatch, tmp_path):
     pc = Pc(monkeypatch, tmp_path, choice="builtin", unigen_on=True)  # Windows brought the dongle back after a restart
     f = pc.follower()
     f.step()
-    assert pc.used == [("wifi", "builtin")]  # Bluetooth waits for the next pass: the Wi-Fi tail holds the lock
+    assert pc.used == [("wifi", "builtin"), ("bt", "builtin")]  # Bluetooth follows Wi-Fi in the same pass
     f.step()
     f.step()
     assert pc.used == [("wifi", "builtin"), ("bt", "builtin")] and pc.notes == [("Using the Built-in MediaTek.", True)]

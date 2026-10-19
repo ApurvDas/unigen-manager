@@ -13,10 +13,12 @@ _set = pnp.set_enabled  # tests replace this
 _switch_lock = threading.Lock()
 SERVICE_TOGGLE = True  # Way 2 of audio connect; the hardware check in Task 7 decides whether it stays.
 _OFF_WAIT = 45  # s: disabling a radio tears down its paired devices' audio first, which can take 25 s
-_DROP_WAIT = 10  # s: how long a switch waits for the earbuds it disconnected to read disconnected
+_DROP_WAIT = 10  # s: how long a switch waits for a device it asked (through the audio driver) to read disconnected
+_AUDIO_DROP_WAIT = 3  # s: the same after the service toggle, which unloads the audio drivers itself and drops at once
+_AUDIO_KINDS = ("Headphones", "Speaker", "Audio")
 STEPS = 4  # what a switch reports: devices disconnect, old radio off, new radio on, devices reconnect
 _VETO_EVERY = 2  # s: least time between two looks at the event log while a radio refuses to turn off
-_SETTLE = 2  # s: pause after they drop (and before reconnecting on the new radio) so audiodg lets go of / finds the audio endpoint
+_SETTLE = 1  # s: pause after devices were taken off, so audiodg lets go of the audio endpoint before the radio goes
 LMP = {6: "4.0", 7: "4.1", 8: "4.2", 9: "5.0", 10: "5.1", 11: "5.2", 12: "5.3", 13: "5.4", 14: "6.0"}
 AUDIO_SERVICES = ["0000110B-0000-1000-8000-00805F9B34FB", "0000111E-0000-1000-8000-00805F9B34FB"]  # A2DP sink, Hands-free
 
@@ -134,7 +136,7 @@ def _switch(target, *, wait=20.0, clock=time.monotonic, sleep=time.sleep, on_ste
         while clock() < deadline:
             # Windows' radio object follows the device by a few seconds ("unknown" until then) and Connect fails before it
             if any(r["key"] == target and r["ok"] for r in radios()) and _radio_up() and power() != "unknown":  # one radio runs at a time
-                _reconnect(held, sleep, step)
+                _reconnect(held, step)
                 return target
             sleep(1)
     except winrun.CmdError:
@@ -154,12 +156,38 @@ def _switch(target, *, wait=20.0, clock=time.monotonic, sleep=time.sleep, on_ste
     raise BtError(f"The {_label(target)} radio didn't start.{back}")
 
 
+def _is_audio(r):
+    """A connected device Windows would have to tear audio drivers down for when its radio goes off: by its kind, or
+    because a Bluetooth audio driver is loaded for it (a TV, a car kit)."""
+    if r.get("kind") in _AUDIO_KINDS:
+        return True
+    try:
+        return bool(_ks_filters(r["address"]))
+    except (OSError, ValueError, ctypes.ArgumentError, AttributeError):
+        return False
+
+
+def _let_go(r, log):
+    """Ask one connected device to disconnect; returns the way that worked. An audio device goes straight to the service
+    toggle, which unloads its audio drivers in one go: waiting out the audio-driver disconnect first left the old radio's
+    turn-off 42-51 s of teardown, against 10 s after the toggle. If the toggle fails (or the device has no audio
+    services) it takes the audio-driver path like any other device."""
+    if _is_audio(r):
+        try:
+            _set_audio(r["address"], [0])
+            return "service toggle"
+        except (BtError, OSError, ValueError, ctypes.ArgumentError, AttributeError) as e:
+            log.warning("service toggle for %s failed, asking through the audio driver: %s: %s", r["name"], type(e).__name__, e)
+    return disconnect(r["address"], r["name"], open_settings=None) or "audio driver"
+
+
 def _disconnect_first(clock, sleep, step=lambda n, label: None):
     """Disconnect the connected paired devices before the radio they're on goes off: Windows vetoes removing a radio
     while audiodg holds a connected device's audio endpoint (Kernel-PnP 225), and retrying the disable doesn't help.
-    A device that still reads connected after _DROP_WAIT gets the service toggle too, which unloads its audio drivers
-    (connect() turns them back on). Best effort, never opens Windows Settings. Each way used, and whether the device
-    dropped, goes to app.log. Returns the (address, name) of every device that was connected."""
+    Audio devices are unloaded with the service toggle and given _AUDIO_DROP_WAIT to drop; the others are asked through
+    the audio driver and given _DROP_WAIT, and one that still reads connected then gets the service toggle too (connect()
+    turns the services back on). Best effort, never opens Windows Settings. Each way used, and whether and how fast the
+    device dropped, goes to app.log. Returns the (address, name) of every device that was connected."""
     log = logging.getLogger("unigen")
     try:
         live = [r for r in btwinrt.paired() if r["connected"]]
@@ -169,12 +197,16 @@ def _disconnect_first(clock, sleep, step=lambda n, label: None):
     if not live:
         return []
     step(1, "Disconnecting your devices")
-    gone = []
+    gone, toggled, asked = [], set(), {}
     for r in live:
+        began = clock()
         try:
-            way = disconnect(r["address"], r["name"], open_settings=None)
+            way = _let_go(r, log)
             gone.append(r["address"])
-            log.info("disconnect %s: asked through the %s", r["name"], way or "audio driver")
+            asked[r["address"]] = clock()
+            if way == "service toggle":
+                toggled.add(r["address"])
+            log.info("disconnect %s: asked through the %s (%.1f s)", r["name"], way, clock() - began)
         except Exception as e:  # a mouse has no audio to drop; whatever fails, the switch goes on
             log.warning("couldn't disconnect %s before the switch: %s", r["name"], e)
 
@@ -184,31 +216,40 @@ def _disconnect_first(clock, sleep, step=lambda n, label: None):
         except BtError:
             return None
     if gone:
-        deadline, left = clock() + _DROP_WAIT, connected()
-        while left and clock() < deadline:
+        wait = _DROP_WAIT if set(gone) - toggled else _AUDIO_DROP_WAIT
+        deadline, left, dropped = clock() + wait, connected(), {}
+        while True:
+            dropped.update({a: clock() for a in gone if a not in (left or []) and a not in dropped})
+            if not left or clock() >= deadline:
+                break
             sleep(1)
             left = connected()
         for r in live:
             if left and r["address"] in left:
-                log.warning("%s still connected after %d s; unloading its audio services", r["name"], _DROP_WAIT)
+                if r["address"] in toggled:
+                    log.warning("%s still connected %d s after its audio services were unloaded", r["name"], wait)
+                    continue
+                log.warning("%s still connected after %d s; unloading its audio services", r["name"], wait)
                 try:
                     _set_audio(r["address"], [0])
                 except (BtError, OSError, ValueError, ctypes.ArgumentError, AttributeError) as e:
                     log.warning("service toggle for %s failed: %s: %s", r["name"], type(e).__name__, e)
-        sleep(_SETTLE)
+        sleep(_SETTLE)  # something was taken off: give audiodg a moment before the radio goes
         after = connected() if left else []
         for r in live:
-            if r["address"] in gone:
-                log.info("%s %s", r["name"], "is still connected" if r["address"] in (after or []) else "dropped")
+            a = r["address"]
+            if a in gone:
+                log.info("%s", f"{r['name']} is still connected" if a in (after or []) else
+                         f"{r['name']} dropped after {dropped.get(a, clock()) - asked[a]:.1f} s")
     return [(r["address"], r["name"]) for r in live]
 
 
-def _reconnect(devs, sleep, step=lambda n, label: None):
-    """Best effort: bring the devices that were connected back on the radio that just came up. One that isn't paired
-    on it raises NotPairedHere; the UI already offers Re-pair, so that's just logged."""
+def _reconnect(devs, step=lambda n, label: None):
+    """Best effort: bring the devices that were connected back on the radio that just came up (it is ready: _switch waited
+    for Windows' radio object, so no pause here). One that isn't paired on it raises NotPairedHere; the UI already
+    offers Re-pair, so that's just logged."""
     if devs:
         step(4, "Reconnecting your devices")
-        sleep(_SETTLE)
     for address, name in devs:
         try:
             connect(address, name, open_settings=None)

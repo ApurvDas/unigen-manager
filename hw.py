@@ -118,8 +118,8 @@ def dongle_state(devs):
 
 # ---- the switch ----
 _lock = threading.Lock()
-# s: a Bluetooth move this long has hung in a driver (tests lower it). A normal move is disconnect wait (10) + settles (2+2)
-# + old radio off (up to 45) + target on (up to 20) = 79, plus the per-device disconnect/reconnect calls: 150 leaves room.
+# s: a Bluetooth move this long has hung in a driver (tests lower it). A normal move is disconnect wait (10) + settle (1)
+# + old radio off (up to 45) + target on (up to 20) = 76, plus the per-device disconnect/reconnect calls: 150 leaves room.
 BT_STUCK = 150
 RESTART_LIMIT = 30  # s: restarting a half-started Wi-Fi driver; longer means it's not answering (tests lower it)
 LOST_PASSES = 3  # watchdog passes (a few seconds each) the dongle's Wi-Fi may lack its WLAN interface before it counts as crashed
@@ -175,16 +175,27 @@ class Mover:
     """Relays the steps of one switch ("wifi" or "bt") to push(kind, text, done=, error=, step=, of=, label=) and remembers
     the last one, so the end of the move (or its failure) names the step it stopped at. `tail` says the last step reported
     finishes through on_later (the old Wi-Fi going off), so the move is not over when use_wifi returns. ok_text replaces
-    the text of a good ending."""
+    the text of a good ending. Each step's duration and the total go to app.log ("bt step 2/4 Turning off ...: 31.4 s")."""
 
-    def __init__(self, push, kind, ok_text=None):
+    def __init__(self, push, kind, ok_text=None, clock=time.monotonic):
         self._push, self.kind, self.ok_text, self.text, self.info, self.tail = push, kind, ok_text, "", {}, False
+        self._clock, self._began, self._at = clock, clock(), None
+
+    def _lap(self):
+        """The step in progress is over: log how long it took."""
+        if self._at is not None and self.info.get("step"):
+            log.info("%s step %d/%d %s: %.1f s", self.kind, self.info["step"], self.info["of"], self.info["label"],
+                     self._clock() - self._at)
+        self._at = None
 
     def step(self, text, step=None, of=None, label=None, later=False):
-        self.text, self.info, self.tail = text, {"step": step, "of": of, "label": label}, later
+        self._lap()
+        self.text, self.info, self.tail, self._at = text, {"step": step, "of": of, "label": label}, later, self._clock()
         self._push(self.kind, text, **self.info)
 
     def end(self, text, ok):
+        self._lap()
+        log.info("%s move %s: %.1f s in all", self.kind, "done" if ok else "failed", self._clock() - self._began)
         self._push(self.kind, self.ok_text if ok and self.ok_text else text, done=True, error=not ok, **self.info)
 
     def returned(self):
@@ -396,19 +407,31 @@ class Follower:
     """One pass every few seconds (step): keeps the saved choices true after a restart, and follows the dongle
     being unplugged (turn the built-in adapter on) and plugged back in (restore each switch that was on the dongle)."""
 
-    def __init__(self, path, notify, *, admin, use_wifi=use_wifi, use_bt=use_bt, push=lambda *a, **k: None):
+    def __init__(self, path, notify, *, admin, use_wifi=use_wifi, use_bt=use_bt, push=lambda *a, **k: None,
+                 clock=time.monotonic, sleep=time.sleep):
         self._path, self._notify, self._admin, self._use = path, notify, admin, {"wifi": use_wifi, "bt": use_bt}
         self._push = push  # the steps of its own switches, so the windows show them like any other move
         self._first, self._was_present, self._told, self._lost = True, None, False, 0
-        self._queue = []  # switches to put right, one per pass: a Wi-Fi switch's tail holds the lock before Bluetooth can go
+        self._clock, self._sleep = clock, sleep
+        self._queue = []  # switches to put right, one per move: a Wi-Fi switch's tail holds the lock before Bluetooth can go
 
     def step(self):
         if not self._admin:
             return
         try:
             self._step()
+            for _ in range(2):  # a restore left the next one queued: start it as soon as the Wi-Fi tail frees the lock
+                if not self._queue or not self._lock_freed():
+                    break
+                self._step()
         except Exception:
             log.exception("watchdog pass failed")
+
+    def _lock_freed(self):
+        deadline = self._clock() + BT_STUCK
+        while _lock.locked() and self._clock() < deadline:
+            self._sleep(0.25)
+        return not _lock.locked()
 
     def _switch(self, kind, choice, ok_text):
         log.info("watchdog: switching %s to %s", kind, choice)
