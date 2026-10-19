@@ -4,7 +4,8 @@
 // MOCK_UNPLUG = "unigen" | "builtin", MOCK_ADMIN = false, MOCK_HOSTILE (adds a network, saved profile and paired device named like an HTML tag),
 // MOCK_SEARCH_HOLD (the Bluetooth search never finishes), MOCK_PAIR_TWIN (pairing races a paired-list refresh), MOCK_BT_OFF (Bluetooth starts off),
 // MOCK_BOTH_ON (neither adapter is switched off, like before the first switch), MOCK_OTHER_RADIO (two paired devices are paired
-// only with the other radio: Re-pair instead of Connect). window.mockApi._setUsing(key) changes the adapter in use;
+// only with the other radio: Re-pair instead of Connect), MOCK_BT_FAIL = "message" (the background Bluetooth move fails).
+// window.mockApi._setUsing(key, kind) changes the adapter Wi-Fi ("wifi") or Bluetooth ("bt") uses, both without a kind;
 // mockApi._setConnected(id, on) connects a paired device behind the app's back (as Windows Settings would);
 // mockApi._setHere(id, on) moves a paired device to / from the other radio behind the app's back.
 // Mock nearby devices carry ceremony null | "confirm" | "display" | "provide"; the PIN shown is 482913 and the right provide PIN is 0000.
@@ -43,7 +44,7 @@ window.mockApi = (() => {
     builtin: new Set(["HOME-5G", "phone_hotspot", "Cafe_wifi", "Guest_net 2", "Guest_net"]),
   };
   const SEC = { "WPA2-Personal": "WPA2", "Open": "Open" };
-  let USING = "unigen"; // the adapter in use; the other one's Wi-Fi is switched off (unless MOCK_BOTH_ON)
+  let WIFI = "unigen", RADIO = "unigen"; // the adapter Wi-Fi uses (the other one's Wi-Fi is switched off, unless MOCK_BOTH_ON) and the one Bluetooth uses
   let POWER = window.MOCK_BT_OFF ? "off" : "on", searchTimers = [], answer = null;
   const PAIRED = [
     { id: "BT-beats", name: "Den Beats Pill", connected: true, kind: "Speaker", address: "A1B2C3D4E5F1", lastBattery: 90 },
@@ -82,7 +83,8 @@ window.mockApi = (() => {
   for (const k of ["unigen", "builtin"]) RESULTS[k] = result(Array.from({ length: 40 }, (_, i) => sample(i, ...BASE[k])), k === "unigen" ? 433 : 866, "2026-10-12 23:00");
 
   const plugged = () => ADAPTERS.filter(a => a.key !== window.MOCK_UNPLUG);
-  const using = () => (plugged().find(a => a.key === USING) || plugged()[0]).key; // unplugging the dongle falls back, like the watchdog
+  const pick = key => (plugged().find(a => a.key === key) || plugged()[0]).key; // unplugging the dongle falls back, like the watchdog
+  const using = () => pick(WIFI), radio = () => pick(RADIO);
   const off = a => !window.MOCK_BOTH_ON && a.key !== using();
   const live = () => plugged().filter(a => !off(a)); // adapters with a Wi-Fi interface right now
   const adapter = key => {
@@ -101,7 +103,7 @@ window.mockApi = (() => {
     return { networks: nets, scanned_at: Date.now() / 1000 };
   };
 
-  def("app_info", 0, () => ({ version: "0.0.0-mock", admin: window.MOCK_ADMIN !== false, using: using(),
+  def("app_info", 0, () => ({ version: "0.0.0-mock", admin: window.MOCK_ADMIN !== false, wifi_using: using(),
     adapters: plugged().map(a => ({ key: a.key, name: a.name, wifi: off(a) ? null : "Wi-Fi 6", bt: a.bt, using: a.key === using(), off: off(a) })) }));
   def("adapters", 0, () => live().map(a => {
     const on = a.state === "connected";
@@ -135,13 +137,13 @@ window.mockApi = (() => {
   def("copy_profile", 1200, (ssid, src, dst) => { adapter(src); adapter(dst); PROFILES[dst].add(ssid); });
   def("delete_profile", 300, ssid => { Object.values(PROFILES).forEach(p => p.delete(ssid)); });
   const row = d => ({ id: d.id, ids: [d.id], name: d.name, kind: d.kind, connected: !!d.connected, address: d.address, here: true });
-  const otherName = () => NAMES[using() === "unigen" ? "builtin" : "unigen"];
+  const otherName = () => NAMES[radio() === "unigen" ? "builtin" : "unigen"];
   // a paired device as bt_paired lists it; one paired only on the other radio also names both radios
   const view = ({ lastBattery, here, ...d }) => ({ ...d, ids: d.ids || [d.id], battery: d.connected ? lastBattery ?? null : null, here: here !== false,
-    ...(here === false && { radio_name: otherName(), here_name: NAMES[using()] }) });
+    ...(here === false && { radio_name: otherName(), here_name: NAMES[radio()] }) });
   const push = (devices, done) => window.onBtNearby && window.onBtNearby({ devices: devices.map(row), done });
-  def("bt_radio", 100, () => ({ active: using(), can_switch: window.MOCK_ADMIN !== false, power: POWER,
-    radios: plugged().map(a => ({ key: a.key, name: a.name, ok: a.key === using(), disabled: a.key !== using(), version: a.bt })) }));
+  def("bt_radio", 100, () => ({ active: radio(), can_switch: window.MOCK_ADMIN !== false, power: POWER,
+    radios: plugged().map(a => ({ key: a.key, name: a.name, ok: a.key === radio(), disabled: a.key !== radio(), version: a.bt })) }));
   def("bt_power", 600, on => { POWER = on ? "on" : "off"; return { power: POWER }; });
   def("bt_paired", 200, () => PAIRED.map(view));
   def("bt_search_start", 100, () => {
@@ -203,26 +205,40 @@ window.mockApi = (() => {
   });
   def("speed_results", 0, () => JSON.parse(JSON.stringify(RESULTS)));
   // tray widget
-  def("switch_to", 0, async key => {
-    if (window.MOCK_ADMIN === false) throw new Error("Switching adapters needs administrator rights. Restart the app and choose Yes.");
+  const need = () => { if (window.MOCK_ADMIN === false) throw new Error("Switching adapters needs administrator rights. Restart the app and choose Yes."); };
+  const say = (kind, text, done, error = false) => window.onSwitchStep && window.onSwitchStep({ kind, text, done, error });
+  def("switch_wifi", 0, async key => {
+    need();
     const t = plugged().find(a => a.key === key);
     if (!t) throw new Error(`The ${NAMES[key] || key} isn't plugged in.`);
-    const old = plugged().find(a => a.key !== key), say = (text, done) => window.onSwitchStep && window.onSwitchStep({ text, done, error: false });
+    const old = plugged().find(a => a.key !== key);
     for (const text of [`Turning on the ${t.name}…`, "Connecting to HOME-5G…"]) {
-      say(text, false);
+      say("wifi", text, false);
       await wait(300);
     }
-    USING = key;
+    WIFI = key;
     t.state = "connected"; t.ssid = "HOME-5G";
-    say(`Done. Using the ${t.name}.${old ? " Bluetooth is moving too; this can take up to a minute." : ""}`, true);
-    if (old) wait(600).then(() => say(`Bluetooth moved to the ${t.name}.`, true));  // like hw: the old Wi-Fi and Bluetooth finish later
+    say("wifi", `Done. Using the ${t.name}.`, true);
+    if (old) wait(600).then(() => say("wifi", `The ${old.name} is off.`, true));  // like hw: the old Wi-Fi goes off after the switch reports done
+    return { using: key };
+  });
+  def("switch_bt", 0, async key => {
+    need();
+    const t = plugged().find(a => a.key === key);
+    if (!t) throw new Error(`The ${NAMES[key] || key} isn't plugged in.`);
+    say("bt", `Moving Bluetooth to the ${t.name}. This can take up to a minute.`, false);
+    wait(600).then(() => {  // like hw: the move ends in the background
+      if (window.MOCK_BT_FAIL) return say("bt", window.MOCK_BT_FAIL, true, true);
+      RADIO = key;
+      say("bt", `Bluetooth moved to the ${t.name}.`, true);
+    });
     return { using: key };
   });
   def("is_visible", 0, which => true);
   def("open_main", 0, () => null);
   def("hide_widget", 0, () => null);
   def("widget_fit", 0, () => null);
-  api._setUsing = key => { USING = key; }; // test hook
+  api._setUsing = (key, kind) => { if (kind !== "bt") WIFI = key; if (kind !== "wifi") RADIO = key; }; // test hook
   api._setConnected = (id, on) => { PAIRED.find(d => d.id === id).connected = on; }; // test hook
   api._setHere = (id, on) => { PAIRED.find(d => d.id === id).here = on; }; // test hook
   return api;

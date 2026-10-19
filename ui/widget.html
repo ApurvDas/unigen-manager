@@ -23,7 +23,7 @@
   .widget .btn { padding: 5px 11px; font-size: 13px; white-space: nowrap; }
   .widget .btn:not(.primary) { background: var(--panel); }
 
-  /* Using: Dongle | Built-in (.seg is in shared.css) */
+  /* Wi-Fi and Bluetooth: Dongle | Built-in (.seg is in shared.css) */
   .uses { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
   .uses .lbl { color: var(--muted); font-size: 13px; }
 
@@ -98,7 +98,7 @@
     </button>
   </header>
   <div class="sec">
-    <div class="uses"><span class="lbl" id="usesLbl">Using</span><div class="seg" role="radiogroup" aria-labelledby="usesLbl"></div></div>
+    <div class="uses"><span class="lbl" id="wifiUseLbl">Wi-Fi</span><div class="seg" id="wifiUse" role="radiogroup" aria-labelledby="wifiUseLbl"></div></div>
     <div id="ads"></div>
     <p class="msg" id="wifiMsg"></p>
   </div>
@@ -108,6 +108,7 @@
     <p class="msg" id="netMsg"></p>
   </div>
   <div class="sec">
+    <div class="uses"><span class="lbl" id="btUseLbl">Bluetooth</span><div class="seg" id="btUse" role="radiogroup" aria-labelledby="btUseLbl"></div></div>
     <div class="bt">
       <button class="switch on" id="btPower" role="switch" aria-checked="true" aria-label="Bluetooth"><i></i></button>
       <span class="ver" id="btVer">Bluetooth</span>
@@ -147,7 +148,8 @@
 <script>
 // Tray widget. Inside the app it fills its own frameless window (Python shows it and calls onWidgetShown);
 // opened as widget.html?mock it floats above a fake taskbar for preview and tests.
-let INFO = null, ADS = [], uses = null, BT = null, RESULTS = {}, live = null, shown = false;
+let INFO = null, ADS = [], uses = null, BT = null, RESULTS = {}, live = null, shown = false;  // uses: the adapter Wi-Fi uses
+const wifiSeg = $("#wifiUse"), btSeg = $("#btUse");
 const NAME = k => (INFO && INFO.adapters.find(a => a.key === k) || {}).name || k;
 const COLOR = k => ({ unigen: "var(--uni)", builtin: "var(--bi)" })[k] || "var(--muted)";
 const note = (el, text, isErr) => setMsg(el, text, isErr, { clearAfter: isErr ? 0 : 4000 }); // a flyout stays compact
@@ -157,17 +159,17 @@ const fail = el => e => note(el, e.message, true);
 const level = s => s == null ? 0 : s >= 80 ? 4 : s >= 60 ? 3 : s >= 40 ? 2 : 1;
 const bars = s => `<span class="bars" aria-hidden="true">${[1, 2, 3, 4].map(i => `<i class="${i <= level(s) ? "lit" : ""}"></i>`).join("")}</span>`;
 function renderAdapters() {
-  buildSeg($(".seg"), INFO.adapters);
+  buildSeg(wifiSeg, SWITCH_KEYS); buildSeg(btSeg, SWITCH_KEYS);
   $("#ads").innerHTML = INFO.adapters.map(a => `
     <div class="ad" data-k="${esc(a.key)}">
       <span class="dot"></span><span class="name">${esc(a.name)}</span>
       <span class="ssid off">Checking…</span>
       <span class="sub"><span class="pct num">–</span>${bars(null)}<span class="rate">No link</span></span>
     </div>`).join("");
-  $$(".seg button").forEach(b => { b.addEventListener("click", () => switchTo(b)); b.disabled = !INFO.admin; });
-  $(".seg").title = INFO.admin ? "" : ADMIN_TIP;
+  enableSegs();
 }
-const markUses = instant => markSeg($(".seg"), uses, instant);
+const markUses = instant => { markSeg(wifiSeg, uses, instant); if (BT) markSeg(btSeg, BT.active, instant); };
+const enableSegs = () => { enableSeg(wifiSeg, INFO.admin, switching); enableSeg(btSeg, BT ? BT.can_switch : INFO.admin, switching); };
 // in place: only values that changed animate
 function updateAdapters() {
   for (const row of $$(".ad")) {
@@ -183,41 +185,63 @@ function updateAdapters() {
 }
 async function poll() {
   ADS = await call("adapters");
-  if (!uses || !ADS.some(a => a.key === uses)) uses = INFO.using || (ADS.find(a => a.state === "connected") || ADS[0] || {}).key || null;
+  if (!uses || !ADS.some(a => a.key === uses)) uses = INFO.wifi_using || (ADS.find(a => a.state === "connected") || ADS[0] || {}).key || null;
   updateAdapters(); markUses(true);
 }
-// One switch moves Wi-Fi and Bluetooth; Python pushes each step to onSwitchStep while it runs.
-let switching = false;
+// Python pushes each step of a switch to onSwitchStep while it runs. The two switches share one lock, so one runs at a time.
+let switching = false, btDone = null;  // btDone: resolves with the final step of the Bluetooth move this window started
 async function reloadAll() {  // after a switch, here or by the watchdog: new INFO, then everything that depends on it
-  INFO = await call("app_info"); uses = INFO.using;
+  INFO = await call("app_info"); uses = INFO.wifi_using;
   renderAdapters(); markUses(true);
   await poll();
   await Promise.all([loadNets(), loadBt(), loadSpeed(true)]);
 }
 window.onSwitchStep = s => {
-  note($("#wifiMsg"), s.text, s.error);
-  if (s.done && !s.error && !switching) reloadAll().catch(fail($("#wifiMsg")));  // switched from the other window
+  const bt = s.kind === "bt", msg = $(bt ? "#btMsg" : "#wifiMsg");
+  note(msg, s.text, s.error);
+  if (!s.done) return;
+  if (bt && btDone) btDone(s);
+  else if (!s.error && !switching) (bt ? loadBt() : reloadAll()).catch(fail(msg));  // switched from the other window
 };
 window.onUsingChanged = () => { if (!switching) reloadAll().catch(fail($("#wifiMsg"))); };
-async function switchTo(b) {
-  const k = b.dataset.k;
-  if (b.disabled || k === uses || switching) return;
+wifiSeg.addEventListener("click", async e => {
+  const b = e.target.closest("button");
+  if (!b || b.disabled || switching || b.getAttribute("aria-checked") === "true") return;
   const was = uses;
-  switching = true;
-  $$(".seg button").forEach(x => { x.disabled = true; });
-  markSeg($(".seg"), k);
-  note($("#wifiMsg"), `Switching to the ${NAME(k)}…`);
+  switching = true; enableSegs();
+  markSeg(wifiSeg, b.dataset.k);
+  note($("#wifiMsg"), `Switching to the ${NAME(b.dataset.k)}…`);
   try {
-    await call("switch_to", k);
+    await call("switch_wifi", b.dataset.k);
     await reloadAll();
-  } catch (e) {
+  } catch (err) {
     uses = was; markUses();
-    note($("#wifiMsg"), e.message, true);
+    note($("#wifiMsg"), err.message, true);
   } finally {
-    switching = false;
-    $$(".seg button").forEach(x => { x.disabled = !INFO.admin; });
+    switching = false; enableSegs();
   }
-}
+});
+// the call returns at once; the move ends with a done step, then the radio shown is the one Windows really has
+btSeg.addEventListener("click", async e => {
+  const b = e.target.closest("button");
+  if (!b || b.disabled || switching || b.getAttribute("aria-checked") === "true") return;
+  const was = BT.active;
+  switching = true; enableSegs();
+  markSeg(btSeg, b.dataset.k);
+  note($("#btMsg"), `Moving Bluetooth to the ${NAME(b.dataset.k)}…`);
+  const moved = new Promise(done => { btDone = done; });
+  try {
+    await call("switch_bt", b.dataset.k);
+    const s = await moved;
+    await loadBt();
+    if (s.error) note($("#btMsg"), s.text, true);
+  } catch (err) {
+    markSeg(btSeg, was);
+    note($("#btMsg"), err.message, true);
+  } finally {
+    btDone = null; switching = false; enableSegs();
+  }
+});
 
 // ================= saved networks in range (on the adapter Wi-Fi uses) =================
 async function loadNets() {
@@ -253,6 +277,8 @@ async function loadBt() {
   setText($("#btVer"), act && act.version ? `Bluetooth ${act.version}` : "Bluetooth");
   const level = dev && dev.battery != null ? ` · ${dev.battery}%` : "";
   setText($("#btDev"), on ? (dev ? dev.name + level : "No device connected") : "Bluetooth is off");
+  enableSeg(btSeg, BT.can_switch, switching);
+  markSeg(btSeg, BT.active, true);
 }
 
 $("#btPower").addEventListener("click", async function () {
@@ -363,7 +389,7 @@ if (MOCK) {
 
 (async function start() {
   try {
-    INFO = await call("app_info"); uses = INFO.using;
+    INFO = await call("app_info"); uses = INFO.wifi_using;
     renderAdapters();
     await refresh(false);
   } catch (e) { note($("#wifiMsg"), e.message, true); }

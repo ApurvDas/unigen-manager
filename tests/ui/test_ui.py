@@ -142,45 +142,131 @@ def test_delete_failure_keeps_row(open_page):
     expect(saved_row(pg, "oldrouter")).to_have_count(1)
 
 
-def using(pg, key):
-    return pg.locator(f'#using button[data-k="{key}"]')
+def wifi_use(pg, key):
+    return pg.locator(f'#wifiUse button[data-k="{key}"]')
+
+
+def bt_use(pg, key):
+    return pg.locator(f'#btUse button[data-k="{key}"]')
 
 
 def rail(pg, key):
     return pg.locator(f'.adapter[data-adapter="{key}"]')
 
 
-def test_using_switch_main(open_page):
+def test_wifi_switch_on_the_wifi_tab(open_page):
     pg = open_page()
-    expect(using(pg, "unigen")).to_have_attribute("aria-checked", "true")
-    expect(pg.locator("#using button")).to_have_text(["Dongle", "Built-in"])
+    expect(pg.locator("#usingBox")).to_have_count(0)  # the rail's single Using box is gone
+    expect(pg.locator("#wifiUse button")).to_have_text(["Dongle", "Built-in"])
+    expect(wifi_use(pg, "unigen")).to_have_attribute("aria-checked", "true")
     expect(rail(pg, "unigen").locator(".badge")).to_have_text("In use")
     expect(rail(pg, "builtin").locator(".badge")).to_have_count(0)
     expect(rail(pg, "builtin").locator(".meta b")).to_have_text("Off")
-    expect(pg.locator("#btLabel")).to_have_text("Bluetooth 5.4")
-    using(pg, "builtin").click()
-    expect(pg.locator("#switchMsg")).to_have_text("Bluetooth moved to the Built-in MediaTek.")
-    expect(using(pg, "builtin")).to_have_attribute("aria-checked", "true")
+    wifi_use(pg, "builtin").click()
+    expect(pg.locator("#wifiUseMsg")).to_have_text("The Unigen dongle is off.")
+    expect(wifi_use(pg, "builtin")).to_have_attribute("aria-checked", "true")
     expect(rail(pg, "builtin").locator(".badge")).to_have_text("In use")
     expect(rail(pg, "unigen").locator(".badge")).to_have_count(0)
     expect(rail(pg, "unigen").locator(".meta b")).to_have_text("Off")
-    expect(rail(pg, "builtin")).to_have_attribute("aria-pressed", "true")  # the Wi-Fi page follows the adapter in use
-    expect(pg.locator("#btLabel")).to_have_text("Bluetooth 5.2")
-    expect(pg.locator("#bt")).to_be_hidden()
+    expect(rail(pg, "builtin")).to_have_attribute("aria-pressed", "true")  # the Wi-Fi page follows the adapter Wi-Fi uses
+    expect(pg.locator("#btLabel")).to_have_text("Bluetooth 5.4")  # Bluetooth stays where it was
     pg.keyboard.press("Control+2")
-    expect(pg.locator("#btRadio")).to_have_text("Built-in MediaTek")
-    assert pg.locator("#tryRadio").count() == 0  # the Bluetooth page has no switch of its own any more
+    expect(pg.locator("#btRadio")).to_have_text("Unigen dongle")
+    expect(bt_use(pg, "unigen")).to_have_attribute("aria-checked", "true")
 
 
-def test_using_switch_shows_each_step(open_page):
+def test_wifi_switch_shows_each_step(open_page):
     pg = open_page("window.MOCK_FAST = false;")  # real 300 ms steps
-    using(pg, "builtin").click()
-    expect(pg.locator("#switchMsg")).to_have_text("Turning on the Built-in MediaTek…")
-    expect(pg.locator("#using button").first).to_be_disabled()
-    expect(pg.locator("#switchMsg")).to_have_text("Connecting to HOME-5G…", timeout=3000)
-    expect(pg.locator("#switchMsg")).to_have_text("Done. Using the Built-in MediaTek. Bluetooth is moving too; this can take up to a minute.", timeout=5000)
-    expect(pg.locator("#using button").first).to_be_enabled()  # Wi-Fi works: no waiting for Bluetooth
-    expect(pg.locator("#switchMsg")).to_have_text("Bluetooth moved to the Built-in MediaTek.", timeout=3000)
+    wifi_use(pg, "builtin").click()
+    expect(pg.locator("#wifiUseMsg")).to_have_text("Turning on the Built-in MediaTek…")
+    expect(pg.locator("#wifiUse button").first).to_be_disabled()
+    expect(pg.locator("#wifiUseMsg")).to_have_text("Connecting to HOME-5G…", timeout=3000)
+    expect(pg.locator("#wifiUseMsg")).to_have_text("Done. Using the Built-in MediaTek.", timeout=5000)
+    expect(pg.locator("#wifiUse button").first).to_be_enabled()  # Wi-Fi works: no waiting for the old one to go off
+    expect(pg.locator("#wifiUseMsg")).to_have_text("The Unigen dongle is off.", timeout=3000)
+
+
+def test_bluetooth_switch_on_the_bluetooth_tab(open_page):
+    pg = open_page("window.MOCK_FAST = false;")
+    pg.keyboard.press("Control+2")
+    expect(pg.locator("#btUse button")).to_have_text(["Dongle", "Built-in"])
+    expect(bt_use(pg, "unigen")).to_have_attribute("aria-checked", "true")
+    expect(pg.locator("#btRadio")).to_have_text("Unigen dongle")
+    bt_use(pg, "builtin").click()
+    expect(pg.locator("#btUseMsg")).to_have_text("Moving Bluetooth to the Built-in MediaTek. This can take up to a minute.")
+    expect(pg.locator("#btUse button").first).to_be_disabled()  # until the move ends
+    expect(pg.locator("#wifiUse button").first).to_be_disabled()  # one lock: Wi-Fi waits too
+    expect(pg.locator("#btUseMsg")).to_have_text("Bluetooth moved to the Built-in MediaTek.", timeout=3000)
+    expect(pg.locator("#btUse button").first).to_be_enabled()
+    expect(bt_use(pg, "builtin")).to_have_attribute("aria-checked", "true")
+    expect(pg.locator("#btRadio")).to_have_text("Built-in MediaTek")
+    expect(pg.locator("#btLabel")).to_have_text("Bluetooth 5.2")
+    expect(wifi_use(pg, "unigen")).to_have_attribute("aria-checked", "true")  # Wi-Fi is untouched
+    expect(rail(pg, "unigen").locator(".badge")).to_have_text("In use")
+
+
+def test_wifi_switch_error_restores(open_page):
+    msg = "Couldn't finish switching to the Built-in MediaTek. You're still on the Unigen dongle."
+    pg = open_page(f'window.MOCK_FAIL = {{ switch_wifi: "{msg}" }};')
+    wifi_use(pg, "builtin").click()
+    expect(pg.locator("#wifiUseMsg")).to_have_text(msg)
+    expect(pg.locator("#wifiUseMsg")).to_have_class("msg err")
+    expect(wifi_use(pg, "unigen")).to_have_attribute("aria-checked", "true")
+    expect(wifi_use(pg, "builtin")).to_have_attribute("aria-checked", "false")
+    expect(pg.locator("#wifiUse button").first).to_be_enabled()
+    expect(rail(pg, "unigen").locator(".badge")).to_have_text("In use")
+
+
+def test_bluetooth_switch_error_restores(open_page):
+    msg = "A switch is still finishing. Bluetooth can take up to a minute; try again in a moment."
+    pg = open_page(f'window.MOCK_FAIL = {{ switch_bt: "{msg}" }};')
+    pg.keyboard.press("Control+2")
+    bt_use(pg, "builtin").click()
+    expect(pg.locator("#btUseMsg")).to_have_text(msg)
+    expect(pg.locator("#btUseMsg")).to_have_class("msg err")
+    expect(bt_use(pg, "unigen")).to_have_attribute("aria-checked", "true")
+    expect(pg.locator("#btUse button").first).to_be_enabled()
+
+
+def test_bluetooth_move_that_fails_later_says_so_and_keeps_the_radio(open_page):
+    late = "Bluetooth couldn't move and stays on the Unigen dongle. Switch again to retry."
+    pg = open_page(f'window.MOCK_BT_FAIL = "{late}";')
+    pg.keyboard.press("Control+2")
+    bt_use(pg, "builtin").click()
+    expect(pg.locator("#btUseMsg")).to_have_text(late)
+    expect(pg.locator("#btUseMsg")).to_have_class("msg err")
+    expect(bt_use(pg, "unigen")).to_have_attribute("aria-checked", "true")  # shows what Windows really has
+    expect(pg.locator("#btUse button").first).to_be_enabled()
+
+
+def test_switches_need_admin(open_page):
+    pg = open_page("window.MOCK_ADMIN = false;")
+    expect(pg.locator("#wifiUse button").first).to_be_disabled()
+    expect(pg.locator("#wifiUse button").last).to_be_disabled()
+    expect(pg.locator("#wifiUse")).to_have_attribute("title", "Switching adapters needs administrator rights.")
+    pg.keyboard.press("Control+2")
+    expect(pg.locator("#btUse button").first).to_be_disabled()
+    expect(pg.locator("#btUse button").last).to_be_disabled()
+    expect(pg.locator("#btUse")).to_have_attribute("title", "Switching adapters needs administrator rights.")
+
+
+def test_using_changed_event_reloads(open_page):
+    pg = open_page()
+    pg.evaluate("mockApi._setUsing('builtin'); window.onUsingChanged()")  # what the watchdog triggers
+    expect(pg.locator("#btLabel")).to_have_text("Bluetooth 5.2")
+    expect(wifi_use(pg, "builtin")).to_have_attribute("aria-checked", "true")
+    expect(rail(pg, "builtin").locator(".badge")).to_have_text("In use")
+    expect(rail(pg, "builtin")).to_have_attribute("aria-pressed", "true")
+
+
+def test_bluetooth_move_started_elsewhere_reloads_the_tab(open_page):
+    pg = open_page()  # the widget (or the watchdog) moved Bluetooth: the page hears the end of the move
+    pg.keyboard.press("Control+2")
+    expect(bt_use(pg, "unigen")).to_have_attribute("aria-checked", "true")
+    pg.evaluate("mockApi._setUsing('builtin', 'bt'); window.onSwitchStep({ kind: 'bt', text: 'Bluetooth moved to the Built-in MediaTek.', done: true, error: false })")
+    expect(bt_use(pg, "builtin")).to_have_attribute("aria-checked", "true")
+    expect(pg.locator("#btUseMsg")).to_have_text("Bluetooth moved to the Built-in MediaTek.")
+    expect(wifi_use(pg, "unigen")).to_have_attribute("aria-checked", "true")
 
 
 def test_off_adapter_not_selectable(open_page):
@@ -198,38 +284,10 @@ def test_off_adapter_not_selectable(open_page):
     assert pg.evaluate("window.MOCK_LOG.filter(n => n === 'networks' || n === 'scan').length") == before
 
 
-def test_using_switch_error_restores(open_page):
-    msg = "Couldn't finish switching to the Built-in MediaTek. You're still on the Unigen dongle."
-    pg = open_page(f'window.MOCK_FAIL = {{ switch_to: "{msg}" }};')
-    using(pg, "builtin").click()
-    expect(pg.locator("#switchMsg")).to_have_text(msg)
-    expect(pg.locator("#switchMsg")).to_have_class("msg err")
-    expect(using(pg, "unigen")).to_have_attribute("aria-checked", "true")
-    expect(using(pg, "builtin")).to_have_attribute("aria-checked", "false")
-    expect(pg.locator("#using button").first).to_be_enabled()
-    expect(rail(pg, "unigen").locator(".badge")).to_have_text("In use")
-
-
-def test_using_needs_admin(open_page):
-    pg = open_page("window.MOCK_ADMIN = false;")
-    expect(pg.locator("#using button").first).to_be_disabled()
-    expect(pg.locator("#using button").last).to_be_disabled()
-    expect(pg.locator("#using")).to_have_attribute("title", "Switching adapters needs administrator rights.")
-
-
-def test_using_changed_event_reloads(open_page):
-    pg = open_page()
-    pg.evaluate("mockApi._setUsing('builtin'); window.onUsingChanged()")  # what the watchdog triggers
-    expect(pg.locator("#btLabel")).to_have_text("Bluetooth 5.2")
-    expect(using(pg, "builtin")).to_have_attribute("aria-checked", "true")
-    expect(rail(pg, "builtin").locator(".badge")).to_have_text("In use")
-    expect(rail(pg, "builtin")).to_have_attribute("aria-pressed", "true")
-
-
 def test_unplugged_dongle_falls_back_in_mock(open_page):
     pg = open_page("window.MOCK_UNPLUG = 'unigen';")
     expect(pg.locator(".adapter")).to_have_count(1)
-    expect(using(pg, "builtin")).to_have_attribute("aria-checked", "true")
+    expect(wifi_use(pg, "builtin")).to_have_attribute("aria-checked", "true")
 
 
 def bt_page(open_page, hooks=""):

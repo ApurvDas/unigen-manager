@@ -54,7 +54,7 @@ button { font: inherit; color: inherit; }
 .switch:disabled { opacity: .5; cursor: default; }
 .switch:focus-visible { outline: 2px solid var(--uni); outline-offset: 2px; }
 
-/* segmented control with one sliding highlight (the Using control in both windows; positioned by slide() in JS) */
+/* segmented control with one sliding highlight (the Wi-Fi and Bluetooth switches in both windows; positioned by slide() in JS) */
 .seg { position: relative; display: flex; gap: 2px; background: var(--panel); border-radius: 7px; padding: 3px; }
 .seg button { position: relative; z-index: 1; background: none; border: 0; cursor: pointer; padding: 4px 12px; border-radius: 5px; color: var(--muted); font: 500 13px var(--display); }
 .seg button[aria-checked="true"] { color: var(--ink); }

@@ -66,9 +66,12 @@
   .adapter .badge.use { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
   .adapter.off { cursor: default; }
   .adapter.off .name, .adapter.off .meta, .adapter.off .caps { opacity: .6; }
-  #using button { flex: 1; }
-  #switchMsg { display: block; margin: 8px 6px 0; font-size: 12.5px; }
-  #switchMsg:empty { display: none; }
+  /* "Adapter [ Dongle | Built-in ]" above the Wi-Fi tabs, "Radio [ ... ]" in the Bluetooth note */
+  .use-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .use-row .lbl { color: var(--muted); font-size: 13px; }
+  .use-row .msg { font-size: 12.5px; }
+  .use-row .msg:empty { display: none; }
+  .use-row[hidden] { display: none; }
 
   nav { display: flex; flex-direction: column; gap: 2px; position: relative; }
   nav button {
@@ -186,6 +189,8 @@
   .head .switch { align-self: center; }
   .radio-note .msg { display: block; margin-top: 4px; }
   .radio-note .msg:empty { display: none; }
+  .radio-note .use-row { margin-bottom: 8px; }
+  .radio-note .use-row .msg { margin: 0; }
   .bt.off .group { opacity: .45; pointer-events: none; }
   .pairbox { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 12px; margin: 2px 0 8px;
     background: var(--raised); border: 1px solid var(--line); border-radius: 8px; }
@@ -289,11 +294,6 @@
 <body>
 
 <aside class="rail">
-  <div id="usingBox">
-    <h2 id="usingLbl">Using</h2>
-    <div class="seg" id="using" role="radiogroup" aria-labelledby="usingLbl"></div>
-    <p class="msg" id="switchMsg"></p>
-  </div>
   <div>
     <h2>Adapters</h2>
     <div class="adapters"><span class="ind ad-ind" aria-hidden="true"></span></div>
@@ -310,6 +310,11 @@
 <main>
   <!-- Wi-Fi -->
   <section id="wifi" class="wifi">
+    <div class="use-row" id="wifiUseRow" hidden>
+      <span class="lbl" id="wifiUseLbl">Adapter</span>
+      <div class="seg" id="wifiUse" role="radiogroup" aria-labelledby="wifiUseLbl"></div>
+      <span class="msg" id="wifiUseMsg"></span>
+    </div>
     <div class="tabs" role="tablist" aria-label="Wi-Fi">
       <span class="ind tab-ind" data-axis="x" aria-hidden="true"></span>
       <button role="tab" aria-selected="true" data-view="nearby">Nearby</button>
@@ -349,6 +354,11 @@
       <button class="switch on" id="btPower" role="switch" aria-checked="true" aria-label="Bluetooth"><i></i></button></div>
     <div class="radio-note">
       <div class="note-text">
+        <div class="use-row">
+          <span class="lbl" id="btUseLbl">Radio</span>
+          <div class="seg" id="btUse" role="radiogroup" aria-labelledby="btUseLbl"></div>
+          <span class="msg" id="btUseMsg"></span>
+        </div>
         <p id="btRunNote">Bluetooth is running on the <b id="btRadio">…</b>. <span id="btOther"></span> <span id="btAway"></span></p>
         <p id="btOnNote" hidden>Bluetooth is off. <button class="btn small" id="btOn"><span class="label">Turn on</span></button></p>
         <span class="msg" id="btMsg"></span>
@@ -443,7 +453,9 @@ let RESULTS = {};    // speed_results(): key -> {ping, down, up, link, samples, 
 let selected = 0, selSsid = null, scannedAt = null;
 const activeAdapter = () => $(".adapter[aria-pressed='true']");
 const activeKey = () => activeAdapter()?.dataset.adapter;
-let switching = false; // a switch started here is running
+let switching = false; // a switch started here is running (Wi-Fi or Bluetooth: they share one lock)
+const wifiSeg = $("#wifiUse"), btSeg = $("#btUse");
+let btDone = null;     // resolves with the final step of the Bluetooth move this window started
 const adapterEl = k => $$(".adapter").find(a => a.dataset.adapter === k);
 const NAME = k => (INFO && INFO.adapters.find(a => a.key === k) || {}).name || k;
 const SHORT = k => ({ unigen: "Unigen", builtin: "Built-in" })[k] || NAME(k);
@@ -620,13 +632,16 @@ function pickAdapter(a) {
   loadNetworks(false).then(() => loadNetworks(true)).catch(e => setMsg($("#wifiMsg"), e.message, true));
 }
 
-// ================= Using: one switch for Wi-Fi and Bluetooth =================
+// ================= Wi-Fi and Bluetooth switches (Dongle | Built-in) =================
+function enableSegs() {
+  enableSeg(wifiSeg, INFO.admin, switching);
+  enableSeg(btSeg, BT ? BT.can_switch : INFO.admin, switching);
+}
 function renderUsing() {
-  $("#usingBox").hidden = INFO.adapters.length < 2;
-  buildSeg($("#using"), INFO.adapters);
-  $$("#using button").forEach(b => { b.disabled = !INFO.admin; });
-  $("#using").title = INFO.admin ? "" : ADMIN_TIP;
-  markSeg($("#using"), (INFO.adapters.find(a => a.using) || {}).key, true);
+  $("#wifiUseRow").hidden = INFO.adapters.length < 2;
+  buildSeg(wifiSeg, SWITCH_KEYS);
+  enableSeg(wifiSeg, INFO.admin, switching);
+  markSeg(wifiSeg, INFO.wifi_using, true);
 }
 // INFO changed (a switch, here or by the watchdog): redraw everything that depends on the adapter in use
 function applyInfo() {
@@ -645,28 +660,51 @@ async function reloadInfo() {
   await loadNetworks(false).catch(e => setMsg($("#wifiMsg"), e.message, true));
   loadNetworks(true).catch(() => {});
 }
+// Python pushes every step of a switch; a switch started elsewhere (the widget, the watchdog) reloads this window when it ends
 window.onSwitchStep = s => {
-  setMsg($("#switchMsg"), s.text, s.error);
-  if (s.done && !s.error && !switching) reloadInfo().catch(e => setMsg($("#switchMsg"), e.message, true)); // switched from the widget
+  const bt = s.kind === "bt";
+  setMsg($(bt ? "#btUseMsg" : "#wifiUseMsg"), s.text, s.error);
+  if (!s.done) return;
+  if (bt && btDone) btDone(s);
+  else if (!s.error && !switching) (bt ? loadBt() : reloadInfo()).catch(e => setMsg($(bt ? "#btUseMsg" : "#wifiUseMsg"), e.message, true));
 };
-window.onUsingChanged = () => { if (!switching) reloadInfo().catch(e => setMsg($("#switchMsg"), e.message, true)); };
-$("#using").addEventListener("click", async e => {
+window.onUsingChanged = () => { if (!switching) reloadInfo().catch(e => setMsg($("#wifiUseMsg"), e.message, true)); };
+wifiSeg.addEventListener("click", async e => {
   const b = e.target.closest("button");
   if (!b || b.disabled || switching || b.getAttribute("aria-checked") === "true") return;
-  const was = (INFO.adapters.find(a => a.using) || {}).key;
-  switching = true;
-  $$("#using button").forEach(x => { x.disabled = true; });
-  markSeg($("#using"), b.dataset.k);
-  setMsg($("#switchMsg"), `Switching to the ${NAME(b.dataset.k)}…`);
+  const was = INFO.wifi_using;
+  switching = true; enableSegs();
+  markSeg(wifiSeg, b.dataset.k);
+  setMsg($("#wifiUseMsg"), `Switching to the ${NAME(b.dataset.k)}…`);
   try {
-    await call("switch_to", b.dataset.k);
+    await call("switch_wifi", b.dataset.k);
     await reloadInfo();
   } catch (err) {
-    markSeg($("#using"), was);
-    setMsg($("#switchMsg"), err.message, true);
+    markSeg(wifiSeg, was);
+    setMsg($("#wifiUseMsg"), err.message, true);
   } finally {
-    switching = false;
-    $$("#using button").forEach(x => { x.disabled = !INFO.admin; });
+    switching = false; enableSegs();
+  }
+});
+// the call returns at once; the move ends with a done step, then the radio shown is the one Windows really has
+btSeg.addEventListener("click", async e => {
+  const b = e.target.closest("button");
+  if (!b || b.disabled || switching || b.getAttribute("aria-checked") === "true") return;
+  const was = BT.active;
+  switching = true; enableSegs();
+  markSeg(btSeg, b.dataset.k);
+  setMsg($("#btUseMsg"), `Moving Bluetooth to the ${NAME(b.dataset.k)}…`);
+  const moved = new Promise(done => { btDone = done; });
+  try {
+    await call("switch_bt", b.dataset.k);
+    const s = await moved;
+    await loadBt();
+    if (s.error) setMsg($("#btUseMsg"), s.text, true);
+  } catch (err) {
+    markSeg(btSeg, was);
+    setMsg($("#btUseMsg"), err.message, true);
+  } finally {
+    btDone = null; switching = false; enableSegs();
   }
 });
 
@@ -756,6 +794,9 @@ function renderRadio() {
   setText($("#btRadio"), act ? act.name : "no radio");
   setText($("#btOther"), other ? `The ${other.name} radio is turned off.` : "");
   setText($("#btLabel"), act && act.version ? `Bluetooth ${act.version}` : "Bluetooth");
+  buildSeg(btSeg, SWITCH_KEYS);
+  enableSeg(btSeg, BT.can_switch, switching);
+  markSeg(btSeg, BT.active, true);
 }
 $("#paired").addEventListener("click", async e => {
   const b = e.target.closest(".conn"); if (!b || b.disabled) return;
@@ -1218,7 +1259,11 @@ function go(id, instant) {
   $$("main section").forEach(s => s.hidden = s.id !== id);
   $$("nav button").forEach(b => b.dataset.go === id ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current"));
   slide($(".nav-ind"), $(`nav button[data-go="${id}"]`), instant);
-  if (id === "wifi") { slide($(".tab-ind"), $(".tabs button[aria-selected='true']"), true); if (nearbyShown()) view("nearby", true); }
+  if (id === "wifi") {  // hidden elements measure 0: put the highlights back
+    slide($(".tab-ind"), $(".tabs button[aria-selected='true']"), true);
+    if (INFO) markSeg(wifiSeg, INFO.wifi_using, true);
+    if (nearbyShown()) view("nearby", true);
+  }
   if (id === "bt" && INFO) loadBt();
   if (id === "speed") drawSpeed();
   hideTip();
@@ -1233,7 +1278,8 @@ addEventListener("resize", () => {
   if (nearbyShown()) { drawMaps(); highlight(selected); markSel(true); }
   if (!$("#speed").hidden) drawSpeed();
   slide($(".ad-ind"), activeAdapter(), true);
-  slide($("#using .ind"), $("#using [aria-checked='true']"), true);
+  slide($(".ind", wifiSeg), $("[aria-checked='true']", wifiSeg), true);
+  slide($(".ind", btSeg), $("[aria-checked='true']", btSeg), true);
   slide($(".nav-ind"), $("nav button[aria-current]"), true);
   if (!$("#wifi").hidden) slide($(".tab-ind"), $(".tabs button[aria-selected='true']"), true);
 });

@@ -116,8 +116,9 @@ class Api:
         except Exception as e:
             log.debug("window gone, skipped a push: %s", type(e).__name__)
 
-    def _push_step(self, text, done=False, error=False):
-        self._push("window.onSwitchStep && window.onSwitchStep(" + json.dumps({"text": text, "done": done, "error": error}) + ")")
+    def _push_step(self, kind, text, done=False, error=False):
+        """One step of a switch ("wifi" or "bt"), so each window shows it under the right switch."""
+        self._push("window.onSwitchStep && window.onSwitchStep(" + json.dumps({"kind": kind, "text": text, "done": done, "error": error}) + ")")
 
     def _follow_notify(self, text, changed):
         """The watchdog switched (or failed to switch) by itself: tell the user, and make both windows reload."""
@@ -145,11 +146,11 @@ class Api:
         order = ["unigen", "builtin"]
         keys = sorted({*devs, *ifs}, key=lambda k: order.index(k) if k in order else len(order))
         off = {k: bool(devs.get(k, {}).get("wifi") and devs[k]["wifi"]["disabled"]) for k in keys}
-        choice = hw.load_choice(self._settings)
+        choice = hw.load_choice(self._settings, "wifi")
         using = choice if choice in keys and not off[choice] else (
             next((k for k in keys if k in ifs and ifs[k].get("state") == "connected"), None)
             or next((k for k in keys if not off[k]), None))
-        return {"version": VERSION, "admin": self._admin, "using": using, "adapters": [
+        return {"version": VERSION, "admin": self._admin, "wifi_using": using, "adapters": [
             {"key": k, "name": self._name(k, ifs[k]["description"] if k in ifs else k),
              "wifi": wifi.wifi_standard(drv.get(ifs[k]["name"], {}).get("radio_types", [])) if k in ifs else None,
              "bt": radios.get(k, {}).get("version"), "using": k == using, "off": off[k]} for k in keys]}
@@ -379,23 +380,38 @@ class Api:
         self._widget_h = int(max(200, min(900, round(height))))
         self._place_widget(self._widget_h)
 
-    @_envelope
-    def switch_to(self, key):
-        """Make this adapter the one in use, Wi-Fi and Bluetooth together. Every step is pushed to both windows."""
+    def _need_admin(self):
         if not self._admin:
             raise hw.HwError("Switching adapters needs administrator rights. Restart the app and choose Yes.")
+
+    @_envelope
+    def switch_wifi(self, key):
+        """Make this adapter the one Wi-Fi uses. Every step is pushed to both windows."""
+        self._need_admin()
         last = []
 
         def step(text):
             last[:] = [text]
-            self._push_step(text)
+            self._push_step("wifi", text)
         try:
-            hw.use(key, on_step=step, path=self._settings,  # Bluetooth finishes after this returns
-                   on_later=lambda text, ok: self._push_step(text, done=True, error=not ok))
+            hw.use_wifi(key, on_step=step, path=self._settings,  # the old Wi-Fi goes off after this returns
+                        on_later=lambda text, ok: self._push_step("wifi", text, done=True, error=not ok))
         except hw.HwError as e:
-            self._push_step(str(e), done=True, error=True)
+            self._push_step("wifi", str(e), done=True, error=True)
             raise
-        self._push_step(last[0] if last else "", done=True)
+        self._push_step("wifi", last[0] if last else "", done=True)
+        return {"using": key}
+
+    @_envelope
+    def switch_bt(self, key):
+        """Move Bluetooth to this adapter's radio. It returns at once; the move's end is pushed as a done step."""
+        self._need_admin()
+        self._push_step("bt", f"Moving Bluetooth to the {self._name(key, key)}. This can take up to a minute.")  # before the move can end
+        try:
+            hw.use_bt(key, path=self._settings, on_later=lambda text, ok: self._push_step("bt", text, done=True, error=not ok))
+        except hw.HwError as e:
+            self._push_step("bt", str(e), done=True, error=True)
+            raise
         return {"using": key}
 
     # ---- speed ----

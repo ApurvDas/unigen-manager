@@ -48,8 +48,9 @@ function slide(ind, to, instant) {
   else anime.animate(ind, { ...at, duration: 200, ease });
 }
 
-// The Using control (Dongle | Built-in) is built the same way in both windows.
+// The Wi-Fi and Bluetooth switches (Dongle | Built-in) are built the same way in both windows.
 const USE_LABEL = k => ({ unigen: "Dongle", builtin: "Built-in" })[k] || k;
+const SWITCH_KEYS = [{ key: "unigen" }, { key: "builtin" }];
 function buildSeg(seg, adapters) {
   seg.innerHTML = `<span class="ind" data-axis="x" aria-hidden="true"></span>` + adapters.map(a =>
     `<button role="radio" aria-checked="false" data-k="${esc(a.key)}">${esc(USE_LABEL(a.key))}</button>`).join("");
@@ -60,6 +61,11 @@ function markSeg(seg, key, instant) {
   slide($(".ind", seg), bs.find(b => b.dataset.k === key), instant);
 }
 const ADMIN_TIP = "Switching adapters needs administrator rights.";
+// disabled without admin rights, and while a switch runs (Wi-Fi and Bluetooth share one lock)
+function enableSeg(seg, admin, busy) {
+  seg.title = admin ? "" : ADMIN_TIP;
+  $$("button", seg).forEach(b => { b.disabled = !admin || busy; });
+}
 
 // swap: a label changes with a short blur, so it reads as one control changing
 function swap(btn, text) {
