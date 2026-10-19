@@ -10,7 +10,7 @@
 ![Python 3.10](https://img.shields.io/badge/Python-3.10-0E151D?style=flat-square&logo=python&logoColor=4FB3C8)
 ![pywebview](https://img.shields.io/badge/UI-pywebview%20%2B%20WebView2-0E151D?style=flat-square)
 ![anime.js](https://img.shields.io/badge/motion-anime.js%204-0E151D?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-289%20passing-5CC08A?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-336%20passing-5CC08A?style=flat-square)
 
 <a href="https://github.com/ApurvDas/unigen-manager/releases/latest/download/UnigenManager.exe"><img src="https://img.shields.io/badge/Download-UnigenManager.exe%20%C2%B7%2033%20MB-4FB3C8?style=for-the-badge&logo=windows&logoColor=white" alt="Download UnigenManager.exe" height="44"></a>
 
@@ -49,6 +49,7 @@ Older versions and checksums are on the [releases page](https://github.com/Apurv
 - A channel map for 2.4 and 5 GHz shows which channels are crowded.
 - Connect, disconnect, or add a new WPA2 or open network with its password.
 - **Saved networks:** show a password, copy a network to the other adapter, or hold to delete.
+- An **Adapter** switch above the tabs picks which adapter Wi-Fi uses: the dongle or the built-in card.
 
 </td>
 <td width="50%" valign="top">
@@ -61,7 +62,7 @@ Older versions and checksums are on the [releases page](https://github.com/Apurv
 - Remove devices, and connect or disconnect audio devices.
 - **Fast:** the paired list loads in a few hundredths of a second.
 - **Battery levels** of connected headphones and speakers (🔋 90%, amber at 20% or less), on the Bluetooth page and in the tray widget, updated every minute. Shown for devices that report battery to Windows over their hands-free connection, on either adapter.
-- Bluetooth follows the **Using** switch below, so it always runs on the adapter you picked (dongle 5.4, built-in 5.2).
+- A **Radio** switch on this page picks which Bluetooth radio runs: the dongle (5.4) or the built-in one (5.2), independently of Wi-Fi. See [Two switches](#-two-switches-wi-fi-and-bluetooth-each-dongle--built-in) below.
 
 </td>
 </tr>
@@ -77,7 +78,7 @@ Older versions and checksums are on the [releases page](https://github.com/Apurv
 <td valign="top">
 
 ### 🧭 Always-on tray widget
-- Live status of both adapters, and the same **Using** switch as the main window.
+- Live status of both adapters, the dongle's status, and both switches (Wi-Fi and Bluetooth), the same as in the main window.
 - Quick connect to saved networks, the Bluetooth on/off switch, and a mini speed test.
 - Optional **Start with Windows**.
 
@@ -86,15 +87,16 @@ Older versions and checksums are on the [releases page](https://github.com/Apurv
 <tr>
 <td colspan="2" valign="top">
 
-### 🔀 One switch: Using Dongle | Built-in
-- **One control moves Wi-Fi and Bluetooth together.** Wi-Fi works on the new adapter in about 3 seconds: the app turns each adapter's Wi-Fi radio on or off (the per-adapter Wi-Fi switch in Windows), so no driver has to restart. If Windows' Wi-Fi button turns the unused adapter back on, the app turns it off again.
-- **Bluetooth moves right after, in the background.** Windows runs one Bluetooth radio at a time, so the old one is turned off in Device Manager. That is usually quick, but Windows can take up to a minute while its audio engine lets go of a paired speaker or headphones. To avoid that, the app first disconnects any connected earbuds or speakers (Windows refuses to turn a radio off while audio is playing through it), turns the old radio off, then tries to reconnect them on the new one (a device not paired there shows **Re-pair**). The app tells you when Bluetooth has moved. If Windows still refuses, stop the audio or disconnect the earbuds and switch again.
-- It joins the same network on the new adapter (copying the saved profile if needed) and shows each step while it runs.
-- **Your choice is remembered** across restarts.
-- **It follows the dongle:** unplug it and the built-in adapter turns back on; plug it in again and the app switches back to it. A tray notification tells you.
-- **It notices a crashed dongle:** if the dongle stops responding (Windows still lists it, but it has no Wi-Fi or Bluetooth), the app moves to the built-in adapter and asks you to unplug the dongle and plug it back in. A switch never waits on a device that has stopped answering.
-- If the Wi-Fi step fails, the old adapter keeps working and the message says where you stand. If only Bluetooth can't move, Wi-Fi stays switched and the app says so (switch again to retry). If a Bluetooth driver hangs, Wi-Fi switching keeps working and the app asks you to re-plug the dongle.
-- Needs administrator rights. Without them the switch is disabled and the app changes nothing.
+### 🔀 Two switches: Wi-Fi and Bluetooth, each Dongle | Built-in
+- **Wi-Fi and Bluetooth are chosen separately.** For example, Wi-Fi on the dongle and Bluetooth on the built-in radio. The **Adapter** switch is on the Wi-Fi page, the **Radio** switch on the Bluetooth page, and the tray widget has both. Each choice is remembered across restarts (an older single choice is used for both until you change one).
+- **Wi-Fi works on the new adapter in about 3 seconds:** the app turns each adapter's Wi-Fi radio on or off (the per-adapter Wi-Fi switch in Windows), so no driver has to restart. It joins the same network on the new adapter (copying the saved profile if needed), shows each step while it runs, and then turns the old adapter's Wi-Fi off in the background. If Windows' Wi-Fi button turns the unused adapter back on, the app turns it off again. Bluetooth is not touched.
+- **Bluetooth moves in the background.** Windows runs one Bluetooth radio at a time, so the old one is turned off in Device Manager. That is usually quick, but Windows can take up to a minute while its audio engine lets go of a paired speaker or headphones. To avoid that, the app first disconnects any connected earbuds or speakers (Windows refuses to turn a radio off while audio is playing through it), turns the old radio off, then tries to reconnect them on the new one (a device not paired there shows **Re-pair**). The app tells you when Bluetooth has moved. If Windows still refuses, stop the audio or disconnect the earbuds and switch again. Wi-Fi is not touched.
+- **One switch at a time:** the dongle's Wi-Fi and Bluetooth are one USB device, and changing one while the other is being turned off has hung its driver. So the two switches share a lock: a second click waits until the first is done.
+- **It follows the dongle:** unplug it and the built-in adapter turns back on for both Wi-Fi and Bluetooth; plug it in again and each switch that was set to the dongle goes back to it (one set to Built-in stays). A tray notification tells you.
+- **It notices a crashed dongle:** if the dongle stops responding (Windows still lists it, but it has no Wi-Fi), the app moves to the built-in adapter and asks you to unplug the dongle and plug it back in. A switch never waits on a device that has stopped answering.
+- **Dongle status:** the top of the side menu, the tray widget and the tray icon's tooltip say whether the dongle is **connected**, **not plugged in** or **not responding**, and a notification says when it is plugged in. While it isn't connected, the **Dongle** button of both switches is disabled and Built-in stays usable.
+- If the Wi-Fi step fails, the old adapter keeps working and the message says where you stand. If a Bluetooth move fails, Bluetooth stays on the old radio and the app says so (switch again to retry); the choice is saved only after a move worked, so the app never retries a failed one by itself. If a driver hangs, switching keeps working and the app asks you to re-plug the dongle.
+- Needs administrator rights. Without them both switches are disabled and the app changes nothing.
 - **Light on the PC:** adapter and radio status are read straight from Windows (SetupAPI) in milliseconds, so the always-on watchdog doesn't start a PowerShell process every few seconds. Wi-Fi radios are read and switched through the Windows Wi-Fi API (wlanapi); Bluetooth radios use the same Windows call as Device Manager, not PowerShell, and the app waits for the device to really change state.
 
 </td>
@@ -118,7 +120,7 @@ Each adapter shows its own standards, read from the hardware: **Wi-Fi 6**, **Blu
 | **Windows** | 10 or 11, **set to English** (the app reads `netsh` output) |
 | **Python** | Not needed for `UnigenManager.exe`. To run from source: [3.10](https://www.python.org/downloads/release/python-31011/), with the `py` launcher (installed by default) |
 | **WebView2** | Microsoft Edge WebView2 Runtime, already present on up-to-date Windows |
-| **Rights** | Administrator, for the Using switch (turning adapters on and off) and Start with Windows (the app asks when it starts) |
+| **Rights** | Administrator, for the Wi-Fi and Bluetooth switches (turning adapters on and off) and Start with Windows (the app asks when it starts) |
 | **Hardware** | Built for the Unigen AIC8800D80 dongle and MediaTek MT7921 card. Other Wi-Fi adapters show up under their Windows names |
 
 ## Run from source
@@ -153,7 +155,7 @@ That installs pywebview, pystray, Pillow and the WinRT packages used for Bluetoo
 py -3.10 UnigenManager.pyw
 ```
 
-Choose **Yes** at the Windows prompt. If you choose **No**, the app still runs, but the Using switch is turned off and nothing is switched on its own.
+Choose **Yes** at the Windows prompt. If you choose **No**, the app still runs, but the Wi-Fi and Bluetooth switches are turned off and nothing is switched on its own.
 
 Create a desktop shortcut (optional):
 
@@ -205,11 +207,11 @@ Then open:
 
 ```powershell
 py -3.10 -m pip install -r requirements-dev.txt
-py -3.10 -m pytest                 # 289 unit, contract and UI tests (UI tests drive the installed Microsoft Edge)
+py -3.10 -m pytest                 # 336 unit, contract and UI tests (UI tests drive the installed Microsoft Edge)
 py -3.10 -m pytest -m hardware     # read-only checks against the real adapters (changes nothing)
 ```
 
-Checks that change system state (connecting, pairing, the Using switch, unplugging the dongle) are in the [manual checklist](docs/superpowers/test-reports/manual-checklist.md).
+Checks that change system state (connecting, pairing, the Wi-Fi and Bluetooth switches, unplugging the dongle) are in the [manual checklist](docs/superpowers/test-reports/manual-checklist.md).
 
 ### Build the .exe
 
@@ -238,7 +240,7 @@ flowchart LR
     shared -- "window.pywebview.api" --> api["api.py<br/>plain-language errors"]
     api --> wifi["wifi.py<br/>netsh, wlanapi"]
     api --> bt["bt.py + btwinrt.py<br/>WinRT, KS audio, bthprops"]
-    api --> hw["hw.py<br/>Using switch, watchdog"]
+    api --> hw["hw.py<br/>Wi-Fi and Bluetooth switches, watchdog"]
     hw --> pnp["pnp.py<br/>SetupAPI device reads"]
     bt --> pnp
     api --> speed["speed.py<br/>ping, sampled HTTP"]
@@ -254,7 +256,7 @@ flowchart LR
 | `app.py` | Administrator prompt, single instance, main and widget windows, tray |
 | `api.py` | Everything the pages call, with plain-language errors |
 | `wifi.py` | `netsh` parsing, connect and disconnect, saved profiles, Windows scan request |
-| `hw.py` | The Using switch: Wi-Fi by radio, then Bluetooth in the background, Wi-Fi rollback, saved choice, unplug/replug watchdog |
+| `hw.py` | The Wi-Fi and Bluetooth switches: Wi-Fi by radio with rollback, Bluetooth in the background, one lock, a saved choice for each, dongle status, unplug/replug watchdog |
 | `pnp.py` | Reads Device Manager (status, disabled, Bluetooth version, device battery levels) through SetupAPI, in milliseconds, and turns devices on and off (verified by their state) |
 | `bt.py` | Bluetooth radio switching and audio connect |
 | `btwinrt.py` | Bluetooth through Windows' WinRT device APIs: paired list, live search, pairing with PIN prompts, unpair, radio power |
