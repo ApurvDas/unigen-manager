@@ -47,6 +47,14 @@ def test_widget_uses_shared_files():
     assert "--panel:" not in html and not any(h in html for h in HELPERS)
 
 
+def test_widget_reports_its_height_while_hidden_too():
+    """The page lays out before the first open; gating the fit on `shown` left the window at its 480 px default and
+    cut off the sections below (Traffic), since nothing changed size once it opened."""
+    html = (UI / "widget.html").read_text(encoding="utf-8")
+    observer = html.split("new ResizeObserver(")[1].split(".observe(W)")[0]
+    assert 'call("widget_fit"' in observer and "shown" not in observer
+
+
 def test_traffic_timings_live_in_shared_js_not_in_the_pages():
     js = (UI / "shared.js").read_text(encoding="utf-8")
     assert "const TRAFFIC_MS = 1000" in js and "SCROLL_MS = TRAFFIC_MS" in js  # the chart scrolls one step per tick

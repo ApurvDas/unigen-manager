@@ -444,7 +444,9 @@ function hideWidget() {
 addEventListener("keydown", e => { if (e.key === "Escape") hideWidget(); });
 if (!MOCK) {
   addEventListener("blur", hideWidget);  // like Windows flyouts: losing focus closes it
-  new ResizeObserver(() => { if (shown) call("widget_fit", Math.ceil(W.getBoundingClientRect().height)).catch(() => {}); }).observe(W);
+  // also while hidden: the page lays out at startup before the first open, and the window must already fit then (it
+  // opened at its 480 px default and cut off everything below, Traffic included, until the content changed size)
+  new ResizeObserver(() => { const h = Math.ceil(W.getBoundingClientRect().height); if (h > 0) call("widget_fit", h).catch(() => {}); }).observe(W);
 }
 setInterval(async () => { if (shown && await call("is_visible", "widget").catch(() => true)) { poll().catch(fail($("#wifiMsg"))); loadNets().catch(fail($("#netMsg"))); } }, 3000);
 setInterval(async () => { if (shown && await call("is_visible", "widget").catch(() => true)) loadBt().catch(() => {}); }, 10000);  // connected state and battery
