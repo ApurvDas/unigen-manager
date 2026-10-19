@@ -14,6 +14,8 @@
   --uni: #9085e9;
   --bi: #d55181;
 
+  --edge: 2px;     /* brutalist outline of the switch area */
+  --off: 4px;      /* hard shadow offset */
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --display: "Bahnschrift", "Segoe UI", sans-serif;
   --body: "Segoe UI", system-ui, sans-serif;
@@ -45,12 +47,12 @@ button { font: inherit; color: inherit; }
   .btn:not(:disabled):hover { border-color: var(--muted); }
 }
 
-/* on/off switch (Bluetooth power) */
-.switch { width: 36px; height: 20px; padding: 0; border-radius: 10px; border: 1px solid var(--line);
+/* on/off switch (Bluetooth power): square like the adapter switches */
+.switch { width: 38px; height: 22px; padding: 0; border-radius: 0; border: var(--edge) solid var(--line);
   background: var(--raised); position: relative; cursor: pointer; flex: none; }
-.switch i { position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--muted); }
-.switch.on { background: var(--uni); border-color: transparent; }
-.switch.on i { background: #fff; }
+.switch i { position: absolute; top: 3px; left: 3px; width: 12px; height: 12px; background: var(--muted); }
+.switch.on { background: var(--uni); border-color: var(--uni); }
+.switch.on i { background: var(--panel); }
 .switch:disabled { opacity: .5; cursor: default; }
 .switch:focus-visible { outline: 2px solid var(--uni); outline-offset: 2px; }
 
@@ -62,13 +64,74 @@ button { font: inherit; color: inherit; }
 .dongle[data-state="not_responding"] { color: var(--warn); }
 .dongle[data-state="not_responding"] i { background: var(--warn); }
 
-/* segmented control with one sliding highlight (the Wi-Fi and Bluetooth switches in both windows; positioned by slide() in JS) */
-.seg { position: relative; display: flex; gap: 2px; background: var(--panel); border-radius: 7px; padding: 3px; }
-.seg button { position: relative; z-index: 1; background: none; border: 0; cursor: pointer; padding: 4px 12px; border-radius: 5px; color: var(--muted); font: 500 13px var(--display); }
-.seg button[aria-checked="true"] { color: var(--ink); }
+/* The Wi-Fi and Bluetooth switches (both windows): a square block with a 2px outline and a hard shadow in the chosen
+   adapter's colour (--seg-c, set by markSeg). One solid indicator slides to the chosen item (positioned by slide() in JS).
+   Pressing sinks it onto its shadow: shared.js animates --press (0..1) and the translate together. */
+.seg { --press: 0; --seg-c: var(--line); position: relative; display: inline-flex; background: var(--panel); border: var(--edge) solid var(--line);
+  border-radius: 0; padding: 0; vertical-align: middle;
+  box-shadow: calc(var(--off) * (1 - var(--press))) calc(var(--off) * (1 - var(--press))) 0 var(--seg-c); }
+.seg button { position: relative; z-index: 1; background: none; border: 0; border-radius: 0; cursor: pointer; padding: 6px 14px; color: var(--muted);
+  font: 700 12px/1.2 var(--display); letter-spacing: .06em; text-transform: uppercase; }
+.seg button[aria-checked="true"] { color: var(--panel); }  /* dark on the solid indicator */
 .seg button:disabled { cursor: default; }
 .seg button:disabled:not([aria-checked="true"]) { opacity: .45; }  /* the Dongle button while it is unplugged, and the other one during a switch */
-.seg .ind { position: absolute; top: 3px; bottom: 3px; left: 0; right: auto; background: var(--raised); border-radius: 5px; pointer-events: none; }
+.seg .ind { position: absolute; top: 0; bottom: 0; left: 0; right: auto; background: var(--seg-c); border-radius: 0; pointer-events: none; }
+.seg button:focus-visible { outline-offset: -4px; }
 @media (hover: hover) and (pointer: fine) {
-  .seg button:not(:disabled):hover { color: var(--ink); }
+  .seg button:not(:disabled):not([aria-checked="true"]):hover { color: var(--ink); }
+}
+
+/* "ADAPTER [switch] ■ UNIGEN DONGLE · ON": the row label and the one-line state with a square pip */
+.use-row .lbl { font: 700 11px/1 var(--display); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.state-line { display: inline-flex; align-items: center; gap: 8px; font: 700 11px/1 var(--display); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.state-line[hidden] { display: none; }
+.state-line .pip { width: 8px; height: 8px; flex: none; background: var(--pip, var(--muted)); }
+
+/* The stepped progress bar (buildProgress/renderStep in shared.js): one block per real step.
+   Block: empty = outline, current = accent outline + hatched fill, done = solid, skipped = dim, failed = red. */
+.steps { --accent: var(--ink); margin-top: 12px; max-width: 460px; }
+.steps[hidden] { display: none; }
+.steps-body[hidden], .steps-fold[hidden], .steps-fail[hidden] { display: none; }
+.steps-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 7px; }
+.steps-title, .steps-count, .steps-label, .steps-fold { font: 700 11px/1.2 var(--display); letter-spacing: .08em; text-transform: uppercase; }
+.steps-count { font-variant-numeric: tabular-nums; color: var(--muted); white-space: nowrap; text-transform: none; }
+.blocks { display: flex; gap: 4px; }
+.blocks:empty { display: none; }
+.blk { position: relative; flex: 1; height: 10px; border: var(--edge) solid var(--line); background: transparent; overflow: hidden; }
+.blk b { position: absolute; inset: 0; background: var(--accent); transform: scaleX(0); transform-origin: left; }
+.blk[data-s="current"] { border-color: var(--accent); }
+/* a diagonal hatch from an SVG tile (stripes, not a gradient) drifting along the fill */
+.blk[data-s="current"] b::after { content: ""; position: absolute; inset: 0; background-size: 8px 8px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8'%3E%3Cpath d='M-2 2 2 -2M0 8 8 0M6 10 10 6' stroke='%2316202B' stroke-opacity='.5' stroke-width='3'/%3E%3C/svg%3E");
+  animation: hatch 600ms linear infinite; }
+.blk[data-s="done"] { border-color: var(--accent); }
+.blk[data-s="skipped"] { border-color: var(--line); }
+.blk[data-s="skipped"] b { opacity: .4; }
+.blk[data-s="failed"] { border-color: var(--err); }
+.blk[data-s="failed"] b { background: var(--err); }
+.blk[data-s="failed"] b::after { content: ""; position: absolute; inset: 0; background-size: 8px 8px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8'%3E%3Cpath d='M-2 2 2 -2M0 8 8 0M6 10 10 6' stroke='%2316202B' stroke-opacity='.5' stroke-width='3'/%3E%3C/svg%3E"); }
+.steps.ok { --accent: var(--ok); }
+.steps-label { margin-top: 7px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.steps[data-bar="fail"] .steps-label, .steps[data-bar="fail"] .steps-count { color: var(--err); }
+.steps[data-bar="fail"] .steps-label { white-space: normal; }  /* say which step failed in full */
+.steps-fail { margin-top: 10px; }
+.steps-fold { display: flex; align-items: center; gap: 8px; color: var(--ok); }
+.steps-fold .tick { font-size: 14px; line-height: 1; order: 2; }
+/* while the bar tells the story the page's own message is only for screen readers; it shows when there is no bar or the move failed */
+.steps[data-bar="run"] ~ .msg, .steps[data-bar="done"] ~ .msg { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+/* widget: 6px blocks, the count and the step name on one line under the switch */
+.steps.compact { margin-top: 8px; max-width: none; }
+.steps.compact .blk { height: 6px; border-width: 1px; }
+.steps.compact .steps-body { display: grid; grid-template-columns: auto 1fr; grid-template-areas: "blocks blocks" "count label"; column-gap: 10px; row-gap: 5px; }
+.steps.compact .steps-body[hidden] { display: none; }
+.steps.compact .steps-head { display: contents; }
+.steps.compact .steps-title { display: none; }
+.steps.compact .blocks { grid-area: blocks; }
+.steps.compact .steps-count { grid-area: count; }
+.steps.compact .steps-label { grid-area: label; margin: 0; min-width: 0; }
+.steps.compact .steps-fail { grid-column: 1 / -1; margin-top: 4px; }
+@keyframes hatch { to { background-position: 8px 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .blk[data-s="current"] b::after { animation: none; }
 }

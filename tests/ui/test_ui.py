@@ -27,8 +27,8 @@ def base_url():
 def open_page(browser, base_url):
     pages = []
 
-    def _open(hooks=""):
-        pg = browser.new_page(viewport={"width": 1100, "height": 800})
+    def _open(hooks="", **ctx):
+        pg = browser.new_page(viewport={"width": 1100, "height": 800}, **ctx)
         pg.errors = []
         pg.on("pageerror", lambda e: pg.errors.append(str(e)))
         pg.on("dialog", lambda d: (pg.errors.append("unexpected dialog: " + d.message), d.dismiss()))
@@ -163,7 +163,7 @@ def test_wifi_switch_on_the_wifi_tab(open_page):
     expect(rail(pg, "builtin").locator(".badge")).to_have_count(0)
     expect(rail(pg, "builtin").locator(".meta b")).to_have_text("Off")
     wifi_use(pg, "builtin").click()
-    expect(pg.locator("#wifiUseMsg")).to_have_text("The Unigen dongle is off.")
+    expect(pg.locator("#wifiUseMsg")).to_have_text("Wi-Fi moved to the Built-in MediaTek.")
     expect(wifi_use(pg, "builtin")).to_have_attribute("aria-checked", "true")
     expect(rail(pg, "builtin").locator(".badge")).to_have_text("In use")
     expect(rail(pg, "unigen").locator(".badge")).to_have_count(0)
@@ -176,27 +176,27 @@ def test_wifi_switch_on_the_wifi_tab(open_page):
 
 
 def test_wifi_switch_shows_each_step(open_page):
-    pg = open_page("window.MOCK_FAST = false;")  # real 300 ms steps
+    pg = open_page("window.MOCK_HOLD_STEP = 4;")  # the move waits at step 4 until released
     wifi_use(pg, "builtin").click()
-    expect(pg.locator("#wifiUseMsg")).to_have_text("Turning on the Built-in MediaTek…")
+    expect(pg.locator("#wifiUseMsg")).to_have_text("Connecting to HOME-5G…")
     expect(pg.locator("#wifiUse button").first).to_be_disabled()
-    expect(pg.locator("#wifiUseMsg")).to_have_text("Connecting to HOME-5G…", timeout=3000)
-    expect(pg.locator("#wifiUseMsg")).to_have_text("Done. Using the Built-in MediaTek.", timeout=5000)
+    pg.evaluate("mockApi._resume()")
     expect(pg.locator("#wifiUse button").first).to_be_enabled()  # Wi-Fi works: no waiting for the old one to go off
-    expect(pg.locator("#wifiUseMsg")).to_have_text("The Unigen dongle is off.", timeout=3000)
+    expect(pg.locator("#wifiUseMsg")).to_have_text("Wi-Fi moved to the Built-in MediaTek.", timeout=3000)
 
 
 def test_bluetooth_switch_on_the_bluetooth_tab(open_page):
-    pg = open_page("window.MOCK_FAST = false;")
+    pg = open_page("window.MOCK_HOLD_STEP = 2;")  # the move waits at step 2 until released
     pg.keyboard.press("Control+2")
     expect(pg.locator("#btUse button")).to_have_text(["Dongle", "Built-in"])
     expect(bt_use(pg, "unigen")).to_have_attribute("aria-checked", "true")
     expect(pg.locator("#btRadio")).to_have_text("Unigen dongle")
     bt_use(pg, "builtin").click()
-    expect(pg.locator("#btUseMsg")).to_have_text("Moving Bluetooth to the Built-in MediaTek. This can take up to a minute.")
+    expect(pg.locator("#btUseMsg")).to_have_text("Turning off the Unigen dongle radio…")
     expect(pg.locator("#btUse button").first).to_be_disabled()  # until the move ends
     expect(pg.locator("#wifiUse button").first).to_be_disabled()  # one lock: Wi-Fi waits too
-    expect(pg.locator("#btUseMsg")).to_have_text("Bluetooth moved to the Built-in MediaTek.", timeout=3000)
+    pg.evaluate("mockApi._resume()")
+    expect(pg.locator("#btUseMsg")).to_have_text("Bluetooth moved to the Built-in MediaTek.", timeout=6000)
     expect(pg.locator("#btUse button").first).to_be_enabled()
     expect(bt_use(pg, "builtin")).to_have_attribute("aria-checked", "true")
     expect(pg.locator("#btRadio")).to_have_text("Built-in MediaTek")
@@ -624,3 +624,170 @@ def test_switches_need_admin_and_a_dongle_each_say_why(open_page):
     expect(wifi_use(pg, "builtin")).to_be_disabled()
     expect(pg.locator("#wifiUse")).to_have_attribute("title", "Switching adapters needs administrator rights.")
     expect(wifi_use(pg, "unigen")).to_have_attribute("title", "Plug in the dongle.")
+
+
+# ---- the stepped progress bar and the Bluetooth lock-out ----
+def blocks(pg, bar):
+    return pg.locator(f"#{bar} .blk")
+
+
+def states(pg, bar):
+    return pg.eval_on_selector_all(f"#{bar} .blk", "bs => bs.map(b => b.dataset.s)")
+
+
+def test_wifi_bar_has_one_block_per_step_and_advances(open_page):
+    pg = open_page("window.MOCK_HOLD_STEP = 3;")
+    wifi_use(pg, "builtin").click()
+    expect(blocks(pg, "wifiSteps")).to_have_count(5)  # turn on, wait, find, connect, turn the old one off
+    expect(pg.locator("#wifiSteps .steps-title")).to_have_text("Switching Wi-Fi")
+    expect(pg.locator("#wifiSteps .steps-count")).to_contain_text("3/5 · ")
+    expect(pg.locator("#wifiSteps .steps-label")).to_have_text("Finding HOME-5G")
+    assert states(pg, "wifiSteps") == ["done", "done", "current", "empty", "empty"]
+    pg.evaluate("mockApi._resume()")
+    expect(pg.locator("#wifiSteps .steps-fold")).to_be_visible(timeout=4000)
+    expect(pg.locator("#wifiSteps .steps-fold-t")).to_have_text("Wi-Fi moved to the Built-in MediaTek")
+    expect(pg.locator("#wifiSteps .steps-body")).to_be_hidden()  # folded into one line
+
+
+def test_bluetooth_bar_four_steps_then_folds_and_goes(open_page):
+    pg = open_page("window.MOCK_HOLD_STEP = 2;")
+    pg.keyboard.press("Control+2")
+    bt_use(pg, "builtin").click()
+    expect(blocks(pg, "btSteps")).to_have_count(4)
+    expect(pg.locator("#btSteps .steps-title")).to_have_text("Moving Bluetooth")
+    expect(pg.locator("#btSteps .steps-count")).to_contain_text("2/4 · ")
+    expect(pg.locator("#btSteps .steps-label")).to_have_text("Turning off the Unigen dongle radio")
+    assert states(pg, "btSteps") == ["done", "current", "empty", "empty"]
+    assert pg.evaluate("getComputedStyle(document.querySelector('#btSteps')).getPropertyValue('--accent')").strip().lower() == "#d55181"  # the target's colour (--bi)
+    pg.evaluate("mockApi._resume()")
+    expect(pg.locator("#btSteps .steps-fold")).to_be_visible(timeout=6000)
+    expect(pg.locator("#btSteps .steps-fold-t")).to_have_text("Bluetooth moved to the Built-in MediaTek")
+    expect(pg.locator("#btSteps")).to_be_hidden(timeout=9000)  # lingers a few seconds, then fades out
+
+
+def test_bluetooth_steps_with_nothing_to_do_are_skipped(open_page):
+    pg = open_page("window.MOCK_HOLD_STEP = 3;")
+    pg.evaluate("mockApi._setConnected('BT-beats', false)")  # no device connected: nothing to disconnect or reconnect
+    pg.keyboard.press("Control+2")
+    bt_use(pg, "builtin").click()
+    expect(pg.locator("#btSteps .steps-count")).to_contain_text("3/4 · ")
+    assert states(pg, "btSteps") == ["skipped", "done", "current", "empty"]
+    pg.evaluate("mockApi._resume()")
+    expect(pg.locator("#btSteps .steps-fold")).to_be_visible(timeout=6000)
+
+
+def test_failed_step_shows_red_block_message_and_try_again(open_page):
+    late = "Windows didn't turn off the Unigen dongle radio, usually because audio is still playing through it."
+    pg = open_page(f'window.MOCK_BT_FAIL = "{late}"; window.MOCK_FAIL_STEP = 2;')
+    pg.keyboard.press("Control+2")
+    bt_use(pg, "builtin").click()
+    expect(pg.locator("#btSteps .retry")).to_be_visible(timeout=6000)
+    assert states(pg, "btSteps") == ["done", "failed", "empty", "empty"]
+    expect(pg.locator("#btSteps .steps-count")).to_have_text("2/4 · failed")
+    expect(pg.locator("#btSteps")).to_have_attribute("data-bar", "fail")
+    expect(pg.locator("#btUseMsg")).to_have_text(late)  # the message stays visible next to the bar
+    expect(pg.locator("#btUseMsg")).to_have_class("msg err")
+    expect(bt_use(pg, "unigen")).to_have_attribute("aria-checked", "true")
+    pg.evaluate("window.MOCK_BT_FAIL = null")
+    pg.locator("#btSteps .retry").click()  # Try again repeats the same move
+    expect(pg.locator("#btSteps .steps-fold-t")).to_have_text("Bluetooth moved to the Built-in MediaTek", timeout=6000)
+    expect(bt_use(pg, "builtin")).to_have_attribute("aria-checked", "true")
+
+
+def test_wifi_failure_names_the_step(open_page):
+    msg = "Couldn't finish switching to the Built-in MediaTek. You're still on the Unigen dongle."
+    pg = open_page(f'window.MOCK_WIFI_FAIL = "{msg}"; window.MOCK_FAIL_STEP = 3;')
+    wifi_use(pg, "builtin").click()
+    expect(pg.locator("#wifiSteps .retry")).to_be_visible(timeout=6000)
+    assert states(pg, "wifiSteps") == ["done", "done", "failed", "empty", "empty"]
+    expect(pg.locator("#wifiSteps .steps-label")).to_have_text("Finding HOME-5G")
+    expect(wifi_use(pg, "unigen")).to_have_attribute("aria-checked", "true")
+    expect(pg.locator("#wifiUse button").first).to_be_enabled()
+
+
+def test_bluetooth_actions_are_off_while_it_moves_and_back_after(open_page):
+    pg = open_page("window.MOCK_HOLD_STEP = 2;")
+    pg.keyboard.press("Control+2")
+    expect(pg.locator("#paired .row")).to_have_count(6)
+    pg.evaluate("setMsg($('#btMsg'), 'Bluetooth isn\\'t ready yet.', true)")  # an old error from before the move
+    bt_use(pg, "builtin").click()
+    expect(pg.locator("#btSteps .steps-count")).to_contain_text("2/4")
+    for sel in ("#paired .conn", "#paired .hold", "#btPower"):
+        for el in pg.locator(sel).all():
+            expect(el).to_be_disabled()
+    pg.evaluate("document.querySelector('#paired').insertAdjacentHTML('beforeend', pairedRow({ id: 'new', name: 'New', kind: 'Audio', connected: false }))")
+    expect(pg.locator("#paired .row").last.locator(".conn")).to_be_disabled()  # rows that appear mid-move are locked too
+    pg.evaluate("mockApi._resume()")
+    expect(pg.locator("#btSteps .steps-fold")).to_be_visible(timeout=6000)
+    for sel in ("#paired .conn", "#paired .hold", "#btPower"):
+        for el in pg.locator(sel).all():
+            expect(el).to_be_enabled()
+    expect(pg.locator("#btMsg")).to_have_text("")  # no stale error under the result
+
+
+def test_pressing_a_switch_while_a_move_runs_shows_the_running_bar_not_an_error(open_page):
+    pg = open_page("window.MOCK_LOG = [];")
+    pg.keyboard.press("Control+2")
+    pg.evaluate("window.onSwitchStep({ kind: 'bt', text: 'Turning off the Unigen dongle radio…', done: false, error: false, step: 2, of: 4, label: 'Turning off the Unigen dongle radio' })")
+    expect(pg.locator("#btSteps .steps-count")).to_contain_text("2/4")  # the watchdog's move shows its bar here too
+    bt_use(pg, "builtin").click()
+    expect(pg.locator("#btSteps .steps-title")).to_have_text("Already moving Bluetooth · 2/4")
+    expect(pg.locator("#btUseMsg")).not_to_have_class("msg err")
+    assert "switch_bt" not in pg.evaluate("window.MOCK_LOG")  # nothing was asked of the backend
+    pg.evaluate("window.onSwitchStep({ kind: 'bt', text: 'Bluetooth moved to the Unigen dongle.', done: true, error: false, step: 4, of: 4, label: 'x' })")
+    expect(pg.locator("#btSteps .steps-fold-t")).to_have_text("Bluetooth moved to the Unigen dongle", timeout=3000)
+
+
+def test_a_move_from_the_watchdog_that_fails_shows_its_failed_block(open_page):
+    pg = open_page()
+    pg.keyboard.press("Control+2")
+    pg.evaluate("window.onSwitchStep({ kind: 'bt', text: 'Starting the Unigen dongle radio…', done: false, error: false, step: 3, of: 4, label: 'Starting the Unigen dongle radio' })")
+    pg.evaluate("window.onSwitchStep({ kind: 'bt', text: 'The Unigen dongle radio didn\\'t start.', done: true, error: true, step: 3, of: 4, label: 'Starting the Unigen dongle radio' })")
+    assert states(pg, "btSteps") == ["skipped", "skipped", "failed", "empty"]
+    expect(pg.locator("#btSteps .retry")).to_be_visible()
+
+
+def test_reduced_motion_has_no_hatch_sweep_or_shake(open_page):
+    pg = open_page("window.MOCK_HOLD_STEP = 2;", reduced_motion="reduce")
+    pg.keyboard.press("Control+2")
+    bt_use(pg, "builtin").click()
+    expect(pg.locator("#btSteps .steps-count")).to_contain_text("2/4")
+    cur = "#btSteps .blk[data-s='current'] b"
+    assert pg.evaluate(f"getComputedStyle(document.querySelector(\"{cur}\"), '::after').animationName") == "none"  # no hatch
+    assert pg.evaluate(f"document.querySelector(\"{cur}\").style.transform") == ""  # no sweep: the fill isn't animated
+    assert pg.evaluate("document.querySelector('#btSteps').getAnimations({ subtree: true }).length") == 0
+    pg.evaluate("mockApi._resume()")
+    expect(pg.locator("#btSteps .steps-fold")).to_be_visible(timeout=6000)
+
+
+def test_motion_is_on_without_reduced_motion(open_page):
+    pg = open_page("window.MOCK_HOLD_STEP = 2;")
+    pg.keyboard.press("Control+2")
+    bt_use(pg, "builtin").click()
+    expect(pg.locator("#btSteps .steps-count")).to_contain_text("2/4")
+    cur = "#btSteps .blk[data-s='current'] b"
+    assert pg.evaluate(f"getComputedStyle(document.querySelector(\"{cur}\"), '::after').animationName") == "hatch"
+    pg.wait_for_timeout(300)
+    assert pg.evaluate(f"document.querySelector(\"{cur}\").style.transform") not in ("", "scaleX(0)")  # the fill sweeps, never to the end
+    assert float(pg.evaluate(f"document.querySelector(\"{cur}\").style.transform").split("(")[1].rstrip(")")) < 0.71
+
+
+def test_switch_is_square_with_a_hard_shadow_in_the_adapters_colour(open_page):
+    pg = open_page()
+    seg = pg.locator("#wifiUse")
+    css = lambda prop: pg.evaluate(f"getComputedStyle(document.querySelector('#wifiUse')).{prop}")
+    assert css("borderTopWidth") == "2px" and css("borderTopLeftRadius") == "0px"
+    shadow = css("boxShadow")
+    assert "4px 4px 0px" in shadow and "rgb(144, 133, 233)" in shadow  # --uni for the Dongle
+    wifi_use(pg, "builtin").click()
+    expect(pg.locator("#wifiUseMsg")).to_have_text("Wi-Fi moved to the Built-in MediaTek.")
+    assert "rgb(213, 81, 129)" in css("boxShadow")  # --bi once the Built-in is chosen
+    pg.mouse.move(0, 0)
+    box = wifi_use(pg, "builtin").bounding_box()  # the chosen button: pressing it starts nothing
+    pg.mouse.move(box["x"] + 5, box["y"] + 5)
+    pg.mouse.down()
+    pg.wait_for_timeout(300)
+    assert "0px 0px 0px" in css("boxShadow")  # pressed: it sank onto its shadow
+    pg.mouse.up()
+    pg.wait_for_timeout(900)
+    assert abs(float(css("boxShadow").split("px")[0].split()[-1]) - 4) < 0.5  # and springs back

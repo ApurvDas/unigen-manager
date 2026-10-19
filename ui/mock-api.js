@@ -4,7 +4,10 @@
 // MOCK_UNPLUG = "unigen" | "builtin", MOCK_DONGLE = "unplugged" | "not_responding" (the dongle's status; "unplugged" removes it like MOCK_UNPLUG = "unigen"), MOCK_ADMIN = false, MOCK_HOSTILE (adds a network, saved profile and paired device named like an HTML tag),
 // MOCK_SEARCH_HOLD (the Bluetooth search never finishes), MOCK_PAIR_TWIN (pairing races a paired-list refresh), MOCK_BT_OFF (Bluetooth starts off),
 // MOCK_BOTH_ON (neither adapter is switched off, like before the first switch), MOCK_OTHER_RADIO (two paired devices are paired
-// only with the other radio: Re-pair instead of Connect), MOCK_BT_FAIL = "message" (the background Bluetooth move fails).
+// only with the other radio: Re-pair instead of Connect), MOCK_BT_FAIL = "message" (the background Bluetooth move fails) and
+// MOCK_WIFI_FAIL = "message" (the Wi-Fi switch fails), both at step MOCK_FAIL_STEP (default 2); MOCK_HOLD_STEP = n (a move waits
+// after announcing step n until mockApi._resume(), to look at a step or test it without timing).
+// Switches play the real step sequences of hw.py (5 Wi-Fi steps, 4 Bluetooth ones), each step 300-800 ms unless MOCK_FAST.
 // window.mockApi._setUsing(key, kind) changes the adapter Wi-Fi ("wifi") or Bluetooth ("bt") uses, both without a kind;
 // mockApi._setDongle(state) plugs the dongle in ("connected"), out ("unplugged") or hangs it ("not_responding");
 // mockApi._setConnected(id, on) connects a paired device behind the app's back (as Windows Settings would);
@@ -190,6 +193,7 @@ window.mockApi = (() => {
     const d = PAIRED.find(x => x.id === id);
     if (!d) throw new Error("That device isn't paired any more.");
     if (d.here === false) throw new Error(`${d.name} is paired with the ${otherName()}, not this one. Put it in pairing mode, then press Re-pair.`);
+    if (moving === "bt") throw new Error("Bluetooth isn't ready yet. If you just switched adapters, it's still moving: try again in a moment.");
     d.connected = true;
   });
   def("bt_disconnect", 1000, id => { const d = PAIRED.find(x => x.id === id); if (!d) throw new Error("That device isn't paired any more."); d.connected = false; });
@@ -208,38 +212,72 @@ window.mockApi = (() => {
   def("speed_results", 0, () => JSON.parse(JSON.stringify(RESULTS)));
   // tray widget
   const need = () => { if (window.MOCK_ADMIN === false) throw new Error("Switching adapters needs administrator rights. Restart the app and choose Yes."); };
-  const say = (kind, text, done, error = false) => window.onSwitchStep && window.onSwitchStep({ kind, text, done, error });
+  // like api.Mover: each step carries step/of/label, and a done step names the step the move stopped at
+  const say = (kind, text, done = false, error = false, step = null, of = null, label = null) =>
+    window.onSwitchStep && window.onSwitchStep({ kind, text, done, error, step, of, label });
+  let moving = null, gate = null;  // the kind of move running (one lock for both); gate: a move held by MOCK_HOLD_STEP
+  const failAt = () => window.MOCK_FAIL_STEP || 2;
+  const hold = n => window.MOCK_HOLD_STEP === n ? new Promise(r => { gate = r; }) : null;
+  const busy = () => { if (moving) throw new Error("A switch is still finishing. Bluetooth can take up to a minute; try again in a moment."); };
+  // Plays steps [[n, label, ms, effect]] of `of`: announce, wait, apply. Returns the step it failed at (after saying so), or 0.
+  async function play(kind, steps, of, failText) {
+    for (const [n, label, ms, effect] of steps) {
+      say(kind, `${label}…`, false, false, n, of, label);
+      await hold(n);
+      await wait(ms);
+      if (failText && n >= failAt()) { moving = null; say(kind, failText, true, true, n, of, label); return n; }
+      if (effect) effect();
+    }
+    return 0;
+  }
   def("switch_wifi", 0, async key => {
     need();
     const t = plugged().find(a => a.key === key);
     if (!t) throw new Error(`The ${NAMES[key] || key} isn't plugged in.`);
+    busy();
     const old = plugged().find(a => a.key !== key);
-    for (const text of [`Turning on the ${t.name}…`, "Connecting to HOME-5G…"]) {
-      say("wifi", text, false);
-      await wait(300);
-    }
+    const labels = [`Turning on the ${t.name}`, "Waiting for it to start", ...(old ? ["Finding HOME-5G", "Connecting to HOME-5G"] : []),
+      ...(old ? [`Turning off the ${old.name}`] : [])];
+    const of = labels.length, steps = labels.map((label, i) => [i + 1, label, 300]);
+    moving = "wifi";
+    const failed = await play("wifi", old ? steps.slice(0, -1) : steps, of, window.MOCK_WIFI_FAIL);
+    if (failed) throw new Error(window.MOCK_WIFI_FAIL);
     WIFI = key;
     t.state = "connected"; t.ssid = "HOME-5G";
-    say("wifi", `Done. Using the ${t.name}.`, true);
-    if (old) wait(600).then(() => say("wifi", `The ${old.name} is off.`, true));  // like hw: the old Wi-Fi goes off after the switch reports done
+    const end = () => { moving = null; say("wifi", `Wi-Fi moved to the ${t.name}.`, true, false, of, of, labels[of - 1]); };
+    if (!old) end();
+    else (async () => {  // like hw: the old Wi-Fi goes off after the switch call returns
+      say("wifi", `${labels[of - 1]}…`, false, false, of, of, labels[of - 1]);
+      await hold(of);
+      await wait(600);
+      end();
+    })();
     return { using: key };
   });
   def("switch_bt", 0, async key => {
     need();
     const t = plugged().find(a => a.key === key);
     if (!t) throw new Error(`The ${NAMES[key] || key} isn't plugged in.`);
-    say("bt", `Moving Bluetooth to the ${t.name}. This can take up to a minute.`, false);
-    wait(600).then(() => {  // like hw: the move ends in the background
-      if (window.MOCK_BT_FAIL) return say("bt", window.MOCK_BT_FAIL, true, true);
+    busy();
+    const old = plugged().find(a => a.key !== key), held = PAIRED.filter(d => d.connected);
+    moving = "bt";
+    say("bt", `Moving Bluetooth to the ${t.name}. This can take up to a minute.`, false, false, 0, 4, "Starting");
+    const set = on => () => held.forEach(d => { d.connected = on; });
+    (async () => {  // like hw: the move runs in the background; a phase with nothing to do is skipped
+      const steps = [held.length && [1, "Disconnecting your devices", 500, set(false)], old && [2, `Turning off the ${old.name} radio`, 800],
+        [3, `Starting the ${t.name} radio`, 800], held.length && [4, "Reconnecting your devices", 600, set(true)]].filter(Boolean);
+      if (await play("bt", steps, 4, window.MOCK_BT_FAIL)) return set(true)();  // the failed move leaves the devices connected as before
       RADIO = key;
-      say("bt", `Bluetooth moved to the ${t.name}.`, true);
-    });
+      moving = null;
+      say("bt", `Bluetooth moved to the ${t.name}.`, true, false, steps[steps.length - 1][0], 4, steps[steps.length - 1][1]);
+    })();
     return { using: key };
   });
   def("is_visible", 0, which => true);
   def("open_main", 0, () => null);
   def("hide_widget", 0, () => null);
   def("widget_fit", 0, () => null);
+  api._resume = () => { const g = gate; gate = null; if (g) g(); }; // test hook: let a move held by MOCK_HOLD_STEP go on
   api._setDongle = state => { window.MOCK_DONGLE = state; if (window.MOCK_UNPLUG === "unigen") window.MOCK_UNPLUG = undefined; }; // test hook
   api._setUsing = (key, kind) => { if (kind !== "bt") WIFI = key; if (kind !== "wifi") RADIO = key; }; // test hook
   api._setConnected = (id, on) => { PAIRED.find(d => d.id === id).connected = on; }; // test hook

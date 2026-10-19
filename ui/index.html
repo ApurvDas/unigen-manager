@@ -67,12 +67,11 @@
   .adapter .badge.use { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
   .adapter.off { cursor: default; }
   .adapter.off .name, .adapter.off .meta, .adapter.off .caps { opacity: .6; }
-  /* "Adapter [ Dongle | Built-in ]" above the Wi-Fi tabs, "Radio [ ... ]" in the Bluetooth note */
-  .use-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-  .use-row .lbl { color: var(--muted); font-size: 13px; }
-  .use-row .msg { font-size: 12.5px; }
-  .use-row .msg:empty { display: none; }
-  .use-row[hidden] { display: none; }
+  /* "Adapter [ Dongle | Built-in ]" above the Wi-Fi tabs, "Radio [ ... ]" in the Bluetooth note: the switch, its state, its progress bar, its message */
+  .use[hidden] { display: none; }
+  .use-row { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; }
+  .use .msg { display: block; margin-top: 8px; font-size: 12.5px; }
+  .use .msg:empty { display: none; }
 
   nav { display: flex; flex-direction: column; gap: 2px; position: relative; }
   nav button {
@@ -188,10 +187,9 @@
   .radio-note .note-text { flex: 1; }
   .radio-note p { margin: 0; }
   .head .switch { align-self: center; }
-  .radio-note .msg { display: block; margin-top: 4px; }
+  .radio-note > .note-text > .msg { display: block; margin-top: 4px; }
   .radio-note .msg:empty { display: none; }
-  .radio-note .use-row { margin-bottom: 8px; }
-  .radio-note .use-row .msg { margin: 0; }
+  .radio-note .use { margin-bottom: 12px; }
   .bt.off .group { opacity: .45; pointer-events: none; }
   .pairbox { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 12px; margin: 2px 0 8px;
     background: var(--raised); border: 1px solid var(--line); border-radius: 8px; }
@@ -312,9 +310,13 @@
 <main>
   <!-- Wi-Fi -->
   <section id="wifi" class="wifi">
-    <div class="use-row" id="wifiUseRow" hidden>
-      <span class="lbl" id="wifiUseLbl">Adapter</span>
-      <div class="seg" id="wifiUse" role="radiogroup" aria-labelledby="wifiUseLbl"></div>
+    <div class="use" id="wifiUseRow" hidden>
+      <div class="use-row">
+        <span class="lbl" id="wifiUseLbl">Adapter</span>
+        <div class="seg" id="wifiUse" role="radiogroup" aria-labelledby="wifiUseLbl"></div>
+        <span class="state-line" id="wifiState" hidden><i class="pip" aria-hidden="true"></i><span class="t"></span></span>
+      </div>
+      <div id="wifiSteps" hidden></div>
       <span class="msg" id="wifiUseMsg"></span>
     </div>
     <div class="tabs" role="tablist" aria-label="Wi-Fi">
@@ -356,9 +358,13 @@
       <button class="switch on" id="btPower" role="switch" aria-checked="true" aria-label="Bluetooth"><i></i></button></div>
     <div class="radio-note">
       <div class="note-text">
-        <div class="use-row">
-          <span class="lbl" id="btUseLbl">Radio</span>
-          <div class="seg" id="btUse" role="radiogroup" aria-labelledby="btUseLbl"></div>
+        <div class="use">
+          <div class="use-row">
+            <span class="lbl" id="btUseLbl">Radio</span>
+            <div class="seg" id="btUse" role="radiogroup" aria-labelledby="btUseLbl"></div>
+            <span class="state-line" id="btState" hidden><i class="pip" aria-hidden="true"></i><span class="t"></span></span>
+          </div>
+          <div id="btSteps" hidden></div>
           <span class="msg" id="btUseMsg"></span>
         </div>
         <p id="btRunNote">Bluetooth is running on the <b id="btRadio">…</b>. <span id="btOther"></span> <span id="btAway"></span></p>
@@ -458,10 +464,14 @@ const activeKey = () => activeAdapter()?.dataset.adapter;
 let switching = false; // a switch started here is running (Wi-Fi or Bluetooth: they share one lock)
 const wifiSeg = $("#wifiUse"), btSeg = $("#btUse");
 let btDone = null;     // resolves with the final step of the Bluetooth move this window started
+const BT_STEPS = 4;    // bt.STEPS: what a Bluetooth move reports
+const prog = { wifi: $("#wifiSteps"), bt: $("#btSteps") };  // the progress bars under the two switches
+const switchTo = {};   // the adapter each kind's last move started here was going to (Try again repeats it)
+const going = {};      // the same, only while that move runs here: the switch shows it, whatever a reload says
+let moving = null;     // the move running anywhere (Python pushes its steps to both windows): { kind, step, of }
 const adapterEl = k => $$(".adapter").find(a => a.dataset.adapter === k);
 const NAME = k => (INFO && INFO.adapters.find(a => a.key === k) || {}).name || k;
 const SHORT = k => ({ unigen: "Unigen", builtin: "Built-in" })[k] || NAME(k);
-const COLOR = k => ({ unigen: "var(--uni)", builtin: "var(--bi)" })[k] || "var(--muted)";
 
 // ================= channel map =================
 const CH5 = [36,40,44,48,52,56,60,64,100,104,108,112,116,120,124,128,132,136,140,144,149,153,157,161,165];
@@ -639,12 +649,20 @@ function enableSegs() {
   enableSeg(wifiSeg, INFO.admin, switching, INFO.dongle);
   enableSeg(btSeg, BT ? BT.can_switch : INFO.admin, switching, INFO.dongle);
 }
+// "■ UNIGEN DONGLE · ON": which adapter the switch is on, in its colour
+function renderState(kind) {
+  const bt = kind === "bt", key = bt ? BT && BT.active : INFO && INFO.wifi_using, on = !bt || BT.power !== "off", el = $(bt ? "#btState" : "#wifiState");
+  el.hidden = !key;
+  el.style.setProperty("--pip", on ? COLOR(key) : "var(--muted)");
+  setText($(".t", el), key ? `${NAME(key)} · ${on ? "on" : "off"}` : "");
+}
 function renderUsing() {
   renderDongle($("#dongle"), INFO.dongle);
+  renderState("wifi");
   $("#wifiUseRow").hidden = INFO.adapters.length < 2 && INFO.dongle !== "unplugged";  // the Dongle button shows disabled
   buildSeg(wifiSeg, SWITCH_KEYS);
   enableSeg(wifiSeg, INFO.admin, switching, INFO.dongle);
-  markSeg(wifiSeg, INFO.wifi_using, true);
+  markSeg(wifiSeg, going.wifi || INFO.wifi_using, true);
 }
 // INFO changed (a switch, here or by the watchdog): redraw everything that depends on the adapter in use
 function applyInfo() {
@@ -665,51 +683,88 @@ async function reloadInfo() {
 }
 // Python pushes every step of a switch; a switch started elsewhere (the widget, the watchdog) reloads this window when it ends
 window.onSwitchStep = s => {
-  const bt = s.kind === "bt";
-  setMsg($(bt ? "#btUseMsg" : "#wifiUseMsg"), s.text, s.error);
+  const bt = s.kind === "bt", msg = $(bt ? "#btUseMsg" : "#wifiUseMsg");
+  setMsg(msg, s.text, s.error);
+  renderStep(prog[s.kind], s, { to: switching ? switchTo[s.kind] : null });
+  moving = s.done ? null : { kind: s.kind, step: s.step, of: s.of };
+  if (bt) {
+    lockBt(!s.done);
+    if (s.done) setMsg($("#btMsg"), "");  // an old error (Connect while it was moving) never sits under the result
+  }
   if (!s.done) return;
   if (bt && btDone) btDone(s);
-  else if (!s.error && !switching) (bt ? loadBt() : reloadInfo()).catch(e => setMsg($(bt ? "#btUseMsg" : "#wifiUseMsg"), e.message, true));
+  else if (!s.error && !switching) (bt ? loadBt() : reloadInfo()).catch(e => setMsg(msg, e.message, true));
 };
 window.onUsingChanged = () => { if (!switching) reloadInfo().catch(e => setMsg($("#wifiUseMsg"), e.message, true)); };
-wifiSeg.addEventListener("click", async e => {
-  const b = e.target.closest("button");
-  if (!b || b.disabled || switching || b.getAttribute("aria-checked") === "true") return;
-  const was = INFO.wifi_using;
+// Bluetooth actions are off while a Bluetooth move runs (Windows' radio isn't there to use): the buttons that were enabled get
+// disabled and come back on done. Rows render at any time, so a watcher keeps new ones locked.
+const BT_ACTIONS = "#bt .conn, #bt .pair, #bt .hold, #btPower, #btOn";
+function lockBt(on) {
+  $$(BT_ACTIONS).forEach(b => {
+    if (on && !b.disabled) { b.disabled = true; b.dataset.lock = "1"; }
+    else if (!on && b.dataset.lock) { b.disabled = false; delete b.dataset.lock; }
+  });
+}
+new MutationObserver(() => { if (moving && moving.kind === "bt") lockBt(true); }).observe($("#bt"), { childList: true, subtree: true });
+// pressing a switch while a move runs: say so on the running bar, no error
+function alreadyMoving(msg) {
+  const text = `Already moving ${moving.kind === "bt" ? "Bluetooth" : "Wi-Fi"}${moving.of ? ` · ${moving.step}/${moving.of}` : ""}`;
+  noteBar(prog[moving.kind], text);
+  setMsg(msg, text, false, { clearAfter: NOTE_MS });
+}
+async function moveWifi(key) {
+  const was = INFO.wifi_using, msg = $("#wifiUseMsg");
   switching = true; enableSegs();
-  markSeg(wifiSeg, b.dataset.k);
-  setMsg($("#wifiUseMsg"), `Switching to the ${NAME(b.dataset.k)}…`);
+  switchTo.wifi = going.wifi = key;
+  markSeg(wifiSeg, key);
+  setMsg(msg, `Switching to the ${NAME(key)}…`);
+  renderStep(prog.wifi, { kind: "wifi", text: msg.textContent, step: 0, of: 0, label: "Starting" }, { to: key });
   try {
-    await call("switch_wifi", b.dataset.k);
+    await call("switch_wifi", key);
     await reloadInfo();
   } catch (err) {
     markSeg(wifiSeg, was);
-    setMsg($("#wifiUseMsg"), err.message, true);
+    setMsg(msg, err.message, true);
+    failProgress(prog.wifi, err.message);
   } finally {
-    switching = false; enableSegs();
+    switching = false; going.wifi = null; enableSegs();
   }
-});
+}
 // the call returns at once; the move ends with a done step, then the radio shown is the one Windows really has
-btSeg.addEventListener("click", async e => {
-  const b = e.target.closest("button");
-  if (!b || b.disabled || switching || b.getAttribute("aria-checked") === "true") return;
-  const was = BT.active;
+async function moveBt(key) {
+  const was = BT.active, msg = $("#btUseMsg");
   switching = true; enableSegs();
-  markSeg(btSeg, b.dataset.k);
-  setMsg($("#btUseMsg"), `Moving Bluetooth to the ${NAME(b.dataset.k)}…`);
+  switchTo.bt = going.bt = key;
+  markSeg(btSeg, key);
+  setMsg($("#btMsg"), "");
+  setMsg(msg, `Moving Bluetooth to the ${NAME(key)}…`);
+  renderStep(prog.bt, { kind: "bt", text: msg.textContent, step: 0, of: BT_STEPS, label: "Starting" }, { to: key });
   const moved = new Promise(done => { btDone = done; });
   try {
-    await call("switch_bt", b.dataset.k);
+    await call("switch_bt", key);
     const s = await moved;
+    going.bt = null;  // show what Windows really has, not what was asked for
     await loadBt();
-    if (s.error) setMsg($("#btUseMsg"), s.text, true);
+    if (s.error) setMsg(msg, s.text, true);
   } catch (err) {
     markSeg(btSeg, was);
-    setMsg($("#btUseMsg"), err.message, true);
+    setMsg(msg, err.message, true);
+    failProgress(prog.bt, err.message);
   } finally {
-    btDone = null; switching = false; enableSegs();
+    btDone = null; switching = false; going.bt = null; enableSegs();
   }
+}
+const retry = kind => { if (!switching && !moving && switchTo[kind]) (kind === "bt" ? moveBt : moveWifi)(switchTo[kind]); };
+buildProgress(prog.wifi, "wifi", { onRetry: () => retry("wifi") });
+buildProgress(prog.bt, "bt", { onRetry: () => retry("bt") });
+const onSegClick = (seg, msg, move) => seg.addEventListener("click", e => {
+  const b = e.target.closest("button");
+  if (!b || b.disabled || switching || b.getAttribute("aria-checked") === "true") return;
+  if (moving) return alreadyMoving($(msg));
+  move(b.dataset.k);
 });
+onSegClick(wifiSeg, "#wifiUseMsg", moveWifi);
+onSegClick(btSeg, "#btUseMsg", moveBt);
 
 const SIG_N = 60;  // 2 minutes of readings, one every 2 s
 const sig = {};    // adapter key -> readings; null while not connected
@@ -799,7 +854,8 @@ function renderRadio() {
   setText($("#btLabel"), act && act.version ? `Bluetooth ${act.version}` : "Bluetooth");
   buildSeg(btSeg, SWITCH_KEYS);
   enableSeg(btSeg, BT.can_switch, switching, INFO.dongle);
-  markSeg(btSeg, BT.active, true);
+  markSeg(btSeg, going.bt || BT.active, true);
+  renderState("bt");
 }
 $("#paired").addEventListener("click", async e => {
   const b = e.target.closest(".conn"); if (!b || b.disabled) return;
@@ -857,6 +913,7 @@ function renderPower() {
   $("#bt").classList.toggle("off", !on);
   $("#btRunNote").hidden = !on;
   $("#btOnNote").hidden = on;
+  renderState("bt");
   if (!on) stopSearch();
 }
 $("#btPower").addEventListener("click", async function () {
