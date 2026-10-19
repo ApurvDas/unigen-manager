@@ -44,6 +44,7 @@ def main():
         sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean",
         "--onefile", "--windowed", "--name", "UnigenManager", "--icon", str(icon), "--version-file", str(info),
         "--add-data", f"{ROOT / 'ui'};ui",          # the pages, shared.js/css, mock and vendored anime.js
+        "--add-data", f"{ROOT / 'tools' / 'innoextract'};tools/innoextract",  # unpacks the dongle's driver (driver.py), with its licences
         "--hidden-import", "pystray._win32",       # pystray picks its backend at runtime
         "--distpath", str(DIST), "--workpath", str(BUILD / "pyinstaller"), "--specpath", str(BUILD),
         str(ROOT / "UnigenManager.pyw"),

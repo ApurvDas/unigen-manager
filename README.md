@@ -135,6 +135,28 @@ Older versions and checksums are on the [releases page](https://github.com/Apurv
 
 </td>
 </tr>
+<tr>
+<td colspan="2" valign="top">
+
+### 💾 Dongle driver: installed from inside the app
+If the dongle is plugged in but Windows has no Wi-Fi driver for it, the **Wi-Fi** page shows **Unigen dongle driver not installed** with one **Download & install** button, so nobody has to install a driver before running the app. The same state shows in the side menu and the tray widget.
+<div align="center"><img src="docs/screenshots/driver.png" alt="The Wi-Fi page offering the dongle driver, three steps into the install" width="620"></div>
+
+- **One permission: the click.** The app already runs as administrator, so there is no second Windows prompt. Nothing is downloaded or installed on startup or by itself, only when you press the button.
+- **Five steps, shown on the same stepped bar as the switches** (one block each, real steps only): **Downloading** (with `1.2 of 3.3 MB`), **Verifying**, **Unpacking**, **Installing**, **Checking**. **Cancel** works until Windows starts installing; a failed step turns red, says what happened and offers **Try again**. When it is done the page reloads and the dongle's Wi-Fi adapter appears.
+- **What it fetches:** AIC's own Windows driver installer, from a community mirror ([peckishrine/aic8800_windows_drivers](https://github.com/peckishrine/aic8800_windows_drivers), commit `d95fedce4c3ecf0a9d43fc5a899631880231c460`, file `Latest_Driver_AX900_USB_WiFi_6_and_Bluetooth_Adapter.exe`, 3.3 MB). The address names that one commit, so a moved or edited file can't be served.
+- **It is checked before anything is installed:**
+  1. The download must hash to the pinned **SHA-256** (`151e305a…970a4`). A different file is refused and deleted.
+  2. The vendor's installer is **never run**. The bundled [innoextract](tools/innoextract/README.txt) unpacks only the Windows 10/11 64-bit driver folder from it.
+  3. Both driver catalogs (`aicloadfw.cat`, `aicusbwifi.cat`) must carry a valid Microsoft (WHQL) signature, and the Wi-Fi INF must list this dongle (`USB\VID_368B&PID_8D81&MI_02`). Windows checks the signatures again when it installs.
+  4. Windows' own `pnputil /add-driver <inf> /install` installs the firmware loader (`aicloadfw.inf`) and then the Wi-Fi driver (`aicusbwifi.inf`). A freshly plugged dongle that is still waiting for its firmware is handled: the app waits for it to come back as the Wi-Fi device before the second install.
+  5. The app waits until the dongle's Wi-Fi function has really started. If it hasn't, it says so and tells you to re-plug the dongle.
+- **Safe to fail:** every step before *Installing* only touches temporary files (removed at the end, also on failure or cancel), so the PC is unchanged. Bluetooth needs no driver: Windows has its own.
+- **Not covered:** an already installed but *outdated* driver is left alone. The button is only offered when the dongle has no driver. The driver is for 64-bit Windows 10 and 11 on Intel or AMD.
+- **Licences:** see [NOTICE.md](NOTICE.md). The driver belongs to AIC Semiconductor, and the mirror it comes from has no licence of its own, so the app downloads it on demand instead of shipping it.
+
+</td>
+</tr>
 </table>
 
 Each adapter shows its own standards, read from the hardware: **Wi-Fi 6**, **Bluetooth 5.4** for the Unigen dongle and **5.2** for the MediaTek card. The motion is built with anime.js and turns into simple fades when Windows' **Show animations** setting is off.
@@ -161,6 +183,7 @@ The main window and the tray widget share one brutalist look, so nothing clashes
 | **Windows** | 10 or 11, **set to English** (the app reads `netsh` output) |
 | **Python** | Not needed for `UnigenManager.exe`. To run from source: [3.10](https://www.python.org/downloads/release/python-31011/), with the `py` launcher (installed by default) |
 | **WebView2** | Microsoft Edge WebView2 Runtime, already present on up-to-date Windows |
+| **Internet** | Only for **Download & install** of the dongle's driver (about 3.3 MB, once) |
 | **Rights** | Administrator, for the Wi-Fi and Bluetooth switches (turning adapters on and off) and Start with Windows (the app asks when it starts) |
 | **Hardware** | Built for the Unigen AIC8800D80 dongle and MediaTek MT7921 card. Other Wi-Fi adapters show up under their Windows names |
 
@@ -261,7 +284,7 @@ py -3.10 -m pip install -r requirements-dev.txt
 py -3.10 build_exe.py
 ```
 
-This writes `dist\UnigenManager.exe`: one file of about 33 MB, with no console window, that runs without Python. PyInstaller bundles the Python runtime, the `ui/` folder, and `build_exe.py` draws the app icon from the tray logo. When the app runs as the `.exe`, the admin prompt, the desktop shortcut and Start with Windows all point at the `.exe` itself.
+This writes `dist\UnigenManager.exe`: one file of about 33 MB, with no console window, that runs without Python. PyInstaller bundles the Python runtime, the `ui/` folder, `tools/innoextract/` (the driver unpacker), and `build_exe.py` draws the app icon from the tray logo. When the app runs as the `.exe`, the admin prompt, the desktop shortcut and Start with Windows all point at the `.exe` itself.
 
 **Version numbers:** releases go 1.0.0, 1.0.1, … 1.0.9, then 1.1.0. Each part counts 0 to 9 and then rolls into the next one up (1.9.9 becomes 2.0.0). `version.py` holds the number of the next release, and `version.bump()` works out the one after it.
 
@@ -284,6 +307,9 @@ flowchart LR
     api --> hw["hw.py<br/>Wi-Fi and Bluetooth switches, watchdog"]
     hw --> pnp["pnp.py<br/>SetupAPI device reads"]
     bt --> pnp
+    api --> driver["driver.py<br/>download, verify, unpack, pnputil"]
+    driver --> pnp
+    driver --> winrun
     api --> speed["speed.py<br/>ping, sampled HTTP"]
     api --> traffic["traffic.py<br/>byte counters, 1 s sampler"]
     app --> traffic
@@ -301,6 +327,8 @@ flowchart LR
 | `api.py` | Everything the pages call, with plain-language errors |
 | `wifi.py` | `netsh` parsing, connect and disconnect, saved profiles, Windows scan request |
 | `hw.py` | The Wi-Fi and Bluetooth switches: Wi-Fi by radio with rollback, Bluetooth in the background, one lock, a saved choice for each, dongle status, unplug/replug watchdog |
+| `driver.py` | Installs the dongle's Wi-Fi driver on a click: pinned download, SHA-256, unpack with `tools/innoextract` (the installer is never run), signature and hardware-id checks, `pnputil`, then waits for the Wi-Fi function to start. Progress goes through the same step mechanism as the switches |
+| `tools/innoextract/` | The unmodified innoextract 1.9 command-line tool and its licences (see [NOTICE.md](NOTICE.md)) |
 | `pnp.py` | Reads Device Manager (status, disabled, Bluetooth version, device battery levels) through SetupAPI, in milliseconds, and turns devices on and off (verified by their state, at most two calls, with an optional abort for a refusal Windows has already logged) |
 | `bt.py` | Bluetooth radio switching with its four reported steps, the read-only refusal probe, and audio connect |
 | `btwinrt.py` | Bluetooth through Windows' WinRT device APIs: paired list, live search, pairing with PIN prompts, unpair, radio power |
@@ -316,6 +344,7 @@ flowchart LR
 
 - **Untrusted names:** anyone nearby can name a network or device, so names are always shown as text and handed to Windows tools as separate arguments, never as command text.
 - **Passwords** are never logged. They only touch the disk inside temporary folders that are deleted straight away.
+- **The driver download is pinned and checked:** a commit-pinned address, a SHA-256 the file must match, valid Microsoft-signed catalogs and the dongle's hardware id in the INF, all before `pnputil` runs. The vendor's installer is never executed; only its signed driver files are unpacked. The app downloads nothing at startup and installs only on your click.
 - **Start with Windows** runs the app with administrator rights at sign-in, without a prompt. The app's files live in your user folder, so anything that can change those files could gain administrator rights at your next sign-in. Leave the option off if that trade-off isn't right for you.
 
 ## Known limitations
@@ -331,16 +360,17 @@ flowchart LR
 - **Two Bluetooth radios, two sets of pairings:** a device paired with only one radio shows **Re-pair** on the other. Each pairing needs the device in pairing mode while that radio is on, so the app can't pair a device with both radios in one go. **Hold to remove** on such a row unpairs it from the other radio too, which can fail while that radio is off.
 - Battery levels of Bluetooth LE-only devices (most mice and keyboards) aren't shown yet.
 - An adapter plugged in after the app starts appears after the app restarts.
+- **Dongle driver:** the install is built and tested against Windows mocks and the real unpacker, but has not been run on a PC that lacked the driver (the author's dongle already has it). An outdated driver is not detected or replaced. Windows 10 and 11, 64-bit Intel or AMD only.
 - **Traffic** counts Wi-Fi adapters only, and today's totals only while Unigen Manager is running (a day the app was closed shows less than Windows' own usage figures). The adapter in use is the one chosen with the Adapter switch; before the first switch, the first Wi-Fi adapter that is on.
 
 ## Built with
 
-[pywebview](https://pywebview.flowrl.com/) (BSD) · [pystray](https://github.com/moses-palmer/pystray) (LGPL-3.0) · [Pillow](https://python-pillow.org/) (MIT-CMU) · [PyWinRT](https://github.com/pywinrt/pywinrt) (MIT) · [anime.js](https://animejs.com/) (MIT) · [Playwright](https://playwright.dev/python/) and [pytest](https://pytest.org/) for tests
+[pywebview](https://pywebview.flowrl.com/) (BSD) · [pystray](https://github.com/moses-palmer/pystray) (LGPL-3.0) · [Pillow](https://python-pillow.org/) (MIT-CMU) · [PyWinRT](https://github.com/pywinrt/pywinrt) (MIT) · [anime.js](https://animejs.com/) (MIT) · [innoextract](https://constexpr.org/innoextract/) (zlib licence, bundled to unpack the driver) · [Playwright](https://playwright.dev/python/) and [pytest](https://pytest.org/) for tests
 
 The network names, addresses and device names in the tests and screenshots are made up.
 
 ## License
 
-[MIT](LICENSE). The libraries above keep their own licenses; the exe bundles them unchanged.
+[MIT](LICENSE). The libraries above keep their own licenses; the exe bundles them unchanged. The dongle's Wi-Fi driver is AIC Semiconductor's and is not part of this project or its licence: see [NOTICE.md](NOTICE.md).
 
 Unigen Manager is an unofficial, independent project. It isn't affiliated with, endorsed by or supported by Unigen. "Unigen" and the dongle's name belong to their owners. For driver or hardware support, contact Unigen. For this app, [open an issue](https://github.com/ApurvDas/unigen-manager/issues).
