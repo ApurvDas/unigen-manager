@@ -1,6 +1,6 @@
 """App version. VERSION is the next release; after publishing it, set VERSION = bump(VERSION)."""
 
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 
 
 def bump(v):
