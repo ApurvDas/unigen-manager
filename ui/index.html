@@ -63,6 +63,16 @@
   .adapter.off { cursor: default; }
   .adapter.off .name, .adapter.off .meta, .adapter.off .caps { opacity: .6; }
   /* "Adapter [ Dongle | Built-in ]" above the Wi-Fi tabs, "Radio [ ... ]" in the Bluetooth note: the switch, its state, its progress bar, its message */
+  /* "Unigen dongle driver not installed": shown on the Wi-Fi page while Windows has no driver for the plugged-in dongle */
+  .driver { background: var(--raised); border: var(--edge) solid var(--warn); padding: 14px 16px; max-width: 620px; }
+  .driver[hidden] { display: none; }
+  .driver[data-s="done"] { border-color: var(--ok); }
+  .driver h2 { margin: 0 0 4px; font: 700 var(--t-md)/1.3 var(--display); text-transform: none; letter-spacing: 0; }
+  .driver p { margin: 0; color: var(--muted); font-size: var(--t-sm); }
+  .driver-row { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; margin-top: 12px; }
+  .driver-row[hidden], .driver p[hidden], .driver .link[hidden] { display: none; }
+  .driver .msg { display: block; margin-top: 8px; font-size: var(--t-sm); }
+  .driver .msg:empty { display: none; }
   .use[hidden] { display: none; }
   .use-row { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; padding-right: 4px; }
   .use .msg { display: block; margin-top: 8px; font-size: var(--t-sm); }
@@ -312,6 +322,16 @@
 <main>
   <!-- Wi-Fi -->
   <section id="wifi" class="wifi">
+    <div class="driver" id="driver" role="region" aria-labelledby="driverTitle" hidden>
+      <h2 id="driverTitle">Unigen dongle driver not installed</h2>
+      <p id="driverText">The dongle is plugged in, but Windows has no Wi-Fi driver for it. The app can download the signed driver, check it and install it. Your click is the only permission it needs.</p>
+      <div class="driver-row" id="driverRow">
+        <button class="btn primary" id="driverGo"><span class="label">Download &amp; install</span></button>
+        <button class="link" id="driverCancel" hidden><span class="label">Cancel</span></button>
+      </div>
+      <div id="driverSteps" hidden></div>
+      <span class="msg" id="driverMsg"></span>
+    </div>
     <div class="use" id="wifiUseRow" hidden>
       <div class="use-row">
         <span class="lbl" id="wifiUseLbl">Adapter</span>
@@ -695,7 +715,8 @@ function renderState(kind) {
 function renderUsing() {
   renderDongle($("#dongle"), INFO.dongle);
   renderState("wifi");
-  $("#wifiUseRow").hidden = INFO.adapters.length < 2 && INFO.dongle !== "unplugged";  // the Dongle button shows disabled
+  $("#wifiUseRow").hidden = INFO.adapters.length < 2 && !["unplugged", "no_driver"].includes(INFO.dongle);  // the Dongle button shows disabled
+  renderDriver();
   buildSeg(wifiSeg, SWITCH_KEYS);
   enableSeg(wifiSeg, INFO.admin, switching, INFO.dongle);
   markSeg(wifiSeg, going.wifi || INFO.wifi_using, true);
@@ -719,6 +740,7 @@ async function reloadInfo() {
 }
 // Python pushes every step of a switch; a switch started elsewhere (the widget, the watchdog) reloads this window when it ends
 window.onSwitchStep = s => {
+  if (s.kind === "driver") return onDriverStep(s);
   const bt = s.kind === "bt", msg = $(bt ? "#btUseMsg" : "#wifiUseMsg");
   setMsg(msg, s.text, s.error);
   renderStep(prog[s.kind], s, { to: switching ? switchTo[s.kind] : null });
@@ -790,6 +812,60 @@ async function moveBt(key) {
     btDone = null; switching = false; going.bt = null; enableSegs();
   }
 }
+// ---- the dongle's driver (api.install_driver): one button, five steps the app really performs ----
+const DRIVER_STEPS = 5;                            // driver.STEPS
+const DRIVER_CANCEL_UNTIL = 3;                     // Cancel works through step 3 (unpacking); once Windows installs it runs to its end
+const DRIVER_HIDE_MS = FOLD_MS + LINGER_MS + FADE_MS + 100; // the panel goes when the bar that says "installed" has faded
+const drvSteps = $("#driverSteps"), drvGo = $("#driverGo"), drvCancel = $("#driverCancel");
+let driverRunning = false, driverDone = false;
+function renderDriver() {
+  if (!INFO) return;
+  const show = INFO && (INFO.dongle === "no_driver" || driverRunning || driverDone);
+  const was = $("#driver").hidden;
+  $("#driver").hidden = !show;
+  $("#driver").dataset.s = driverDone ? "done" : "";
+  setText($("#driverTitle"), driverDone ? "Unigen dongle driver installed" : "Unigen dongle driver not installed");
+  $("#driverText").hidden = driverRunning || driverDone;
+  $("#driverRow").hidden = driverDone;
+  drvGo.disabled = driverRunning || !INFO.admin;
+  drvGo.title = INFO.admin ? "" : "Installing the driver needs administrator rights.";
+  if (show && was && !reduce) arrive($("#driver"));
+}
+function onDriverStep(s) {
+  driverRunning = !s.done;
+  const msg = $("#driverMsg");
+  if (!s.done && driverDone) { driverDone = false; clearProgress(drvSteps); }  // a new install while the last one lingers
+  setMsg(msg, s.text, s.error);
+  renderStep(drvSteps, s, { to: "unigen" });
+  drvCancel.hidden = s.done || !(s.step <= DRIVER_CANCEL_UNTIL);
+  if (s.done && !s.error) {
+    driverDone = true;
+    setTimeout(() => { driverDone = false; renderDriver(); }, DRIVER_HIDE_MS);
+    reloadInfo().catch(e => setMsg(msg, e.message, true));  // the dongle's Wi-Fi adapter now exists
+  }
+  renderDriver();
+}
+async function installDriver() {
+  if (driverRunning) return;
+  driverRunning = true; driverDone = false;
+  const msg = $("#driverMsg");
+  clearProgress(drvSteps);
+  setMsg(msg, "Starting…");
+  renderStep(drvSteps, { kind: "driver", text: "Starting…", step: 0, of: DRIVER_STEPS, label: "Starting" }, { to: "unigen" });
+  drvCancel.hidden = false;
+  renderDriver();
+  try {
+    await call("install_driver");
+  } catch (err) {  // the failed step was pushed already; this covers a call that failed before any step
+    setMsg(msg, err.message, true);
+    failProgress(drvSteps, err.message);
+  } finally {
+    driverRunning = false; drvCancel.hidden = true; renderDriver();
+  }
+}
+buildProgress(drvSteps, "driver", { onRetry: installDriver });
+drvGo.addEventListener("click", installDriver);
+drvCancel.addEventListener("click", () => { drvCancel.disabled = true; call("cancel_driver").catch(() => {}).finally(() => { drvCancel.disabled = false; }); });
 const retry = kind => { if (!switching && !moving && switchTo[kind]) (kind === "bt" ? moveBt : moveWifi)(switchTo[kind]); };
 buildProgress(prog.wifi, "wifi", { onRetry: () => retry("wifi") });
 buildProgress(prog.bt, "bt", { onRetry: () => retry("bt") });

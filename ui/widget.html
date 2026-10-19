@@ -229,6 +229,11 @@ async function reloadAll() {  // after a switch, here or by the watchdog: new IN
   await Promise.all([loadNets(), loadBt(), loadSpeed(true)]);
 }
 window.onSwitchStep = s => {
+  if (s.kind === "driver") {  // the driver install runs from the main window; the widget shows its line and reloads at the end
+    note($("#wifiMsg"), s.text, s.error);
+    if (s.done && !s.error) reloadAll().catch(fail($("#wifiMsg")));
+    return;
+  }
   const bt = s.kind === "bt", msg = $(bt ? "#btMsg" : "#wifiMsg");
   note(msg, s.text, s.error);
   renderStep(prog[s.kind], s, { to: switching ? switchTo[s.kind] : null });

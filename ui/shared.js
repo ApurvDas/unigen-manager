@@ -82,8 +82,8 @@ const ADMIN_TIP = "Switching adapters needs administrator rights.";
 // The dongle's state (api.app_info "dongle": connected, unplugged, not_responding; null when unknown): a status line, and the
 // Dongle button of both switches is disabled until it is connected. Built-in stays usable.
 const DONGLE_TEXT = { connected: "Dongle connected", unplugged: "Dongle not plugged in",
-  not_responding: "Dongle not responding. Unplug it and plug it back in." };
-const DONGLE_TIP = { unplugged: "Plug in the dongle.", not_responding: "Unplug the dongle and plug it back in." };
+  not_responding: "Dongle not responding. Unplug it and plug it back in.", no_driver: "Dongle driver not installed. Install it on the Wi-Fi page." };
+const DONGLE_TIP = { unplugged: "Plug in the dongle.", not_responding: "Unplug the dongle and plug it back in.", no_driver: "Install the dongle's driver first." };
 function renderDongle(el, state) {
   el.hidden = !state;
   el.dataset.state = state || "";
@@ -181,7 +181,7 @@ function addEl(list, html) {
 // step the app really performs; there is one block per step, the current step's name, "2/4 · 12 s", and never a made-up
 // percentage. A block is empty, current (hatched, filling), done, skipped (nothing to do) or failed. A page builds the
 // bar once (buildProgress), then hands every payload to renderStep.
-const BAR_TITLE = { wifi: "Switching Wi-Fi", bt: "Moving Bluetooth" };
+const BAR_TITLE = { wifi: "Switching Wi-Fi", bt: "Moving Bluetooth", driver: "Installing the driver" };
 // the adapter a move is going to is named by the step that turns it on; that gives the bar its colour
 const targetOf = text => {
   const m = /(?:turning on|moving bluetooth to|starting) the (.+?)(?: radio)?(?:…|\.|$)/i.exec(text || "");

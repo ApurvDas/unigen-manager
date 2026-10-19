@@ -97,8 +97,8 @@ button { font: inherit; color: inherit; }
 .dongle[hidden] { display: none; }
 .dongle i { flex: none; width: 8px; height: 8px; background: var(--muted); }
 .dongle[data-state="connected"] i { background: var(--ok); }
-.dongle[data-state="not_responding"] { color: var(--warn); }
-.dongle[data-state="not_responding"] i { background: var(--warn); }
+.dongle[data-state="not_responding"], .dongle[data-state="no_driver"] { color: var(--warn); }
+.dongle[data-state="not_responding"] i, .dongle[data-state="no_driver"] i { background: var(--warn); }
 
 /* The one segmented control (the Wi-Fi and Bluetooth adapter switches in both windows, and the Nearby | Saved tabs): a square block
    with a 2px outline and a hard shadow (--sh, defaults to the chosen adapter's colour, --seg-c, set by markSeg). One solid

@@ -415,3 +415,14 @@ def test_widget_traffic_numbers_are_a_pressable_link_without_a_shadow(widget):
     expect(pg.locator("#trNums")).to_have_attribute("title", "Switch between MB/s and Mbps")
     assert pg.evaluate("getComputedStyle(document.querySelector('#trNums')).boxShadow") == "none"
     assert pg.evaluate("document.querySelector('#trNums').classList.contains('link')")  # pressing it sinks it like every pressable
+
+
+def test_widget_dongle_without_driver_says_so_and_shows_the_install_line(widget):
+    pg = widget("window.MOCK_DRIVER = 'missing';", ads=1)
+    expect(pg.locator("#dongle")).to_have_text("Dongle driver not installed. Install it on the Wi-Fi page.")
+    expect(wifi_use(pg, "unigen")).to_be_disabled()
+    expect(wifi_use(pg, "unigen")).to_have_attribute("title", "Install the dongle's driver first.")
+    pg.evaluate("mockApi.install_driver()")  # started in the main window: the widget follows on its message line
+    expect(pg.locator("#wifiMsg")).to_have_text("Driver installed. The dongle's Wi-Fi is ready.", timeout=6000)
+    expect(pg.locator("#dongle")).to_have_text("Dongle connected")
+    expect(pg.locator(".ad")).to_have_count(2)

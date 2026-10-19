@@ -1068,3 +1068,97 @@ def test_traffic_page_is_square_uses_five_sizes_and_its_only_shadow_is_the_unit_
     pg.wait_for_timeout(300)
     assert "0px 0px 0px" in shadow(pg, "#trafficUnit")
     pg.mouse.up()
+
+
+# ---- the dongle's driver: panel, one button, five steps ----
+DRIVER_FAIL = "The downloaded file isn't the expected driver (its checksum differs), so it was not used. Nothing was installed."
+
+
+def test_driver_panel_is_hidden_while_the_dongle_has_its_driver(open_page):
+    pg = open_page()
+    expect(pg.locator("#driver")).to_be_hidden()
+    expect(pg.locator("#dongle")).to_have_text("Dongle connected")
+
+
+def test_driver_panel_offers_one_button_when_the_dongle_has_no_driver(open_page):
+    pg = open_page("window.MOCK_DRIVER = 'missing';")
+    expect(pg.locator("#driver")).to_be_visible()
+    expect(pg.locator("#driverTitle")).to_have_text("Unigen dongle driver not installed")
+    expect(pg.locator("#driverGo")).to_have_text("Download & install")
+    expect(pg.locator("#driverGo")).to_be_enabled()
+    expect(pg.locator("#driverSteps")).to_be_hidden()  # no bar until the click
+    expect(pg.locator("#dongle")).to_have_text("Dongle driver not installed. Install it on the Wi-Fi page.")
+    expect(pg.locator("#dongle")).to_have_attribute("data-state", "no_driver")
+    expect(wifi_use(pg, "unigen")).to_be_disabled()
+    expect(wifi_use(pg, "unigen")).to_have_attribute("title", "Install the dongle's driver first.")
+
+
+def test_nothing_installs_until_the_click(open_page):
+    pg = open_page("window.MOCK_DRIVER = 'missing'; window.MOCK_LOG = [];")
+    pg.wait_for_timeout(500)
+    assert "install_driver" not in pg.evaluate("window.MOCK_LOG")
+    pg.locator("#driverGo").click()
+    expect(pg.locator("#driverSteps")).to_have_attribute("data-bar", "done", timeout=6000)
+    assert pg.evaluate("window.MOCK_LOG").count("install_driver") == 1
+
+
+def test_driver_install_shows_five_steps_then_the_wifi_adapter(open_page):
+    pg = open_page("window.MOCK_DRIVER = 'missing'; window.MOCK_HOLD_STEP = 3;")
+    pg.locator("#driverGo").click()
+    expect(blocks(pg, "driverSteps")).to_have_count(5)  # download, verify, unpack, install, check
+    expect(pg.locator("#driverSteps .steps-title")).to_have_text("Installing the driver")
+    expect(pg.locator("#driverSteps .steps-count")).to_contain_text("3/5 · ")
+    expect(pg.locator("#driverSteps .steps-label")).to_have_text("Unpacking")
+    assert states(pg, "driverSteps") == ["done", "done", "current", "empty", "empty"]
+    expect(pg.locator("#driverGo")).to_be_disabled()
+    expect(pg.locator("#driverCancel")).to_be_visible()  # until Windows starts installing
+    assert pg.evaluate("getComputedStyle(document.querySelector('#driverSteps')).getPropertyValue('--accent')").strip().lower() == "#9085e9"  # --uni
+    pg.evaluate("mockApi._resume()")
+    expect(pg.locator("#driverSteps .steps-fold-t")).to_have_text("Driver installed. The dongle's Wi-Fi is ready", timeout=6000)
+    expect(pg.locator("#driverTitle")).to_have_text("Unigen dongle driver installed")
+    expect(pg.locator("#driver")).to_have_attribute("data-s", "done")
+    expect(pg.locator("#dongle")).to_have_text("Dongle connected")  # the page reloaded: the adapter exists
+    expect(wifi_use(pg, "unigen")).to_be_enabled()
+    expect(pg.locator(".adapter").filter(has_text="Unigen dongle")).to_be_visible()
+    expect(pg.locator("#driver")).to_be_hidden(timeout=9000)  # lingers a few seconds, then goes
+
+
+def test_driver_download_shows_its_running_figures_and_cancel_stops_it(open_page):
+    pg = open_page("window.MOCK_DRIVER = 'missing'; window.MOCK_FAST = false;")
+    pg.locator("#driverGo").click()
+    expect(pg.locator("#driverSteps .steps-label")).to_have_text(re.compile(r"Downloading \d\.\d of 3\.3 MB"))
+    pg.locator("#driverCancel").click()
+    expect(pg.locator("#driverSteps")).to_have_attribute("data-bar", "fail", timeout=4000)
+    expect(pg.locator("#driverMsg")).to_have_text("Cancelled. Nothing was installed.")
+    expect(pg.locator("#driverTitle")).to_have_text("Unigen dongle driver not installed")  # still offered
+    expect(pg.locator("#driverGo")).to_be_enabled()
+
+
+def test_driver_failure_names_the_step_and_try_again_works(open_page):
+    pg = open_page(f'window.MOCK_DRIVER = "missing"; window.MOCK_DRIVER_FAIL = "{DRIVER_FAIL}"; window.MOCK_FAIL_STEP = 2;')
+    pg.locator("#driverGo").click()
+    expect(pg.locator("#driverSteps .retry")).to_be_visible(timeout=6000)
+    assert states(pg, "driverSteps") == ["done", "failed", "empty", "empty", "empty"]
+    expect(pg.locator("#driverSteps .steps-count")).to_have_text("2/5 · failed")
+    expect(pg.locator("#driverSteps .steps-label")).to_have_text("Verifying")
+    expect(pg.locator("#driverMsg")).to_have_text(DRIVER_FAIL)
+    expect(pg.locator("#driverMsg")).to_have_class("msg err")
+    expect(pg.locator("#driverCancel")).to_be_hidden()
+    expect(pg.locator("#driverGo")).to_be_enabled()
+    pg.evaluate("window.MOCK_DRIVER_FAIL = null")
+    pg.locator("#driverSteps .retry").click()
+    expect(pg.locator("#driverSteps .steps-fold-t")).to_have_text("Driver installed. The dongle's Wi-Fi is ready", timeout=6000)
+
+
+def test_driver_install_needs_admin(open_page):
+    pg = open_page("window.MOCK_DRIVER = 'missing'; window.MOCK_ADMIN = false;")
+    expect(pg.locator("#driverGo")).to_be_disabled()
+    expect(pg.locator("#driverGo")).to_have_attribute("title", "Installing the driver needs administrator rights.")
+
+
+def test_driver_panel_is_square_and_uses_the_shared_bar(open_page):
+    pg = open_page("window.MOCK_DRIVER = 'missing';")
+    css = pg.evaluate("""() => { const c = getComputedStyle(document.querySelector('#driver'));
+      return [c.borderTopWidth, c.borderRadius, c.boxShadow, c.borderTopColor] }""")
+    assert css[0] == "2px" and css[1] == "0px" and css[2] == "none"  # depth means pressable: the panel has no shadow, the button has
+    assert pg.evaluate("getComputedStyle(document.querySelector('#driverGo')).boxShadow") != "none"
