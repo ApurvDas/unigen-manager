@@ -112,7 +112,7 @@ button { font: inherit; color: inherit; }
 .seg button:disabled:not([aria-checked="true"]) { opacity: .45; }  /* the Dongle button while it is unplugged, and the other one during a switch */
 .seg .ind { position: absolute; top: 0; bottom: 0; left: 0; right: auto; background: var(--seg-c); pointer-events: none; }
 .seg button:focus-visible { outline-offset: -4px; }
-.seg.tabs { --seg-c: var(--ink); --sh: var(--line); }
+.seg.tabs, .seg.unit { --seg-c: var(--ink); --sh: var(--line); }  /* neutral: Nearby | Saved, and the traffic unit [MB/s | Mbps] */
 .seg .count { font-weight: 400; margin-left: 4px; opacity: .7; }
 @media (hover: hover) and (pointer: fine) {
   .seg button:not(:disabled):not([aria-checked="true"]):not([aria-selected="true"]):hover { color: var(--ink); }

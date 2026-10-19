@@ -6,7 +6,8 @@ HELPERS = ["function call(", "function slide(", "function swap(", "async functio
            "function setText(", "function setMsg(", "function scramble(", "function pop(", "function relayout(",
            "function removeEl(", "function addEl(", "function buildSeg(", "function markSeg(", "function enableSeg(", "function renderDongle(",
            "function buildProgress(", "function renderStep(", "function failProgress(", "function clearProgress(", "function noteBar(",
-           "const COLOR ="]
+           "const COLOR =", "function rateParts(", "function fmtRate(", "function fmtBytes(", "function buildUnitSeg(", "function markUnit(",
+           "async function pickUnit(", "function trafficChart("]
 
 
 def test_index_uses_shared_files():
@@ -25,7 +26,8 @@ def test_shared_files_define_everything():
     assert all(h in js for h in HELPERS)
     # every timing of the switch area is a named constant, and the bar styles are shared by both windows
     for name in ("PRESS_MS", "RELEASE_MS", "SLIDE_MS", "ENTER_MS", "STAGGER_MS", "SWEEP_MS", "SNAP_MS", "FLASH_MS", "FOLD_MS",
-                 "LINGER_MS", "SHAKE_MS", "SWAP_MS", "POP_MS", "ROW_Y", "STAGGER_CAP_MS"):
+                 "LINGER_MS", "SHAKE_MS", "SWAP_MS", "POP_MS", "ROW_Y", "STAGGER_CAP_MS",
+                 "TRAFFIC_MS", "TRAFFIC_N", "SCROLL_MS", "AXIS_EASE", "AXIS_FLOOR"):
         assert f"const {name}" in js or f", {name} =" in js
     assert ".steps.compact" in css and ".blk[data-s=\"failed\"]" in css and "border-radius: 0" in css
 
@@ -43,3 +45,13 @@ def test_widget_uses_shared_files():
     html = (UI / "widget.html").read_text(encoding="utf-8")
     assert '<link rel="stylesheet" href="shared.css">' in html and '<script src="shared.js"></script>' in html
     assert "--panel:" not in html and not any(h in html for h in HELPERS)
+
+
+def test_traffic_timings_live_in_shared_js_not_in_the_pages():
+    js = (UI / "shared.js").read_text(encoding="utf-8")
+    assert "const TRAFFIC_MS = 1000" in js and "SCROLL_MS = TRAFFIC_MS" in js  # the chart scrolls one step per tick
+    for page in ("index.html", "widget.html"):
+        html = (UI / page).read_text(encoding="utf-8")
+        assert "}, TRAFFIC_MS)" in html  # polled at the shared interval, not a number of its own
+        assert not re.search(r"loadTraffic\(\)[^;\n]*\}, \d+\)", html)
+        assert "function trafficChart(" not in html and "nice =" not in html and "endMark =" not in html  # shared, not copied

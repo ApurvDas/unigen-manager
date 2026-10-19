@@ -905,3 +905,166 @@ def test_reduced_motion_presses_without_moving_and_the_strip_stands_still(open_p
     pg.wait_for_timeout(300)
     assert shadow(pg, "#btRefresh") == before and pg.evaluate("getComputedStyle(document.querySelector('#btRefresh')).translate") in ("none", "0px")
     pg.mouse.up()
+
+
+# ---- traffic ----
+def traffic_page(open_page, hooks=""):
+    pg = open_page(hooks)
+    pg.keyboard.press("Control+4")
+    expect(pg.locator("#traffic")).to_be_visible()
+    return pg
+
+
+def test_traffic_nav_ctrl_4_and_the_other_pages_still_work(open_page):
+    pg = open_page()
+    expect(pg.locator('nav button[data-go="traffic"]')).to_have_text("Traffic Ctrl 4")
+    pg.locator('nav button[data-go="traffic"]').click()
+    expect(pg.locator("#traffic")).to_be_visible()
+    expect(pg.locator('nav button[aria-current="page"]')).to_have_attribute("data-go", "traffic")
+    expect(pg.locator("#wifi")).to_be_hidden()
+    pg.keyboard.press("Control+1")
+    expect(pg.locator("#wifi")).to_be_visible()
+    expect(pg.locator("#traffic")).to_be_hidden()
+    pg.keyboard.press("Control+4")
+    expect(pg.locator("#traffic")).to_be_visible()
+    expect(pg.locator("#trafficTitle")).to_have_text("Traffic on Unigen dongle")
+
+
+def test_traffic_numbers_update_in_place(open_page):
+    pg = traffic_page(open_page)
+    pg.evaluate("mockApi._setRate(4200000, 300000)")
+    expect(pg.locator("#trafDown")).to_have_text("4.2", timeout=4000)
+    expect(pg.locator("#trafDownU")).to_have_text("MB/s")
+    expect(pg.locator("#trafUp")).to_have_text("300")
+    expect(pg.locator("#trafUpU")).to_have_text("KB/s")
+    pg.evaluate("document.querySelector('#trafDown').dataset.same = '1'")  # the element is kept, only its text changes
+    pg.evaluate("mockApi._setRate(8000000, 1000000)")
+    expect(pg.locator("#trafDown")).to_have_text("8.0", timeout=4000)
+    expect(pg.locator("#trafUp")).to_have_text("1.0")
+    expect(pg.locator("#trafUpU")).to_have_text("MB/s")
+    assert pg.evaluate("document.querySelector('#trafDown').dataset.same") == "1"
+    assert pg.evaluate("document.querySelector('#trafDown').getAnimations().length") == 0  # no flash on a number that moves every second
+
+
+def test_traffic_unit_toggle_switches_text_and_the_wifi_line(open_page):
+    pg = traffic_page(open_page)
+    pg.evaluate("mockApi._setRate(4200000, 300000)")
+    expect(pg.locator("#trafDown")).to_have_text("4.2", timeout=4000)
+    expect(pg.locator('#trafficUnit button[aria-checked="true"]')).to_have_text("MB/s")
+    pg.locator('#trafficUnit button[data-k="bits"]').click()
+    expect(pg.locator("#trafDown")).to_have_text("33.6")
+    expect(pg.locator("#trafDownU")).to_have_text("Mbps")
+    expect(pg.locator("#trafUp")).to_have_text("2.4")
+    expect(pg.locator('#trafficUnit button[aria-checked="true"]')).to_have_text("Mbps")
+    expect(pg.locator("#trafSub")).to_have_text("Mbps")
+    pg.keyboard.press("Control+1")
+    expect(pg.locator("#wifiLive")).to_have_text("↓ 33.6 Mbps · ↑ 2.4 Mbps")
+    pg.keyboard.press("Control+4")
+    pg.locator('#trafficUnit button[data-k="bytes"]').click()  # and back
+    expect(pg.locator("#trafUpU")).to_have_text("KB/s")
+    pg.evaluate("window.onTrafficUnit('bits')")  # what Python pushes when the widget changes the unit
+    expect(pg.locator("#trafUpU")).to_have_text("Mbps")
+
+
+def test_traffic_chart_has_sixty_points_in_the_adapters_colour(open_page):
+    pg = traffic_page(open_page)
+    expect(pg.locator("#traf .line")).to_have_count(2, timeout=4000)
+    assert pg.evaluate("[...document.querySelectorAll('#traf .line')].map(l => l.getAttribute('d').match(/[ML]/g).length)") == [60, 60]
+    assert pg.evaluate("[...document.querySelectorAll('#traf .line')].map(l => l.getAttribute('stroke'))") == ["var(--uni)", "var(--ink)"]
+    assert pg.evaluate("document.querySelector('#traf .line:last-of-type').getAttribute('stroke-opacity')") == "0.6"
+    assert pg.locator("#traf rect.end").count() == 1  # the newest point has a square marker
+    assert pg.evaluate("document.querySelector('#traf rect.end').getAttribute('rx')") is None
+
+
+def test_traffic_chart_scrolls_one_step_per_tick_and_reduced_motion_only_redraws(open_page):
+    pg = traffic_page(open_page)
+    pg.wait_for_function("document.querySelector('#traf .shift') && document.querySelector('#traf .shift').style.transform.includes('translateX')", timeout=5000)
+    pg2 = open_page(reduced_motion="reduce")
+    pg2.keyboard.press("Control+4")
+    expect(pg2.locator("#traf .line")).to_have_count(2, timeout=4000)
+    pg2.wait_for_timeout(2600)  # a few ticks have redrawn it
+    assert pg2.evaluate("document.querySelector('#traf .shift').style.transform") == ""
+    assert pg2.evaluate("document.querySelector('#traf').getAnimations({ subtree: true }).length") == 0
+
+
+def test_traffic_today_rows_and_note(open_page):
+    pg = traffic_page(open_page)
+    rows = pg.locator("#todayRows .row")
+    expect(rows).to_have_count(2)
+    expect(rows.nth(0).locator(".title")).to_have_text("Unigen dongle")
+    expect(rows.nth(1).locator(".title")).to_have_text("Built-in MediaTek")
+    expect(rows.nth(0).locator(".dn")).to_have_text(re.compile(r"^\d+\.\d+ GB$"))
+    expect(rows.nth(0).locator(".up")).to_have_text(re.compile(r"^\d+\.\d MB$"))
+    assert pg.evaluate("[...document.querySelectorAll('#todayRows .pip')].map(p => p.style.getPropertyValue('--pip'))") == ["var(--uni)", "var(--bi)"]
+    expect(pg.locator(".today .note")).to_have_text("Counted while Unigen Manager runs")
+    pg.locator("#todayRows .row").first.evaluate("r => r.dataset.same = '1'")
+    pg.wait_for_timeout(1500)
+    assert pg.evaluate("document.querySelector('#todayRows .row').dataset.same") == "1"  # rows are updated in place
+
+
+def test_traffic_empty_and_measuring_states(open_page):
+    pg = traffic_page(open_page, "window.MOCK_TRAFFIC = 'none';")
+    expect(pg.locator("#trafEmpty")).to_have_text("No Wi-Fi adapter is on")
+    expect(pg.locator("#traf")).to_be_hidden()
+    expect(pg.locator("#trafDown")).to_have_text("–")
+    expect(pg.locator("#trafficTitle")).to_have_text("Traffic")
+    pg.keyboard.press("Control+1")
+    expect(pg.locator("#wifiLive")).to_be_hidden()
+    pg = traffic_page(open_page, "window.MOCK_TRAFFIC = 'measuring';")
+    expect(pg.locator("#trafEmpty")).to_have_text("Measuring…")
+    expect(pg.locator("#traf")).to_be_hidden()
+    expect(pg.locator("#trafDown")).to_have_text("–")
+    pg.keyboard.press("Control+1")
+    expect(pg.locator("#wifiLive")).to_have_text("Measuring…")
+
+
+def test_wifi_page_has_one_live_line_under_the_adapter_switch(open_page):
+    pg = open_page()
+    pg.evaluate("mockApi._setRate(4200000, 300000)")
+    expect(pg.locator("#wifiLive")).to_have_text("↓ 4.2 MB/s · ↑ 300 KB/s", timeout=4000)
+    below = pg.evaluate("document.querySelector('#wifiLive').getBoundingClientRect().top >= document.querySelector('#wifiUse').getBoundingClientRect().bottom")
+    assert below and pg.evaluate("getComputedStyle(document.querySelector('#wifiLive')).textTransform") == "uppercase"  # a caps line
+    assert pg.evaluate("getComputedStyle(document.querySelector('#wifiLive')).fontSize") == "11px"
+    wifi_use(pg, "builtin").click()  # follows the adapter in use
+    expect(pg.locator("#wifiUseMsg")).to_have_text("Wi-Fi moved to the Built-in MediaTek.")
+    pg.keyboard.press("Control+4")
+    expect(pg.locator("#trafficTitle")).to_have_text("Traffic on Built-in MediaTek", timeout=4000)  # the adapter in use leads
+
+
+def test_traffic_polling_stops_while_the_window_is_hidden(open_page):
+    pg = traffic_page(open_page)
+    pg.evaluate("""window.n = 0; const t = mockApi.traffic;
+        mockApi.traffic = (...x) => { window.n++; return t(...x); };
+        mockApi.is_visible = async () => ({ ok: true, data: false });""")
+    pg.wait_for_timeout(2600)
+    assert pg.evaluate("window.n") == 0
+    pg.evaluate("mockApi.is_visible = async () => ({ ok: true, data: true })")
+    pg.wait_for_timeout(2200)
+    assert pg.evaluate("window.n") >= 1
+
+
+def test_rate_text_in_the_page_matches_the_one_in_the_tray_tooltip(open_page):
+    import traffic
+    pg = open_page()
+    for unit in ("bytes", "bits"):
+        for v in (0, 999, 40_000, 512_000, 999_400, 999_600, 4_200_000, 33_600_000, 120_000_000):
+            assert pg.evaluate("([v, u]) => fmtRate(v, u)", [v, unit]) == traffic.fmt_rate(v, unit), (v, unit)
+    assert [pg.evaluate("n => fmtBytes(n)", n) for n in (0, 400_000, 1_234_567, 3_860_000_000)] == ["0 KB", "400 KB", "1.2 MB", "3.86 GB"]
+
+
+def test_traffic_page_is_square_uses_five_sizes_and_its_only_shadow_is_the_unit_switch(open_page):
+    pg = traffic_page(open_page)
+    expect(pg.locator("#traf .line")).to_have_count(2, timeout=4000)
+    assert pg.evaluate(ROUND) == []
+    assert set(pg.evaluate(TEXT_SIZES)) <= SIZES, pg.evaluate(TEXT_SIZES)
+    assert re.match(r"^rgb\(\d+, \d+, \d+\) 4px 4px 0px 0px$", shadow(pg, "#trafficUnit"))
+    shadows = pg.evaluate("""() => [...document.querySelectorAll('#traffic *')].filter(e => !e.closest('svg') && getComputedStyle(e).boxShadow !== 'none')
+        .map(e => e.id || e.className)""")
+    assert shadows == ["trafficUnit"], shadows  # readouts, cards and rows are flat: depth means pressable
+    assert pg.evaluate("document.querySelector('#trafficUnit').classList.contains('seg')")
+    box = pg.locator('#trafficUnit button[data-k="bits"]').bounding_box()  # the one press: it sinks onto its shadow
+    pg.mouse.move(box["x"] + 8, box["y"] + 8)
+    pg.mouse.down()
+    pg.wait_for_timeout(300)
+    assert "0px 0px 0px" in shadow(pg, "#trafficUnit")
+    pg.mouse.up()

@@ -360,3 +360,52 @@ def test_widget_press_sinks_onto_the_shadow(widget):
     pg.mouse.up()
     pg.wait_for_timeout(900)
     assert "3px 3px 0px" in pg.evaluate("getComputedStyle(document.querySelector('#run')).boxShadow")
+
+
+# ---- traffic ----
+def test_widget_traffic_section_shows_the_live_rates_and_a_sparkline(widget):
+    pg = widget()
+    expect(pg.locator(".sec h2").filter(has_text="Traffic")).to_be_visible()
+    pg.evaluate("mockApi._setRate(4200000, 300000)")
+    expect(pg.locator("#trDn")).to_have_text("4.2", timeout=4000)
+    expect(pg.locator("#trDnU")).to_have_text("MB/s")
+    expect(pg.locator("#trUp")).to_have_text("300")
+    expect(pg.locator("#trUpU")).to_have_text("KB/s")
+    expect(pg.locator("#tspark .line")).to_have_count(2)
+    assert pg.evaluate("[...document.querySelectorAll('#tspark .line')].map(l => l.getAttribute('d').match(/[ML]/g).length)") == [60, 60]
+    assert pg.evaluate("[...document.querySelectorAll('#tspark .line')].map(l => l.getAttribute('stroke'))") == ["var(--uni)", "var(--ink)"]
+    assert pg.evaluate("document.querySelector('#w').getBoundingClientRect().height") <= 900  # api.widget_fit never asks for more
+
+
+def test_widget_traffic_click_switches_the_unit_and_a_push_from_the_other_window_follows(widget):
+    pg = widget()
+    pg.evaluate("mockApi._setRate(4200000, 300000)")
+    expect(pg.locator("#trDn")).to_have_text("4.2", timeout=4000)
+    pg.locator("#trUp").click()  # either number switches it
+    expect(pg.locator("#trDn")).to_have_text("33.6")
+    expect(pg.locator("#trDnU")).to_have_text("Mbps")
+    expect(pg.locator("#trUp")).to_have_text("2.4")
+    pg.locator("#trDn").click()
+    expect(pg.locator("#trDnU")).to_have_text("MB/s")
+    pg.evaluate("window.onTrafficUnit('bits')")  # the main window changed it: Python pushes to both
+    expect(pg.locator("#trUpU")).to_have_text("Mbps")
+
+
+def test_widget_traffic_empty_state(widget):
+    pg = widget("window.MOCK_TRAFFIC = 'none';")
+    expect(pg.locator("#trEmpty")).to_have_text("No Wi-Fi adapter is on")
+    expect(pg.locator("#tspark")).to_be_hidden()
+    expect(pg.locator("#trDn")).to_have_text("–")
+
+
+def test_widget_traffic_measuring_state(widget):
+    pg = widget("window.MOCK_TRAFFIC = 'measuring';")
+    expect(pg.locator("#trEmpty")).to_have_text("Measuring…")
+    expect(pg.locator("#tspark")).to_be_hidden()
+
+
+def test_widget_traffic_numbers_are_a_pressable_link_without_a_shadow(widget):
+    pg = widget()
+    expect(pg.locator("#trNums")).to_have_attribute("title", "Switch between MB/s and Mbps")
+    assert pg.evaluate("getComputedStyle(document.querySelector('#trNums')).boxShadow") == "none"
+    assert pg.evaluate("document.querySelector('#trNums').classList.contains('link')")  # pressing it sinks it like every pressable

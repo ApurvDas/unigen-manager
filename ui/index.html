@@ -196,6 +196,7 @@
   .pairbox.explain ol { margin: 0 0 12px; padding-left: 20px; }
   .pairbox .btns { display: flex; gap: 12px; padding-right: 3px; }
   .empty { color: var(--muted); padding: 14px 12px; display: flex; gap: 14px; align-items: center; }
+  .empty[hidden] { display: none; }
 
   /* speed */
   .readouts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
@@ -210,6 +211,21 @@
   th { color: var(--muted); background: var(--raised); }
   td.num { font-size: var(--t-md); }
 
+  /* traffic: the Speed page's readouts and chart card, live; the Today card; the one-line readout on the Wi-Fi page */
+  .readouts.two { grid-template-columns: repeat(2, 1fr); }
+  .head .seg { align-self: center; margin-right: 4px; }
+  .today .row { grid-template-columns: minmax(0, 1fr) 130px 130px; padding: 10px 0; }
+  #todayRows .row:last-child { border-bottom: 0; }
+  .today .who { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .today .who .pip { width: 8px; height: 8px; flex: none; background: var(--pip, var(--muted)); }
+  .today .who .title { font-weight: 600; }
+  .today .tot { font: 700 var(--t-md)/1.2 var(--display); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .today .tot .arrow { color: var(--muted); font-size: var(--t-xs); letter-spacing: var(--track); margin-right: 8px; }
+  .today .empty { padding: 10px 0; }
+  .today .note { margin: 10px 0 0; color: var(--muted); font-size: var(--t-sm); }
+  .live { margin: -8px 0 0; font: 700 var(--t-xs)/1.2 var(--display); letter-spacing: var(--track); text-transform: uppercase; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .live[hidden] { display: none; }
+
   /* charts */
   .charts { display: grid; grid-template-columns: 3fr 2fr; gap: 18px; }
   .card { background: var(--raised); border: var(--edge) solid var(--line); padding: 12px 14px 10px; min-width: 0; }
@@ -221,6 +237,7 @@
   .key { display: inline-block; width: 14px; height: 4px; flex: none; }
   .key.box { width: 10px; height: 10px; }
   svg.chart { display: block; width: 100%; overflow: visible; }
+  svg.chart[hidden] { display: none; }
   .chart .grid { stroke: var(--line); stroke-width: 1; }
   .chart .tick { font: var(--t-xs) var(--display); fill: var(--muted); font-variant-numeric: tabular-nums; }
   .chart .line { fill: none; stroke-width: 2; stroke-linejoin: round; }
@@ -268,7 +285,7 @@
   @media (max-width: 760px) {
     body { grid-template-columns: 1fr; overflow: auto; }
     .rail { border-right: 0; border-bottom: var(--edge) solid var(--line); }
-    .map, .readouts, .charts { grid-template-columns: 1fr; }
+    .map, .readouts, .readouts.two, .charts { grid-template-columns: 1fr; }
     #netRows .row { grid-template-columns: 1fr 100px; }
     #netRows .row > :nth-child(n+3) { display: none; }
   }
@@ -287,6 +304,7 @@
     <button aria-current="page" data-go="wifi"><span id="wifiLabel">Wi-Fi</span> <kbd>Ctrl 1</kbd></button>
     <button data-go="bt"><span id="btLabel">Bluetooth</span> <kbd>Ctrl 2</kbd></button>
     <button data-go="speed">Speed <kbd>Ctrl 3</kbd></button>
+    <button data-go="traffic">Traffic <kbd>Ctrl 4</kbd></button>
   </nav>
   <span class="ver" id="ver"></span>
 </aside>
@@ -303,6 +321,7 @@
       <div id="wifiSteps" hidden></div>
       <span class="msg" id="wifiUseMsg"></span>
     </div>
+    <p class="live" id="wifiLive" hidden></p>
     <div class="tabs seg" role="tablist" aria-label="Wi-Fi">
       <span class="ind tab-ind" data-axis="x" aria-hidden="true"></span>
       <button role="tab" aria-selected="true" data-view="nearby">Nearby</button>
@@ -411,6 +430,31 @@
         <thead><tr><th>Adapter</th><th>Link</th><th>Ping</th><th>Download</th><th>Upload</th></tr></thead>
         <tbody id="results"></tbody>
       </table>
+    </div>
+  </section>
+
+  <!-- Traffic -->
+  <section id="traffic" hidden>
+    <div class="head">
+      <h1 id="trafficTitle">Traffic</h1>
+      <span class="msg" id="trafficMsg"></span>
+      <span class="grow"></span>
+      <div class="seg unit" id="trafficUnit" role="radiogroup" aria-label="Units"></div>
+    </div>
+    <div class="readouts two">
+      <div class="readout"><span class="big" id="trafDown">–</span><span class="unit" id="trafDownU">MB/s</span><div class="what">↓ Download</div></div>
+      <div class="readout"><span class="big" id="trafUp">–</span><span class="unit" id="trafUpU">MB/s</span><div class="what">↑ Upload</div></div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>Last 60 seconds</h2><span class="sub" id="trafSub"></span>
+        <span class="legend"><span><i class="key" id="trafKey" style="background:var(--uni)"></i>Download</span><span><i class="key" style="background:var(--ink);opacity:.6"></i>Upload</span></span></div>
+      <svg id="traf" class="chart" role="img" aria-label="Download and upload over the last 60 seconds" hidden></svg>
+      <div class="empty" id="trafEmpty">Measuring…</div>
+    </div>
+    <div class="card today">
+      <div class="card-head"><h2>Today</h2></div>
+      <div id="todayRows"></div>
+      <p class="note">Counted while Unigen Manager runs</p>
     </div>
   </section>
 </main>
@@ -1084,10 +1128,7 @@ async function confirmHold(b) {
 }
 
 // ================= charts (dataviz rules: thin marks, one axis, values lead in tooltips) =================
-// smallest "nice" number >= v, for axis tops
-const nice = v => { const p = 10 ** Math.floor(Math.log10(v)); return [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10].map(m => m * p).find(s => s >= v); };
-const endMark = (x, y, c) => `<rect class="end" x="${x - 4}" y="${y - 4}" width="8" height="8" fill="${c}"/>`;
-const pathOf = pts => pts.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join("");
+// nice, endMark and pathOf are in shared.js (the traffic chart and the widget draw with them too)
 
 // shared tooltip; labels go in via textContent (names can come from the air)
 const tip = $("#tip");
@@ -1295,6 +1336,70 @@ $("#runTest").addEventListener("click", async function () {
   }
 });
 
+// ================= traffic =================
+// The Traffic page, and the one live line under the Wi-Fi adapter switch. traffic() is polled every TRAFFIC_MS while the window is
+// shown and either page is up; numbers change in place (no animation, they move every second), the chart scrolls (trafficChart).
+const TRAF_GEO = { H: 190, L: 38, R: 12, T: 8, B: 22, axes: true, end: true };
+const trUnit = $("#trafficUnit");
+let TRF = null;      // the latest traffic()
+let trDrawn = null;  // what the chart shows now: { tag: adapter|unit, tick }
+let trMarked = null; // the unit the switch shows
+const trAd = () => TRF && (TRF.adapters.find(a => a.key === TRF.using) || TRF.adapters[0]);
+const put = (el, text) => { if (el.textContent !== text) el.textContent = text; };
+const trafficShown = () => !$("#traffic").hidden;
+buildUnitSeg(trUnit);
+
+async function loadTraffic() {
+  try { TRF = await call("traffic"); }
+  catch (e) { if ($("#trafficMsg").textContent !== e.message) setMsg($("#trafficMsg"), e.message, true); return; }
+  if ($("#trafficMsg").textContent) setMsg($("#trafficMsg"), "");
+  renderTraffic();
+}
+function drawTraffic(force) {
+  const a = trAd(), svg = $("#traf"), empty = !a || a.down == null;
+  svg.toggleAttribute("hidden", empty);
+  $("#trafEmpty").hidden = !empty;
+  if (empty) { put($("#trafEmpty"), a ? "Measuring…" : "No Wi-Fi adapter is on"); put($("#trafSub"), ""); trDrawn = null; return; }
+  const tag = `${a.key}|${TRF.unit}`, same = trDrawn && trDrawn.tag === tag;
+  if (!force && same && trDrawn.tick === TRF.tick) return;
+  const steps = !force && same ? Math.max(0, Math.min(TRAFFIC_N, TRF.tick - trDrawn.tick)) : 0;
+  $("#trafKey").style.background = COLOR(a.key);
+  put($("#trafSub"), trafficChart(svg, a, TRF.unit, TRAF_GEO, steps));
+  trDrawn = { tag, tick: TRF.tick };
+}
+function drawToday() {
+  const box = $("#todayRows"), ads = TRF.adapters, keys = ads.map(a => a.key).join();
+  if (box.dataset.keys !== keys) {
+    box.dataset.keys = keys;
+    box.innerHTML = ads.length ? ads.map(a => `<div class="row" data-k="${esc(a.key)}">
+        <span class="who"><i class="pip" style="--pip:${COLOR(a.key)}" aria-hidden="true"></i><span class="title">${esc(a.name)}</span></span>
+        <span class="tot"><span class="arrow">↓</span><span class="dn"></span></span><span class="tot"><span class="arrow">↑</span><span class="up"></span></span></div>`).join("")
+      : `<div class="empty">Nothing counted yet</div>`;
+  }
+  ads.forEach(a => {
+    const row = $(`.row[data-k="${a.key}"]`, box), t = TRF.today[a.key] || { down: 0, up: 0 };
+    put($(".dn", row), fmtBytes(t.down)); put($(".up", row), fmtBytes(t.up));
+  });
+}
+function renderTraffic(force) {
+  if (!TRF) return;
+  const a = trAd(), unit = TRF.unit, measured = !!a && a.down != null;
+  $("#wifiLive").hidden = !a;  // the Wi-Fi page's live line
+  if (a) put($("#wifiLive"), measured ? `↓ ${fmtRate(a.down, unit)} · ↑ ${fmtRate(a.up, unit)}` : "Measuring…");
+  if (!trafficShown()) { trDrawn = null; return; }
+  put($("#trafficTitle"), a ? `Traffic on ${a.name}` : "Traffic");
+  if (trMarked !== unit) { markUnit(trUnit, unit, trMarked === null || force); trMarked = unit; }
+  const [dn, dnU] = measured ? rateParts(a.down, unit) : ["–", UNIT_LABEL[unit]], [up, upU] = measured ? rateParts(a.up, unit) : ["–", UNIT_LABEL[unit]];
+  put($("#trafDown"), dn); put($("#trafDownU"), dnU); put($("#trafUp"), up); put($("#trafUpU"), upU);
+  drawTraffic(force); drawToday();
+}
+trUnit.addEventListener("click", e => {
+  const b = e.target.closest("button");
+  if (!b || b.disabled || b.getAttribute("aria-checked") === "true") return;
+  pickUnit(b.dataset.k).catch(err => setMsg($("#trafficMsg"), err.message, true));
+});
+window.onTrafficUnit = unit => { if (TRF) { TRF.unit = unit; renderTraffic(); } };  // pushed by Python (api.py set_traffic_unit) to both windows
+
 // ================= navigation =================
 // Wi-Fi tab: Nearby | Saved. Content swaps instantly; only the highlight slides.
 function view(name, instant) {
@@ -1320,17 +1425,19 @@ function go(id, instant) {
   }
   if (id === "bt" && INFO) loadBt();
   if (id === "speed") drawSpeed();
+  if (id === "traffic") { trMarked = null; renderTraffic(true); loadTraffic(); }  // hidden elements measure 0: draw now that it shows
   hideTip();
 }
 $$("nav button").forEach(b => b.addEventListener("click", () => go(b.dataset.go)));
 document.addEventListener("keydown", e => {
-  const ids = ["wifi", "bt", "speed"];
-  if (e.ctrlKey && e.key >= "1" && e.key <= "3") { e.preventDefault(); go(ids[e.key - 1], true); } // keyboard: no motion
+  const ids = ["wifi", "bt", "speed", "traffic"];
+  if (e.ctrlKey && e.key >= "1" && e.key <= "4") { e.preventDefault(); go(ids[e.key - 1], true); } // keyboard: no motion
   if (e.key === "Enter" && nearbyShown() && !pw.open && !e.target.closest("button")) $("#connect").click();
 });
 addEventListener("resize", () => {
   if (nearbyShown()) { drawMaps(); highlight(selected); markSel(true); }
   if (!$("#speed").hidden) drawSpeed();
+  if (trafficShown()) renderTraffic(true);
   markAd(activeAdapter(), true);
   slide($(".ind", wifiSeg), $("[aria-checked='true']", wifiSeg), true);
   slide($(".ind", btSeg), $("[aria-checked='true']", btSeg), true);
@@ -1340,7 +1447,7 @@ addEventListener("resize", () => {
 
 // ================= start =================
 const hash = location.hash.slice(1);
-go(["wifi", "bt", "speed"].includes(hash) ? hash : "wifi", true);
+go(["wifi", "bt", "speed", "traffic"].includes(hash) ? hash : "wifi", true);
 if (hash === "saved") view("saved", true); // old link: Saved now lives inside Wi-Fi
 setTimeout(() => { if (!INFO && !MOCK && !window.pywebview) setMsg($("#wifiMsg"), "Waiting for the app. To preview in a browser, open index.html?mock.", true); }, 3000);
 (async function start() {
@@ -1359,6 +1466,8 @@ setTimeout(() => { if (!INFO && !MOCK && !window.pywebview) setMsg($("#wifiMsg")
   const visible = () => call("is_visible", "main").catch(() => true);  // a hidden window stops polling
   setInterval(async () => { if (await visible()) poll(); }, 2000);
   setInterval(tickAge, 1000);
+  loadTraffic();
+  setInterval(async () => { if ((!$("#wifi").hidden || trafficShown()) && await visible()) loadTraffic(); }, TRAFFIC_MS);
   setInterval(async () => { if (!$("#bt").hidden && !pairingRow && await visible()) refreshPaired().catch(() => {}); }, 5000);  // a check takes ~50 ms
   // the watchdog announces an unplug, not a dongle coming back or still starting: while it isn't connected, look again
   setInterval(async () => {
@@ -1368,7 +1477,7 @@ setTimeout(() => { if (!INFO && !MOCK && !window.pywebview) setMsg($("#wifiMsg")
   }, 5000);
   // opened from the tray or the shortcut: fresh data now, not at the next tick
   window.onMainShown = () => {
-    poll();
+    poll(); loadTraffic();
     if (nearbyShown()) loadNetworks(false).then(() => loadNetworks(true)).catch(e => setMsg($("#wifiMsg"), e.message, true));
     if (!$("#bt").hidden && !pairingRow) refreshPaired().catch(() => {});
   };

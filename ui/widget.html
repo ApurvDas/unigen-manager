@@ -52,6 +52,7 @@
   .net .pct { color: var(--muted); font-size: var(--t-sm); text-align: right; }
   .net .act { justify-self: end; padding-right: var(--off); }
   .empty { color: var(--muted); font-size: var(--t-sm); padding: 4px 0; margin: 0; }
+  .empty[hidden] { display: none; }
 
   .bt { display: flex; align-items: center; gap: 12px; }
   .bt .ver { font: 700 var(--t-md) var(--display); white-space: nowrap; display: inline-block; }
@@ -65,6 +66,20 @@
   #run { grid-area: run; margin-right: var(--off); }
   #spark .line { fill: none; stroke-width: 2; stroke-linejoin: round; }
   #spark .area { fill-opacity: 0.12; }
+
+  /* traffic: the live rates (a click on them switches MB/s and Mbps) and the last minute as a sparkline, like the speed test's */
+  .traffic { display: grid; grid-template-columns: 1fr; gap: 8px; }
+  .traffic .nums { --off: 1px; display: flex; align-items: baseline; gap: 8px; white-space: nowrap; justify-self: start; padding: 0; background: none;
+    border: 0; color: var(--ink); text-align: left; cursor: pointer; font: inherit; letter-spacing: normal; text-transform: none; }
+  .traffic .nums b { font: 700 var(--t-lg)/1 var(--display); font-variant-numeric: tabular-nums; display: inline-block; }
+  .traffic .nums .arrow, .traffic .nums .unit { color: var(--muted); font: 700 var(--t-xs) var(--display); letter-spacing: var(--track); text-transform: uppercase; }
+  .traffic .nums .arrow:not(:first-child) { margin-left: 6px; }
+  @media (hover: hover) and (pointer: fine) { .traffic .nums:hover { text-decoration: none; } .traffic .nums:hover .unit { color: var(--ink); } }
+  #tspark { display: block; width: 100%; height: 28px; overflow: visible; }
+  #tspark .line { fill: none; stroke-width: 2; stroke-linejoin: round; }
+  #tspark .area { fill-opacity: 0.12; }
+  #tspark[hidden] { display: none; }
+  .traffic .empty:not([hidden]) { min-height: 28px; display: flex; align-items: center; }
 
   /* ---------- ?mock preview only: a Windows 10 taskbar to click ---------- */
   body.preview { background: #0E151D; }
@@ -124,6 +139,15 @@
       <button class="btn primary" id="run"><span class="label">Run test</span></button>
     </div>
     <p class="msg" id="speedMsg"></p>
+  </div>
+  <div class="sec">
+    <h2>Traffic</h2>
+    <div class="traffic">
+      <button class="link nums" id="trNums" title="Switch between MB/s and Mbps" aria-label="Live traffic. Press to switch units.">
+        <span class="arrow">↓</span><b id="trDn">–</b><span class="unit" id="trDnU"></span><span class="arrow">↑</span><b id="trUp">–</b><span class="unit" id="trUpU"></span></button>
+      <svg id="tspark" role="img" aria-label="Download and upload over the last 60 seconds" hidden></svg>
+      <p class="empty" id="trEmpty">Measuring…</p>
+    </div>
   </div>
 </div>
 
@@ -325,7 +349,6 @@ $("#btPower").addEventListener("click", async function () {
 
 // ================= mini speed test: sparkline of the last test on the adapter Wi-Fi uses =================
 const TP_N = 40;  // speed.py takes at most 28 download + 12 upload samples
-const pathOf = pts => pts.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join("");
 function drawSpark(samples, k, { draw, split } = {}) {
   const svg = $("#spark"), W = svg.clientWidth, H = 28; if (!W) return;
   split = Math.min(split ?? samples.length, samples.length);
@@ -368,13 +391,40 @@ $("#run").addEventListener("click", async function () {
   } catch (e) { live = null; note($("#speedMsg"), e.message, true); }
 });
 
+// ================= traffic: the live rates and the last minute on the adapter Wi-Fi uses =================
+const SPARK_GEO = { H: 28, L: 1, R: 5, T: 2, B: 2, axes: false, end: false };
+let TRF = null, trDrawn = null;  // the latest traffic(); what the sparkline shows: { tag: adapter|unit, tick }
+const put = (el, text) => { if (el.textContent !== text) el.textContent = text; };  // numbers change in place, without a flash
+function renderTraffic(force) {
+  if (!TRF) return;
+  const a = TRF.adapters.find(x => x.key === TRF.using) || TRF.adapters[0], unit = TRF.unit, measured = !!a && a.down != null;
+  const svg = $("#tspark");
+  const [dn, dnU] = measured ? rateParts(a.down, unit) : ["–", ""], [up, upU] = measured ? rateParts(a.up, unit) : ["–", ""];
+  put($("#trDn"), dn); put($("#trDnU"), dnU); put($("#trUp"), up); put($("#trUpU"), upU);
+  svg.toggleAttribute("hidden", !measured);
+  $("#trEmpty").hidden = measured;
+  if (!measured) { put($("#trEmpty"), a ? "Measuring…" : "No Wi-Fi adapter is on"); trDrawn = null; return; }
+  const tag = `${a.key}|${unit}`, same = trDrawn && trDrawn.tag === tag;
+  if (!force && same && trDrawn.tick === TRF.tick) return;
+  trafficChart(svg, a, unit, SPARK_GEO, !force && same ? Math.max(0, Math.min(TRAFFIC_N, TRF.tick - trDrawn.tick)) : 0);
+  trDrawn = { tag, tick: TRF.tick };
+}
+async function loadTraffic(force) {
+  TRF = await call("traffic");
+  renderTraffic(force);
+}
+$("#trNums").addEventListener("click", () => {
+  if (TRF) pickUnit(TRF.unit === "bits" ? "bytes" : "bits").catch(fail($("#speedMsg")));
+});
+window.onTrafficUnit = unit => { if (TRF) { TRF.unit = unit; renderTraffic(); } };  // pushed by Python (api.py set_traffic_unit) to both windows
+
 $("#openApp").addEventListener("click", () => call("open_main").catch(fail($("#wifiMsg"))));
 
 // ================= open / close =================
 const W = $("#w");
 async function refresh(draw) {
   await poll();
-  await Promise.all([loadNets(), loadBt(), loadSpeed(draw)]);
+  await Promise.all([loadNets(), loadBt(), loadSpeed(draw), loadTraffic(true).catch(() => {})]);
 }
 function animateOpen() {
   anime.animate(W, reduce ? { opacity: [0, 1], duration: 150, ease } : { opacity: [0, 1], y: [8, 0], duration: 180, ease });
@@ -398,6 +448,7 @@ if (!MOCK) {
 }
 setInterval(async () => { if (shown && await call("is_visible", "widget").catch(() => true)) { poll().catch(fail($("#wifiMsg"))); loadNets().catch(fail($("#netMsg"))); } }, 3000);
 setInterval(async () => { if (shown && await call("is_visible", "widget").catch(() => true)) loadBt().catch(() => {}); }, 10000);  // connected state and battery
+setInterval(async () => { if (shown && await call("is_visible", "widget").catch(() => true)) loadTraffic().catch(() => {}); }, TRAFFIC_MS);
 // the watchdog announces an unplug, not a dongle coming back or still starting: while it isn't connected, look again
 setInterval(async () => {
   if (!shown || !INFO || !INFO.dongle || INFO.dongle === "connected" || switching || !await call("is_visible", "widget").catch(() => true)) return;

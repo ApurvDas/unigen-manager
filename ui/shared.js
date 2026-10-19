@@ -329,3 +329,82 @@ function noteBar(el, text) {
   el._note = setTimeout(() => { t.textContent = was; }, NOTE_MS);
   anime.animate($(".blocks", el), reduce ? { opacity: [0.4, 1], duration: PULSE_MS, ease } : { scaleY: [1.8, 1], duration: PULSE_MS, ease });
 }
+
+// ================= traffic (the Traffic page, the Wi-Fi live line and the widget) =================
+// api.traffic() gives { using, unit, tick, adapters: [{ key, name, down, up, history: [[down, up] ... 60] }], today: { key: { down, up } } },
+// rates in bytes per second (null while an adapter is first measured). Sizes are decimal: 1 MB/s = 8 Mbps.
+const TRAFFIC_MS = 1000;                             // a visible window asks for traffic() this often
+const TRAFFIC_N = 60;                                // readings on the chart: the last minute, one a second
+const SCROLL_MS = TRAFFIC_MS, AXIS_EASE = 0.25;      // the chart scrolls one step linearly over one tick; its axis closes AXIS_EASE of the way to its new top each tick
+const AXIS_FLOOR = 100000;                           // bytes/s: the smallest top of the axis, so an idle line still has a scale
+const TRAFFIC_UNITS = { bytes: ["KB/s", "MB/s"], bits: ["Kbps", "Mbps"] };
+const UNIT_LABEL = { bytes: "MB/s", bits: "Mbps" };  // the unit switch: the family, the number picks KB or MB itself
+// smallest "nice" number >= v, for axis tops
+const nice = v => { const p = 10 ** Math.floor(Math.log10(v)); return [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10].map(m => m * p).find(s => s >= v); };
+const endMark = (x, y, c) => `<rect class="end" x="${x - 4}" y="${y - 4}" width="8" height="8" fill="${c}"/>`;
+const pathOf = pts => pts.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join("");
+
+// rateParts: ["4.2", "MB/s"]. KB or MB picked by size; KB whole, MB one decimal. The same rule as traffic.rate_parts (the tray tooltip).
+function rateParts(bps, unit) {
+  const v = bps * (unit === "bits" ? 8 : 1), [small, big] = TRAFFIC_UNITS[unit] || TRAFFIC_UNITS.bytes;
+  return v < 999500 ? [String(Math.round(v / 1e3)), small] : [(v / 1e6).toFixed(1), big];
+}
+function fmtRate(bps, unit) { return rateParts(bps, unit).join(" "); }
+// fmtBytes: a total of data, KB / MB / GB
+function fmtBytes(n) {
+  return n < 999500 ? `${Math.round(n / 1e3)} KB` : n < 999.95e6 ? `${(n / 1e6).toFixed(1)} MB` : `${(n / 1e9).toFixed(2)} GB`;
+}
+
+// The unit switch [MB/s | Mbps]: the same .seg as the adapter switches. pickUnit saves the choice; Python pushes it to both windows
+// (window.onTrafficUnit), and the caller applies it at once too, which does nothing twice.
+function buildUnitSeg(seg) {
+  seg.innerHTML = `<span class="ind" data-axis="x" aria-hidden="true"></span>` + Object.keys(UNIT_LABEL).map(k =>
+    `<button role="radio" aria-checked="false" data-k="${k}">${UNIT_LABEL[k]}</button>`).join("");
+}
+function markUnit(seg, unit, instant) {
+  const bs = $$("button", seg);
+  bs.forEach(b => b.setAttribute("aria-checked", b.dataset.k === unit));
+  slide($(".ind", seg), bs.find(b => b.dataset.k === unit), instant);
+}
+async function pickUnit(unit) {
+  const r = await call("set_traffic_unit", unit);
+  if (window.onTrafficUnit) window.onTrafficUnit(r.unit);
+}
+
+// trafficChart: the last minute of one adapter, drawn into svg: download as a 2px line in the adapter's colour over a flat area,
+// upload as a 2px line in --ink at 0.6. geo = { H, L, R, T, B, axes, end }: the page chart has axes and an end marker, the widget's
+// sparkline neither. steps > 0 means that many new readings arrived: the lines are drawn that far to the right and scroll left
+// over SCROLL_MS, linear (reduced motion: just redrawn). The axis top eases (AXIS_EASE per tick) but never sits below the busiest
+// second. Returns the unit the axis is in ("MB/s").
+function trafficChart(svg, a, unit, geo, steps = 0) {
+  const W = svg.clientWidth; if (!W) return "";
+  const { H, L, R, T, B } = geo, hist = a.history, n = hist.length, k = unit === "bits" ? 8 : 1;
+  const peak = Math.max(0, ...hist.flat());
+  const want = nice(Math.max(AXIS_FLOOR, peak) * k * 1.1) / k;
+  if (svg._k !== a.key + unit || !svg._top) { svg._k = a.key + unit; svg._top = want; }
+  else if (steps) { svg._top += (want - svg._top) * AXIS_EASE; if (Math.abs(svg._top - want) < want * 0.01) svg._top = want; }
+  const top = svg._top = Math.max(svg._top, peak);
+  const slideBy = steps && !reduce ? Math.min(steps, TRAFFIC_N) : 0;
+  const step = (W - L - R) / (TRAFFIC_N - 1), off = TRAFFIC_N - n + slideBy;
+  const x = i => L + (i + off) * step, y = v => T + (1 - Math.min(1, v / top)) * (H - T - B);
+  const line = j => hist.map((h, i) => [x(i), y(h[j])]);
+  const dn = line(0), up = line(1), c = COLOR(a.key);
+  const big = top * k >= 1e6, div = big ? 1e6 : 1e3;
+  const tick = v => { const t = v * k / div; return String(+t.toFixed(t < 10 ? 1 : 0)); };
+  let s = "";
+  if (geo.axes) {
+    s += [0, top / 2, top].map(v => `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/>
+      <text class="tick" x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${tick(v)}</text>`).join("");
+    s += `<text class="tick" x="${L}" y="${H - 4}">60 s ago</text><text class="tick" x="${W - R}" y="${H - 4}" text-anchor="end">now</text>`;
+  }
+  s += `<defs><clipPath id="${svg.id}Clip"><rect x="${L}" y="0" width="${W - L - R + 5}" height="${H}"/></clipPath></defs><g clip-path="url(#${svg.id}Clip)"><g class="shift">`;
+  if (n > 1) s += `<path class="area" fill="${c}" d="${pathOf(dn)}L${dn[n - 1][0]},${y(0)}L${dn[0][0]},${y(0)}Z"/>
+    <path class="line" stroke="${c}" d="${pathOf(dn)}"/><path class="line" stroke="var(--ink)" stroke-opacity="0.6" d="${pathOf(up)}"/>`;
+  if (n && geo.end) s += endMark(dn[n - 1][0], dn[n - 1][1], c);
+  s += `</g></g>`;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`); svg.style.height = `${H}px`;
+  svg.innerHTML = s;
+  if (svg._slide) svg._slide.cancel();
+  svg._slide = slideBy ? anime.animate($(".shift", svg), { x: [0, -slideBy * step], duration: SCROLL_MS, ease: "linear" }) : null;
+  return TRAFFIC_UNITS[unit][big ? 1 : 0];
+}
