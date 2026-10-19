@@ -6,6 +6,8 @@
 
 **Manage the Unigen USB Wi-Fi 6 + Bluetooth dongle and a laptop's built-in Wi-Fi card side by side, from one dark-mode window and an always-on tray widget.**
 
+<sub>An unofficial, independent app. Not made, endorsed or supported by Unigen. "Unigen" is their trademark, used here only to say which dongle this works with.</sub>
+
 ![Windows 10 | 11](https://img.shields.io/badge/Windows-10%20%7C%2011-0E151D?style=flat-square&logo=windows&logoColor=4FB3C8)
 ![Python 3.10](https://img.shields.io/badge/Python-3.10-0E151D?style=flat-square&logo=python&logoColor=4FB3C8)
 ![pywebview](https://img.shields.io/badge/UI-pywebview%20%2B%20WebView2-0E151D?style=flat-square)
@@ -296,3 +298,5 @@ The network names, addresses and device names in the tests and screenshots are m
 ## License
 
 [MIT](LICENSE). The libraries above keep their own licenses; the exe bundles them unchanged.
+
+Unigen Manager is an unofficial, independent project. It isn't affiliated with, endorsed by or supported by Unigen. "Unigen" and the dongle's name belong to their owners. For driver or hardware support, contact Unigen. For this app, [open an issue](https://github.com/ApurvDas/unigen-manager/issues).
