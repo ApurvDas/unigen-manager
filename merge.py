@@ -178,6 +178,8 @@ def _failover(e):
 async def dial(pool, host, port):
     """(connected non-blocking socket, its link), with the link's `active` still counted: the caller releases it when the
     connection ends. Tries links best first; one that fails to connect is sidelined and the next is tried."""
+    if not pool.links():  # before any DNS: with the network down a lookup can hang, and "no links" is code 3 anyway
+        raise DialError(3)
     loop = asyncio.get_running_loop()
     try:
         addr = (await loop.getaddrinfo(host, port, family=socket.AF_INET, type=socket.SOCK_STREAM))[0][4]

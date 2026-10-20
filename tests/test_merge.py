@@ -197,6 +197,14 @@ def test_dial_no_links(resolve):
     assert e.value.code == 3
 
 
+def test_dial_no_links_does_not_resolve(monkeypatch):
+    calls = []
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: calls.append(a) or [])
+    with pytest.raises(merge.DialError) as e:
+        asyncio.run(asyncio.wait_for(merge.dial(merge.Pool(), "example.com", 443), 1))
+    assert e.value.code == 3 and calls == []
+
+
 def test_dial_ipv6_only_host_errors(monkeypatch):
     def gai(*a, **k):
         assert k.get("family") == socket.AF_INET or socket.AF_INET in a

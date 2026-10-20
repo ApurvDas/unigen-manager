@@ -150,16 +150,21 @@ def test_serves_pac(pool):
     run(body())
 
 
-def test_no_links_fails_fast():
+def test_no_links_fails_fast(monkeypatch):
+    calls = []
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: calls.append(a) or [])  # no DNS when there are no links
+
     async def body():
         async with proxied(merge.Pool()) as (p, port):
-            r, w, rep = await socks(port, socks_req("127.0.0.1", 9))
-            assert rep == FAIL(3)
-            w.close()
-            r, w, head = await http(port, b"CONNECT 127.0.0.1:9 HTTP/1.1\r\n\r\n")
-            assert head.startswith(b"HTTP/1.1 502")
-            w.close()
+            for host in ("127.0.0.1", "example.com"):  # an address, then a name that must not be looked up
+                r, w, rep = await socks(port, socks_req(host, 9))
+                assert rep == FAIL(3)
+                w.close()
+                r, w, head = await http(port, f"CONNECT {host}:9 HTTP/1.1\r\n\r\n".encode())
+                assert head.startswith(b"HTTP/1.1 502")
+                w.close()
     run(body(), 1)
+    assert calls == []
 
 
 def test_active_released_once_on_early_close(pool):
