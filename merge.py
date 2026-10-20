@@ -1,6 +1,7 @@
 """Merge connections: new connections are spread across the Wi-Fi adapters that have an address. This is the pool of links
 and the scheduler that picks one for each new connection (the dialer and the proxy build on it)."""
 import asyncio, ctypes, random, socket, struct, threading, time
+from urllib.parse import urlsplit
 from ctypes import wintypes
 from dataclasses import dataclass
 
@@ -15,6 +16,9 @@ PROBE_TARGETS = (("1.1.1.1", 443), ("8.8.8.8", 443))  # a link is up when it can
 PROBE_UP = 15.0     # seconds between probes of a link that was last up
 PROBE_DOWN = 4.0    # ... and of one that was last down, so it comes back quickly
 REFRESH = 3.0       # seconds between re-reads of which adapters have an address
+PORT = 18780        # the proxy's preferred port (any free one when taken)
+MAX_HEAD = 65536    # the longest HTTP request head the proxy reads
+HEAD_TIMEOUT = 30.0  # seconds a client gets to send it
 FAILOVER = {10049, 10050, 10051, 10060, 10065}  # winsock: bad address, net down, net unreachable, timed out, host unreachable
 _TIERS = {"up": 0, "unknown": 1, "down": 2}
 
@@ -199,3 +203,154 @@ async def dial(pool, host, port):
         sock.setblocking(False)
         return sock, link
     raise DialError(3)
+
+
+def _socks_fail(code):
+    return b"\x05" + bytes([code]) + b"\x00\x01" + b"\0" * 6
+
+
+def _http_fail(code):
+    return b"HTTP/1.1 %d %s\r\nContent-Length: 0\r\nConnection: close\r\n\r\n" % (code, {400: b"Bad Request", 431: b"Request Header Fields Too Large", 502: b"Bad Gateway"}[code])
+
+
+class Proxy:
+    """A SOCKS5 + HTTP proxy on 127.0.0.1 whose every new connection leaves through a link the pool picks.
+    `bytes` is {link key: [down, up]}, cumulative; the UI reads it from another thread (plain int reads, so no lock)."""
+
+    def __init__(self, pool):
+        self.pool, self.bytes, self.port, self._server, self._tasks = pool, {}, 0, None, set()
+
+    async def start(self, port=PORT):
+        """Listens on the preferred port, or any free one when it is taken. Returns the port."""
+        try:
+            self._server = await asyncio.start_server(self._handle, "127.0.0.1", port)
+        except OSError:
+            self._server = await asyncio.start_server(self._handle, "127.0.0.1", 0)
+        self.port = self._server.sockets[0].getsockname()[1]
+        return self.port
+
+    async def stop(self):
+        self._server.close()
+        for t in list(self._tasks):  # before wait_closed: newer Pythons make it wait for open connections
+            t.cancel()
+        await asyncio.gather(*self._tasks, return_exceptions=True)
+        await self._server.wait_closed()
+
+    def pac(self):
+        return f'function FindProxyForURL(u, h) {{ return "PROXY 127.0.0.1:{self.port}; DIRECT"; }}'
+
+    async def _handle(self, r, w):
+        self._tasks.add(asyncio.current_task())
+        try:
+            first = await r.readexactly(1)
+            await (self._socks(r, w) if first == b"\x05" else self._http(r, w, first))
+        except (OSError, asyncio.IncompleteReadError, asyncio.TimeoutError):  # a client that vanished or never finished its head
+            pass
+        finally:
+            w.close()
+            self._tasks.discard(asyncio.current_task())
+
+    async def _socks(self, r, w):
+        methods = await r.readexactly((await r.readexactly(1))[0])
+        if 0 not in methods:
+            w.write(b"\x05\xff")
+            return
+        w.write(b"\x05\x00")
+        ver, cmd, _, atyp = await r.readexactly(4)
+        if cmd != 1:
+            w.write(_socks_fail(7))
+        elif atyp == 1:
+            await self._tunnel(r, w, socket.inet_ntoa(await r.readexactly(4)), await self._port(r), b"\x05\x00\x00\x01" + b"\0" * 6, _socks_fail)
+        elif atyp == 3:
+            host = (await r.readexactly((await r.readexactly(1))[0])).decode("utf-8", "replace")
+            await self._tunnel(r, w, host, await self._port(r), b"\x05\x00\x00\x01" + b"\0" * 6, _socks_fail)
+        else:  # IPv6 (the links are IPv4 only) or junk
+            w.write(_socks_fail(8))
+
+    @staticmethod
+    async def _port(r):
+        return int.from_bytes(await r.readexactly(2), "big")
+
+    async def _read_head(self, r, buf):
+        """buf plus more until the blank line. (head, bytes read past it), or None when it runs past 64 KiB."""
+        while (i := buf.find(b"\r\n\r\n")) < 0:
+            if len(buf) > MAX_HEAD:
+                return None
+            more = await r.read(MAX_HEAD)
+            if not more:
+                raise asyncio.IncompleteReadError(buf, None)
+            buf += more
+        return buf[:i + 4], buf[i + 4:]
+
+    async def _http(self, r, w, first):
+        got = await asyncio.wait_for(self._read_head(r, first), HEAD_TIMEOUT)
+        if got is None or len(got[0]) > MAX_HEAD:
+            w.write(_http_fail(431))
+            return
+        head, extra = got
+        line, _, headers = head.decode("latin-1").partition("\r\n")
+        parts = line.split(" ")
+        if len(parts) != 3:
+            w.write(_http_fail(400))
+            return
+        method, target, version = parts
+        bad = lambda code: _http_fail(502)  # every dial failure is a bad gateway to a browser
+        try:
+            if method == "CONNECT":
+                host, _, port = target.rpartition(":")
+                await self._tunnel(r, w, host.strip("[]"), int(port), b"HTTP/1.1 200 Connection established\r\n\r\n", bad, extra)
+            elif method == "GET" and target.startswith("/") and target.split("?")[0] == "/proxy.pac":
+                body = self.pac().encode()
+                w.write(b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ns-proxy-autoconfig\r\nContent-Length: %d\r\nConnection: close\r\n\r\n" % len(body) + body)
+            elif target.lower().startswith("http://"):
+                u = urlsplit(target)
+                keep = [h for h in headers.split("\r\n") if h and h.split(":")[0].strip().lower() not in ("proxy-connection", "connection")]
+                out = f"{method} {u.path or '/'}{'?' + u.query if u.query else ''} {version}\r\n" + "".join(h + "\r\n" for h in keep) + "Connection: close\r\n\r\n"
+                await self._tunnel(r, w, u.hostname, u.port or 80, b"", bad, out.encode("latin-1") + extra)
+            else:  # a relative path other than the PAC, https:// (browsers use CONNECT for it), or anything else
+                w.write(_http_fail(400))
+        except ValueError:  # a port that isn't a number, or no host
+            w.write(_http_fail(400))
+
+    async def _tunnel(self, r, w, host, port, ok, fail, first=b""):
+        """Dials out, answers the client with `ok` (or `fail(code)`), sends `first` upstream and relays both ways."""
+        if not host:
+            w.write(fail(4))
+            return
+        try:
+            sock, link = await dial(self.pool, host, port)
+        except DialError as e:
+            w.write(fail(e.code))
+            return
+        except Exception:  # whatever went wrong, the client gets an answer
+            w.write(fail(4))
+            return
+        try:
+            try:
+                ur, uw = await asyncio.open_connection(sock=sock)
+            except BaseException:
+                sock.close()
+                raise
+            try:
+                w.write(ok)
+                uw.write(first)
+                n = self.bytes.setdefault(link.key, [0, 0])
+                await asyncio.gather(self._pump(r, uw, n, 1, w), self._pump(ur, w, n, 0, uw))
+            finally:
+                uw.close()
+        finally:
+            self.pool.release(link)
+
+    @staticmethod
+    async def _pump(r, w, n, i, other):
+        """r to w, counting into n[i]. At EOF the other direction is told; on a reset both ends are dropped."""
+        try:
+            while data := await r.read(65536):
+                n[i] += len(data)
+                w.write(data)
+                await w.drain()
+            if w.can_write_eof():
+                w.write_eof()
+        except OSError:
+            w.close()
+            other.close()
