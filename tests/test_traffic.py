@@ -215,3 +215,10 @@ def test_rate_text():
     assert f(999_600, "bytes") == "1.0 MB/s" and f(4_200_000, "bytes") == "4.2 MB/s" and f(33_600_000, "bytes") == "33.6 MB/s"
     assert f(4_200_000, "bits") == "33.6 Mbps" and f(40_000, "bits") == "320 Kbps" and f(300_000, "bits") == "2.4 Mbps"
     assert traffic.rate_parts(4_200_000, "bytes") == ("4.2", "MB/s")
+
+
+def test_if_index_reads_row(monkeypatch):
+    row = traffic.MIB_IF_ROW2()
+    row.InterfaceIndex = 17
+    monkeypatch.setattr(traffic, "_row", lambda guid: row)
+    assert traffic.if_index("{x}") == 17

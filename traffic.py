@@ -58,8 +58,8 @@ def _iphlpapi():
     return _ip
 
 
-def counters(guid):
-    """(bytes received, bytes sent) since the adapter came up. Raises OSError when Windows can't answer; tests replace this."""
+def _row(guid):
+    """The adapter's MIB_IF_ROW2 (GUID -> LUID -> GetIfEntry2). Raises OSError when Windows can't answer."""
     try:
         g = (ctypes.c_ubyte * 16).from_buffer_copy(uuid.UUID(guid).bytes_le)
     except (ValueError, AttributeError, TypeError) as e:
@@ -72,7 +72,18 @@ def counters(guid):
     rc = ip.GetIfEntry2(ctypes.byref(row))
     if rc:
         raise OSError(f"GetIfEntry2 failed (error {rc})")
+    return row
+
+
+def counters(guid):
+    """(bytes received, bytes sent) since the adapter came up. Raises OSError when Windows can't answer; tests replace this."""
+    row = _row(guid)
     return row.InOctets, row.OutOctets
+
+
+def if_index(guid):
+    """The adapter's interface index (what IP_UNICAST_IF and GetIpAddrTable use). Raises OSError like counters."""
+    return _row(guid).InterfaceIndex
 
 
 # ---- showing a rate (the page has the same in shared.js: fmtRate) ----

@@ -1,12 +1,21 @@
 """Merge connections: new connections are spread across the Wi-Fi adapters that have an address. This is the pool of links
 and the scheduler that picks one for each new connection (the dialer and the proxy build on it)."""
-import random, threading, time
+import asyncio, ctypes, random, socket, struct, threading, time
+from ctypes import wintypes
 from dataclasses import dataclass
+
+import traffic, wifi
 
 COOLDOWN = 15.0     # seconds a link that just failed to connect is left out
 PEAK_DECAY = 0.97   # a link's remembered peak rate shrinks by this each tick without traffic
 WEIGHT_FLOOR = 0.05  # a slow link still gets a trickle, never zero
 DRIFT = 0.1         # an idle link's weight climbs this much per tick, so a link at the floor gets picked and measured again
+IP_UNICAST_IF = 31  # winsock option: send out of this interface index (IPv4 wants it in network byte order)
+PROBE_TARGETS = (("1.1.1.1", 443), ("8.8.8.8", 443))  # a link is up when it can open a connection to one of these
+PROBE_UP = 15.0     # seconds between probes of a link that was last up
+PROBE_DOWN = 4.0    # ... and of one that was last down, so it comes back quickly
+REFRESH = 3.0       # seconds between re-reads of which adapters have an address
+FAILOVER = {10049, 10050, 10051, 10060, 10065}  # winsock: bad address, net down, net unreachable, timed out, host unreachable
 _TIERS = {"up": 0, "unknown": 1, "down": 2}
 
 
@@ -84,3 +93,109 @@ class Pool:
     def links(self):
         with self._lock:
             return list(self._links.values())
+
+
+class DialError(Exception):
+    """code is the SOCKS5 reply code to send back: 3 network unreachable, 4 host unreachable, 5 refused."""
+
+    def __init__(self, code):
+        super().__init__(code)
+        self.code = code
+
+
+class _ADDRROW(ctypes.Structure):  # MIB_IPADDRROW
+    _fields_ = [("dwAddr", wintypes.DWORD), ("dwIndex", wintypes.DWORD), ("dwMask", wintypes.DWORD),
+                ("dwBCastAddr", wintypes.DWORD), ("dwReasmSize", wintypes.DWORD), ("unused1", wintypes.WORD), ("wType", wintypes.WORD)]
+
+
+def ipv4_by_index():
+    """{interface index: IPv4 address} from Windows' address table; 0.0.0.0, loopback and link-local (169.254) are left out."""
+    ip = ctypes.WinDLL("iphlpapi")
+    ip.GetIpAddrTable.argtypes = [ctypes.c_void_p, ctypes.POINTER(wintypes.ULONG), wintypes.BOOL]
+    size = wintypes.ULONG(0)
+    ip.GetIpAddrTable(None, ctypes.byref(size), False)  # the first call only says how big the table is
+    buf = ctypes.create_string_buffer(size.value)
+    if ip.GetIpAddrTable(buf, ctypes.byref(size), False):
+        raise OSError("GetIpAddrTable failed")
+    n = wintypes.DWORD.from_buffer(buf).value
+    out = {}
+    for r in (_ADDRROW * n).from_buffer(buf, 4):
+        a = socket.inet_ntoa(struct.pack("<I", r.dwAddr))  # dwAddr is network byte order, read here as a little-endian int
+        if a != "0.0.0.0" and not a.startswith(("127.", "169.254.")):
+            out.setdefault(r.dwIndex, a)
+    return out
+
+
+def find_links():
+    """{key: (interface index, IPv4)} for each Wi-Fi radio that is on and has an address. Raises wifi.WifiError / OSError."""
+    addrs, found = ipv4_by_index(), {}
+    for key, r in wifi.radios().items():
+        if not r["on"]:
+            continue
+        try:
+            i = traffic.if_index(r["guid"])
+        except OSError:
+            continue
+        if i in addrs:
+            found[key] = (i, addrs[i])
+    return found
+
+
+def open_on(link, addr, timeout=10.0):
+    """A connected, blocking socket to addr that leaves through this link's adapter: pinned to its interface and its address."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.setsockopt(socket.IPPROTO_IP, IP_UNICAST_IF, struct.pack(">I", link.index))
+        s.bind((link.ip, 0))
+        s.settimeout(timeout)
+        s.connect(addr)
+        s.settimeout(None)
+        return s
+    except BaseException:
+        s.close()
+        raise
+
+
+def probe(link):
+    """True when the link can open a connection to a probe target (3 s each, first success wins)."""
+    for addr in PROBE_TARGETS:
+        try:
+            open_on(link, addr, 3.0).close()
+            return True
+        except OSError:
+            pass
+    return False
+
+
+def _failover(e):
+    return isinstance(e, (TimeoutError, socket.timeout)) or (getattr(e, "winerror", None) or e.errno) in FAILOVER
+
+
+async def dial(pool, host, port):
+    """(connected non-blocking socket, its link), with the link's `active` still counted: the caller releases it when the
+    connection ends. Tries links best first; one that fails to connect is sidelined and the next is tried."""
+    loop = asyncio.get_running_loop()
+    try:
+        addr = (await loop.getaddrinfo(host, port, family=socket.AF_INET, type=socket.SOCK_STREAM))[0][4]
+    except (socket.gaierror, IndexError):
+        raise DialError(4) from None
+    tried = set()
+    for _ in pool.links():
+        link = pool.pick(exclude=tried)
+        if link is None:
+            break
+        tried.add(link.key)
+        try:
+            sock = await loop.run_in_executor(None, open_on, link, addr)
+        except OSError as e:
+            pool.release(link)
+            if not _failover(e):
+                raise DialError(5) from None
+            pool.sideline(link.key)
+            continue
+        except BaseException:  # cancelled while connecting: don't leave it counted
+            pool.release(link)
+            raise
+        sock.setblocking(False)
+        return sock, link
+    raise DialError(3)
