@@ -15,6 +15,7 @@ class FakeReg:
     def __init__(self, **start):
         self.d = {}
         self.calls = []
+        self.deny = set()  # triples whose put/delete raise PermissionError, like HKLM without admin
         for k, v in start.items():
             self.d[{"pac": PAC, "wcm": WCM}[k]] = v
 
@@ -25,10 +26,14 @@ class FakeReg:
 
     def put(self, hive, path, name, value, kind):
         self.calls.append("put")
+        if (hive, path, name) in self.deny:
+            raise PermissionError(5, "Access is denied")
         self.d[(hive, path, name)] = (value, kind)
 
     def delete(self, hive, path, name):
         self.calls.append("delete")
+        if (hive, path, name) in self.deny:
+            raise PermissionError(5, "Access is denied")
         self.d.pop((hive, path, name), None)
 
 
@@ -137,3 +142,36 @@ def test_paths_and_refresh_options(monkeypatch):
     monkeypatch.setattr(ctypes, "windll", type("D", (), {"wininet": W()})(), raising=False)
     sysproxy._refresh()
     assert calls == [(None, 39, None, 0), (None, 37, None, 0)]
+
+
+def test_restore_without_admin_keeps_policy_for_later(tmp_path, refreshed):
+    s = tmp_path / "settings.json"
+    s.write_text(json.dumps({"wifi": "Home", "merge_saved": {"pac": "http://corp/pac", "wcm": 1}}), encoding="utf-8")
+    reg = FakeReg(pac=(URL, winreg.REG_SZ), wcm=(0, winreg.REG_DWORD))
+    reg.deny.add(WCM)
+    assert sysproxy.restore(s, reg) is True
+    assert reg.d[PAC] == ("http://corp/pac", winreg.REG_SZ)
+    assert reg.d[WCM] == (0, winreg.REG_DWORD)
+    assert read(s) == {"wifi": "Home", "merge_saved": {"wcm": 1}}
+    assert len(refreshed) == 1
+    reg.deny.clear()  # next start, elevated: the leftover item is retried and the record goes
+    assert sysproxy.restore(s, reg) is True
+    assert reg.d[WCM] == (1, winreg.REG_DWORD)
+    assert read(s) == {"wifi": "Home"}
+
+
+def test_restore_skips_values_already_right(tmp_path):
+    s = tmp_path / "settings.json"
+    s.write_text(json.dumps({"merge_saved": {"pac": "http://corp/pac", "wcm": None}}), encoding="utf-8")
+    reg = FakeReg(pac=("http://corp/pac", winreg.REG_SZ))
+    assert sysproxy.restore(s, reg) is True
+    assert "put" not in reg.calls and "delete" not in reg.calls
+    assert "merge_saved" not in read(s)
+
+
+def test_apply_after_partial_restore_resaves_missing_original(tmp_path):
+    s = tmp_path / "settings.json"
+    s.write_text(json.dumps({"merge_saved": {"wcm": 1}}), encoding="utf-8")
+    reg = FakeReg(pac=("http://corp/pac", winreg.REG_SZ), wcm=(0, winreg.REG_DWORD))
+    sysproxy.apply(URL, s, reg)
+    assert read(s)["merge_saved"] == {"wcm": 1, "pac": "http://corp/pac"}
