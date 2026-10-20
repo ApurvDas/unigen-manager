@@ -79,8 +79,9 @@ def test_update_replaces_address_keeps_counts():
 
 def test_observe_sets_weight_from_peak():
     p = pool("a", "b")
-    p.observe("a", 10e6); p.observe("b", 5e6)
     a, b = p.links()
+    a.active = b.active = 1  # busy links follow the peaks exactly; idle ones drift (next test)
+    p.observe("a", 10e6); p.observe("b", 5e6)
     assert (a.weight, b.weight) == (1.0, 0.5)
     p.observe("b", 0)
     assert b.peak == pytest.approx(5e6 * 0.97)
@@ -90,3 +91,26 @@ def test_observe_sets_weight_from_peak():
     q = pool("a", "b")
     q.observe("a", 0)
     assert [l.weight for l in q.links()] == [1.0, 1.0]
+
+
+def test_idle_link_drifts_back_up():
+    p = pool("a", "b")
+    a, b = p.links()
+    b.active = 1
+    p.observe("a", 10e6); p.observe("b", 0)
+    assert b.weight == 0.05
+    b.active = 0
+    def tick():
+        p.observe("a", 10e6); p.observe("b", 0)
+    tick()
+    assert b.weight == pytest.approx(0.15)
+    for _ in range(9):
+        tick()
+    assert b.weight == 1.0
+    for _ in range(5):
+        tick()
+    assert b.weight == 1.0  # capped
+    b.weight, b.active = 0.05, 1  # busy: no drift
+    for _ in range(5):
+        tick()
+    assert b.weight == 0.05

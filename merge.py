@@ -6,6 +6,7 @@ from dataclasses import dataclass
 COOLDOWN = 15.0     # seconds a link that just failed to connect is left out
 PEAK_DECAY = 0.97   # a link's remembered peak rate shrinks by this each tick without traffic
 WEIGHT_FLOOR = 0.05  # a slow link still gets a trickle, never zero
+DRIFT = 0.1         # an idle link's weight climbs this much per tick, so a link at the floor gets picked and measured again
 _TIERS = {"up": 0, "unknown": 1, "down": 2}
 
 
@@ -66,7 +67,8 @@ class Pool:
                 self._links[key].state = "up" if ok else "down"
 
     def observe(self, key, bytes_per_s):
-        """One tick of traffic for a link (0 when idle): its peak decays, then every weight is its peak over the best peak."""
+        """One tick of traffic for a link (0 when idle): its peak decays, then every weight is its peak over the best peak.
+        A link with nothing open never loses weight, and gains DRIFT on its own tick (up to 1.0)."""
         with self._lock:
             if key not in self._links:
                 return
@@ -74,7 +76,10 @@ class Pool:
             l.peak = max(bytes_per_s, l.peak * PEAK_DECAY)
             top = max(x.peak for x in self._links.values())
             for x in self._links.values():
-                x.weight = max(WEIGHT_FLOOR, x.peak / top) if top else 1.0
+                w = max(WEIGHT_FLOOR, x.peak / top) if top else 1.0
+                if x.active == 0:  # ponytail: idle weights only ever rise; a real slow link is re-measured as soon as it is picked
+                    w = max(w, min(1.0, x.weight + DRIFT) if x is l else x.weight)
+                x.weight = w
 
     def links(self):
         with self._lock:
