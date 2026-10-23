@@ -1043,3 +1043,127 @@ def test_watchdog_failure_ends_the_bar_but_a_busy_lock_does_not(tmp_path):
                         push=lambda kind, text, **k: pushed.append(k.get("done")))
         f._switch("bt", "unigen", "")
         assert pushed.count(True) == ends
+
+
+# ---- merge connections: both Wi-Fi radios stay on ----
+def merging_pc(monkeypatch, tmp_path, **kw):
+    """A Pc with merge saved on and wifi_on recorded (it turns the radio on)."""
+    pc = Pc(monkeypatch, tmp_path, **kw)
+    hw.save_choice(pc.path, "merge", True)
+    pc.on_calls = []
+    monkeypatch.setattr(hw, "wifi_on", lambda key, d, **k: (pc.on_calls.append(key), pc.state.update({key: True})))
+    return pc
+
+
+def test_watchdog_leaves_both_on_when_merging(monkeypatch, tmp_path):
+    pc = merging_pc(monkeypatch, tmp_path)
+    pc.state = {"unigen": True, "builtin": True}
+    f = pc.follower()
+    f.step()
+    f.step()
+    assert pc.offs == [] and pc.used == [] and pc.on_calls == []
+
+
+def test_watchdog_turns_other_on_when_merging(monkeypatch, tmp_path):
+    pc = merging_pc(monkeypatch, tmp_path)  # the built-in Wi-Fi radio is off
+    f = pc.follower()
+    f.step()
+    f.step()
+    assert pc.on_calls == ["builtin"] and pc.offs == [] and pc.used == []
+
+
+def test_merge_off_still_turns_other_off(monkeypatch, tmp_path):
+    pc = Pc(monkeypatch, tmp_path)
+    hw.save_choice(pc.path, "merge", False)
+    f = pc.follower()
+    f.step()
+    pc.state["builtin"] = True  # Windows' Wi-Fi switch turned it back on
+    f.step()
+    assert pc.offs == ["builtin"] and pc.used == []  # same as before merge existed
+
+
+def test_unplug_while_merging_falls_back(monkeypatch, tmp_path):
+    pc = merging_pc(monkeypatch, tmp_path)
+    f = pc.follower()
+    pc.state = {"unigen": True, "builtin": True}
+    f.step()
+    pc.plugged, pc.state["builtin"] = False, False
+    f.step()
+    f.step()
+    assert pc.on_calls == ["builtin"] and pc.enabled == [MT_BT]  # the existing fallback, Wi-Fi through wifi_on
+    assert pc.notes == [("The dongle was unplugged. Using the built-in adapter.", True)]
+
+
+def test_set_merge_busy(monkeypatch, tmp_path):
+    Pc(monkeypatch, tmp_path)
+    assert hw._lock.acquire(blocking=False)
+    try:
+        with pytest.raises(hw.Busy):
+            hw.set_merge(True, path=tmp_path / "settings.json")
+    finally:
+        hw._lock.release()
+
+
+def test_replug_while_merging_turns_dongle_radio_on(monkeypatch, tmp_path):
+    pc = merging_pc(monkeypatch, tmp_path)
+    pc.state = {"unigen": True, "builtin": True}
+    f = pc.follower()
+    f.step()
+    pc.plugged = False
+    f.step()
+    pc.plugged, pc.state["unigen"] = True, False  # back, its Wi-Fi radio off
+    f.step()
+    assert pc.on_calls == ["unigen"] and ("wifi", "unigen") not in pc.used  # no full switch: its tail would turn the built-in off
+    assert pc.used == [("bt", "unigen")]  # Bluetooth restores as before
+
+
+def test_switch_while_merging_keeps_old_adapter_on(world):
+    world.state["unigen"]["wifi"] = True
+    hw.save_choice(world.path, "wifi", "unigen")
+    hw.save_choice(world.path, "merge", True)
+    assert world.use("builtin") == "builtin"
+    assert ("disable", UNI_WIFI) not in world.calls and world.later_notes == []
+    assert world.steps[-1].startswith("Done") and hw.load_choice(world.path, "wifi") == "builtin"
+    assert hw._lock.acquire(blocking=False)
+    hw._lock.release()
+
+
+def test_load_merge_is_true_only_for_json_true(tmp_path):
+    p = tmp_path / "settings.json"
+    assert hw.load_merge(p) is False  # missing
+    for text, want in (('{"merge": true}', True), ('{"merge": 1}', False), ('{"merge": "true"}', False), ('{"wifi": "unigen"}', False),
+                       ("not json", False), ("[]", False)):
+        p.write_text(text, encoding="utf-8")
+        assert hw.load_merge(p) is want, text
+
+
+def test_set_merge_turns_the_other_adapter_on_and_off(monkeypatch, tmp_path):
+    pc = Pc(monkeypatch, tmp_path)  # Wi-Fi choice: unigen
+    ons, offs = [], []
+    monkeypatch.setattr(hw, "wifi_on", lambda key, d, **k: ons.append(key) or True)
+    monkeypatch.setattr(hw, "wifi_off", lambda key, d: offs.append(key))
+    hw.set_merge(True, path=pc.path)
+    assert ons == ["builtin"] and hw.load_merge(pc.path) and hw.load_choice(pc.path, "wifi") == "unigen"  # other keys kept
+    hw.set_merge(False, path=pc.path)
+    assert offs == ["builtin"] and not hw.load_merge(pc.path)
+    pc.plugged = False  # main adapter gone: the built-in one is all the PC has, so it stays on
+    hw.set_merge(False, path=pc.path)
+    assert offs == ["builtin"]
+
+
+def test_set_merge_with_no_other_adapter_still_saves(monkeypatch, tmp_path):
+    pc = Pc(monkeypatch, tmp_path, choice=None, plugged=False, unigen_on=False)
+    monkeypatch.setattr(hw, "wifi_on", lambda *a, **k: pytest.fail("no radio change"))
+    hw.set_merge(True, path=pc.path)
+    assert hw.load_merge(pc.path)
+
+
+def test_set_merge_failure_says_which_adapter(monkeypatch, tmp_path):
+    pc = Pc(monkeypatch, tmp_path)
+    def boom(key, d, **k):
+        raise wifi.WifiError("no")
+    monkeypatch.setattr(hw, "wifi_on", boom)
+    with pytest.raises(hw.HwError, match="Couldn't turn the Built-in MediaTek on."):
+        hw.set_merge(True, path=pc.path)
+    assert not hw.load_merge(pc.path) and hw._lock.acquire(blocking=False)
+    hw._lock.release()

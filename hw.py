@@ -108,6 +108,14 @@ def save_choice(path, kind, key):
     path.write_text(json.dumps({**data, kind: key}), encoding="utf-8")
 
 
+def load_merge(path):
+    """True only when the saved "merge" is JSON true: merge connections keeps both Wi-Fi radios on."""
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8")).get("merge") is True
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
 def dongle_state(devs):
     """The dongle as the user sees it: "connected", "not_responding" (Windows lists it, its Wi-Fi has no WLAN interface:
     the crash the watchdog detects) or "unplugged". Its Bluetooth showing code 31 while the built-in radio is on is
@@ -300,6 +308,29 @@ def _finish_bt(target, path, on_later, on_step=lambda *a, **k: None):
             "and plug it back in (or restart the PC), then switch again.", "", on_later)
 
 
+def set_merge(on, *, path):
+    """Save the merge setting and put the other adapter's Wi-Fi radio in line: on with merge, off without. The main
+    adapter is the saved Wi-Fi choice (else the one whose Wi-Fi works, dongle first). The setting is saved only once the
+    radio did what it should; the watchdog keeps it true after that."""
+    if not _lock.acquire(blocking=False):
+        raise _busy()
+    try:
+        devs = devices()
+        main = load_choice(path, "wifi") or next((k for k in ("unigen", "builtin") if ((devs.get(k) or {}).get("wifi") or {}).get("ok")), None)
+        other = next((k for k in devs if k != main), None) if main else None
+        d = (devs.get(other) or {}).get("wifi")
+        if d and (on or main in devs):  # off with the main adapter gone: the other one is all the PC has
+            ok = []
+            finished, err = _bounded(lambda: ok.append(wifi_on(other, d) if on else wifi_off(other, d) or True), BT_STUCK)
+            if err:
+                log.warning("turning %s %s for merge failed: %s", other, "on" if on else "off", err, exc_info=err)
+            if err or not finished or not ok[0]:
+                raise HwError(f"Couldn't turn the {_name(other)} {'on' if on else 'off'}.")
+        save_choice(path, "merge", on)
+    finally:
+        _lock.release()
+
+
 def _use(target, on_step, path, wait, clock, sleep):
     devs = devices()
     if target not in devs:
@@ -315,7 +346,8 @@ def _use(target, on_step, path, wait, clock, sleep):
         return target, None
     old_iface = _iface(old) if old else None
     ssid = old_iface.get("ssid") if old_iface and old_iface.get("state") == "connected" else None
-    wifi_dev = o["wifi"] if o.get("wifi") and not o["wifi"]["disabled"] else None  # the old Wi-Fi goes off in the background
+    # the old Wi-Fi goes off in the background, unless merging keeps both on
+    wifi_dev = o["wifi"] if o.get("wifi") and not o["wifi"]["disabled"] and not load_merge(path) else None
     of = 2 + 2 * bool(ssid) + bool(wifi_dev)
     say = lambda n, label, **k: on_step(f"{label}…", step=n, of=of, label=label, **k)
     bail = lambda: _undo(t, target)  # Wi-Fi failed: only the target's Wi-Fi needs undoing
@@ -453,6 +485,7 @@ class Follower:
 
     def _step(self):
         wifi_choice, bt_choice = load_choice(self._path, "wifi"), load_choice(self._path, "bt")
+        merge = load_merge(self._path)  # merging: both Wi-Fi radios stay on
         if (wifi_choice is None and bt_choice is None) or _lock.locked():  # a switch is running: both adapters are on for a moment
             return
         devs = devices()
@@ -474,11 +507,14 @@ class Follower:
                 self._queue = ["bt"]
         key, other = next(((k, d) for k, d in devs.items() if k != wifi_choice), (None, None))
         other_on = bool(other and other["wifi"] and other["wifi"]["ok"])
-        if first and wifi_choice in devs and other_on:  # after a restart: make the saved choice true again
+        if first and wifi_choice in devs and other_on and not merge:  # after a restart: make the saved choice true again
             return self._switch("wifi", wifi_choice, f"Using the {_name(wifi_choice)}.")
-        if wifi_choice in devs and other_on and (devs[wifi_choice]["wifi"] or {}).get("ok") and not (wifi_choice == "unigen" and was is False):
+        if not merge and wifi_choice in devs and other_on and (devs[wifi_choice]["wifi"] or {}).get("ok") and not (wifi_choice == "unigen" and was is False):
             log.info("watchdog: both Wi-Fi adapters on, turning off %s", key)
             return wifi_off(key, other["wifi"])  # both on (Windows' Wi-Fi switch): quietly turn the other off
+        if merge and present and other and other["wifi"] and other["wifi"]["disabled"]:
+            log.info("watchdog: merging, turning on %s", key)
+            return wifi_on(key, other["wifi"])
         if not present:
             todo = [k for k in ("wifi", "bt") if ((devs.get("builtin") or {}).get(k) or {}).get("disabled")]
             if (todo or was) and not self._told:  # first: turning on can block until the dongle is re-plugged
@@ -494,5 +530,8 @@ class Follower:
         if self._queue:
             kind = self._queue.pop(0)  # a failed one isn't retried until the next unplug
             choice = wifi_choice if kind == "wifi" else bt_choice
-            if choice:
+            if choice and kind == "wifi" and choice == "unigen" and merge:  # a switch's tail would turn the built-in off again
+                wifi_on("unigen", devs["unigen"]["wifi"])
+                self._notify("Dongle plugged in. Using the dongle.", True)
+            elif choice:
                 self._switch(kind, choice, "Dongle plugged in. Using the dongle." if kind == "wifi" else "")
