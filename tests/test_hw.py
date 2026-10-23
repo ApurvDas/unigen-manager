@@ -1167,3 +1167,77 @@ def test_set_merge_failure_says_which_adapter(monkeypatch, tmp_path):
         hw.set_merge(True, path=pc.path)
     assert not hw.load_merge(pc.path) and hw._lock.acquire(blocking=False)
     hw._lock.release()
+
+
+# ---- merge connections: which links take part (merge_links) ----
+def test_load_merge_links_keeps_only_booleans(tmp_path):
+    p = tmp_path / "settings.json"
+    assert hw.load_merge_links(p) == {}  # missing
+    for text, want in (('{"merge_links": {"builtin": false, "ethernet:a": true, "x": 1, "y": "no"}}', {"builtin": False, "ethernet:a": True}),
+                       ('{"merge_links": []}', {}), ('{"merge_links": "x"}', {}), ("not json", {}), ("[]", {})):
+        p.write_text(text, encoding="utf-8")
+        assert hw.load_merge_links(p) == want, text
+
+
+def test_save_merge_link_keeps_the_rest(tmp_path):
+    p = tmp_path / "settings.json"
+    hw.save_choice(p, "wifi", "unigen")
+    hw.save_merge_link(p, "tether:b", True)
+    hw.save_merge_link(p, "builtin", False)
+    assert hw.load_merge_links(p) == {"tether:b": True, "builtin": False} and hw.load_choice(p, "wifi") == "unigen"
+
+
+def test_merge_includes_wifi_until_the_user_says_otherwise(tmp_path):
+    p = tmp_path / "settings.json"
+    assert hw.merge_includes(p, "builtin") and hw.merge_includes(p, "unigen")
+    hw.save_merge_link(p, "builtin", False)
+    assert not hw.merge_includes(p, "builtin") and hw.merge_includes(p, "unigen")
+
+
+def test_watchdog_does_not_force_an_excluded_radio_on(monkeypatch, tmp_path):
+    pc = merging_pc(monkeypatch, tmp_path)  # the built-in Wi-Fi radio is off
+    hw.save_merge_link(pc.path, "builtin", False)
+    f = pc.follower()
+    f.step()
+    f.step()
+    assert pc.on_calls == [] and pc.offs == [] and pc.used == []
+
+
+def test_watchdog_turns_an_excluded_radio_off_like_merge_off(monkeypatch, tmp_path):
+    pc = merging_pc(monkeypatch, tmp_path)
+    hw.save_merge_link(pc.path, "builtin", False)
+    f = pc.follower()
+    f.step()
+    pc.state["builtin"] = True  # Windows' Wi-Fi switch turned it back on
+    f.step()
+    assert pc.offs == ["builtin"] and pc.on_calls == []
+
+
+def test_set_merge_leaves_an_excluded_other_radio_alone(monkeypatch, tmp_path):
+    pc = Pc(monkeypatch, tmp_path)
+    monkeypatch.setattr(hw, "wifi_on", lambda *a, **k: pytest.fail("no radio change"))
+    hw.save_merge_link(pc.path, "builtin", False)
+    hw.set_merge(True, path=pc.path)
+    assert hw.load_merge(pc.path)
+
+
+def test_replug_while_merging_with_the_other_excluded_switches_normally(monkeypatch, tmp_path):
+    pc = merging_pc(monkeypatch, tmp_path)
+    hw.save_merge_link(pc.path, "builtin", False)
+    pc.state = {"unigen": True, "builtin": False}
+    f = pc.follower()
+    f.step()
+    pc.plugged = False
+    f.step()
+    pc.plugged, pc.state["unigen"] = True, False
+    f.step()
+    assert ("wifi", "unigen") in pc.used and "unigen" not in pc.on_calls  # the ordinary switch back (it turns the built-in off), not the merge shortcut
+
+
+def test_switch_while_merging_turns_old_adapter_off_when_excluded(world):
+    world.state["unigen"]["wifi"] = True
+    hw.save_choice(world.path, "wifi", "unigen")
+    hw.save_choice(world.path, "merge", True)
+    hw.save_merge_link(world.path, "unigen", False)
+    assert world.use("builtin") == "builtin"
+    assert ("disable", UNI_WIFI) in world.calls and world.later_notes == [("The Unigen dongle is off.", True)]  # the old Wi-Fi goes off as without merge
