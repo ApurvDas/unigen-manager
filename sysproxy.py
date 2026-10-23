@@ -104,3 +104,8 @@ def restore(settings, reg=Reg()):
     if changed:
         _refresh()
     return True
+
+
+def keeping_connected(reg=Reg()):
+    """Whether Windows is told to keep every adapter connected (fMinimizeConnections is 0): the Merge card's check."""
+    return reg.get(*WCM) == 0

@@ -460,3 +460,117 @@ class Proxy:
         except OSError:
             w.close()
             other.close()
+
+
+class Merger:
+    """Runs merge: the proxy on its own asyncio thread ("merge") and, every REFRESH seconds, a look at which links there are
+    (into the pool), their rates (into the weights) and, when due, a probe of each. `rate(key)` is (down, up) bytes/s or None,
+    `choices()` the saved merge_links. status() works while stopped too: the Merge card lists the links either way."""
+
+    def __init__(self, rate=lambda key: None, choices=lambda: {}, clock=time.monotonic):
+        self._rate, self._choices, self._clock = rate, choices, clock
+        self.pool, self.port, self._links = Pool(), None, []
+        self._thread = self._loop = self._error = None
+        self._due, self._busy, self._failing = {}, set(), False  # next probe time per link, links being probed, last refresh failed
+
+    def refresh(self):
+        """One look at the adapters: the pool gets the links that are up and taking part, each link's weight follows its rate.
+        Raises what scan_links raises."""
+        links = self._links = scan_links()
+        choices = self._choices()
+        self.pool.update({l["key"]: (l["index"], l["ip"]) for l in links if l["up"] and included(l, choices)})
+        for l in self.pool.links():
+            r = self._rate(l.key)
+            self.pool.observe(l.key, r[0] if r else 0.0)
+
+    def _probe_due(self, run):
+        """Starts `run(self._probe_link, link)` for each link whose probe is due and not already running."""
+        now = self._clock()
+        for l in self.pool.links():
+            if self._due.get(l.key, 0.0) <= now and l.key not in self._busy:
+                self._busy.add(l.key)
+                run(self._probe_link, l)
+
+    def _probe_link(self, link):
+        try:
+            ok = probe(link)
+            self.pool.mark(link.key, ok)
+            self._due[link.key] = self._clock() + (PROBE_UP if ok else PROBE_DOWN)
+        finally:
+            self._busy.discard(link.key)
+
+    def status(self):
+        """Every link the page lists: key, kind, name, detail, ip, online (it has an address), included (the user's choice),
+        state ("up" or "down" by the last probe, "checking" before it, "off" when left out), active and opened connections,
+        and the live rate down / up in bytes/s (None while it is still being measured)."""
+        if self.port is None:  # stopped: look now
+            try:
+                self._links = scan_links()
+            except (wifi.WifiError, OSError) as e:
+                log.debug("merge: couldn't list the links (%s); keeping the last list", e)
+        choices, pooled, out = self._choices(), {l.key: l for l in self.pool.links()}, []
+        for l in self._links:
+            inc, p, r = included(l, choices), pooled.get(l["key"]), self._rate(l["key"])
+            state = "off" if not inc else "down" if not l["up"] else {"unknown": "checking"}.get(p.state, p.state) if p else "checking"
+            out.append({"key": l["key"], "kind": l["kind"], "name": l["name"], "detail": l["detail"], "ip": l["ip"], "online": l["up"],
+                        "included": inc, "state": state, "active": p.active if p else 0, "opened": p.opened if p else 0,
+                        "down": r[0] if r else None, "up": r[1] if r else None})
+        return out
+
+    def start(self):
+        """Starts the proxy (and the upkeep) if it is not running. Returns the port. Raises OSError when it can't listen."""
+        if self._thread:
+            return self.port
+        self.pool, self._due, self._busy, self._error = Pool(), {}, set(), None
+        try:
+            self.refresh()  # the first look now, so the first connection already has its links
+        except (wifi.WifiError, OSError) as e:
+            log.warning("merge: couldn't list the links at start (%s); trying again in %.0f s", e, REFRESH)
+        ready, self._loop = threading.Event(), asyncio.new_event_loop()
+        self._thread = threading.Thread(target=self._run, args=(self._loop, ready), daemon=True, name="merge")
+        self._thread.start()
+        ready.wait(10)
+        if self.port is None:
+            self.stop()
+            raise self._error or OSError("The merge proxy didn't start.")
+        return self.port
+
+    def _run(self, loop, ready):
+        asyncio.set_event_loop(loop)
+        proxy = Proxy(self.pool)
+        try:
+            self.port = loop.run_until_complete(proxy.start())
+        except Exception as e:  # not even a free port
+            self._error = e
+            loop.close()
+            ready.set()
+            return
+        ready.set()
+        task = loop.create_task(self._keep(loop))
+        try:
+            loop.run_forever()
+        finally:
+            task.cancel()
+            loop.run_until_complete(asyncio.gather(task, return_exceptions=True))
+            loop.run_until_complete(proxy.stop())
+            loop.close()
+
+    async def _keep(self, loop):
+        while True:
+            try:
+                await loop.run_in_executor(None, self.refresh)
+                self._probe_due(lambda f, *a: threading.Thread(target=f, args=a, daemon=True, name="merge-probe").start())
+                self._failing = False
+            except Exception as e:  # the upkeep must never end: log the first failure of a run, keep going
+                if not self._failing:
+                    log.warning("merge: a refresh failed: %s", e, exc_info=not isinstance(e, (wifi.WifiError, OSError)))
+                self._failing = True
+            await asyncio.sleep(REFRESH)
+
+    def stop(self):
+        """Stops the proxy. Safe to call again."""
+        t, loop = self._thread, self._loop
+        self._thread = self._loop = self.port = None
+        if t and t.is_alive():
+            loop.call_soon_threadsafe(loop.stop)
+            t.join(5)

@@ -3,7 +3,7 @@ pywebview runs each call on its own thread, so slow work never blocks the window
 import functools, json, logging, os, threading, time, traceback
 from pathlib import Path
 
-import bt, driver, hw, speed, traffic, tray, wifi, winrun
+import bt, driver, hw, merge, speed, sysproxy, traffic, tray, wifi, winrun
 from version import VERSION
 
 DATA_DIR = Path(os.environ.get("LOCALAPPDATA", ".")) / "UnigenManager"
@@ -15,7 +15,7 @@ _SEC = {"WPA2-Personal": "WPA2", "WPA3-Personal": "WPA3", "Open": "Open", "WPA-P
 
 
 # The page polls these every few seconds: logged only with --debug, or when slow or failing
-_POLLED = {"app_info", "adapters", "networks", "saved", "bt_radio", "bt_paired", "is_visible", "widget_fit", "speed_results", "traffic"}
+_POLLED = {"app_info", "adapters", "networks", "saved", "bt_radio", "bt_paired", "is_visible", "widget_fit", "speed_results", "traffic", "merge_status"}
 _SECRET = {"connect": 2, "bt_pair_answer": 1}  # argument index never written to app.log (return values never are)
 SLOW = 3.0  # seconds; a polled call taking longer is logged as a warning
 
@@ -54,7 +54,7 @@ def _envelope(fn):
 
 
 class Api:
-    def __init__(self, *, admin=False, results_path=DATA_DIR / "results.json", settings_path=None, sampler=None):
+    def __init__(self, *, admin=False, results_path=DATA_DIR / "results.json", settings_path=None, sampler=None, merger=None):
         self._admin, self._results, self._window = admin, Path(results_path), None
         self._settings = Path(settings_path or DATA_DIR / "settings.json")  # looked up now, so tests can point DATA_DIR at tmp
         self._sampler = sampler or traffic.Sampler(self._settings.with_name("traffic.json"))  # app.py passes the running one
@@ -64,6 +64,8 @@ class Api:
         self._widget, self._widget_shown, self._hid_at, self._widget_h = None, False, 0.0, 480
         self._pair_evt, self._pair_answer = threading.Event(), (False, None)
         self._main_visible = True  # app.py sets False for a --tray start and on close
+        self._merger = merger or merge.Merger(rate=self._sampler.rate, choices=lambda: hw.load_merge_links(self._settings))
+        self._same = None  # (when, SSID or None): whether both Wi-Fi adapters are on one network, cached by merge_status
         self._drivers = None  # (interface names, wifi.drivers()) cached by app_info
         self._driver_cancel = threading.Event()  # set by cancel_driver, for the install running
 
@@ -523,3 +525,86 @@ class Api:
         hw.save_choice(self._settings, "traffic_unit", unit)  # keeps the other settings
         self._push("window.onTrafficUnit && window.onTrafficUnit(" + json.dumps(unit) + ")")
         return {"unit": unit}
+
+    # ---- merge connections ----
+    def _same_network(self, links):
+        """The SSID when both Wi-Fi adapters take part and are connected to it, else None. netsh runs at most every STATUS_EVERY s."""
+        wl = [l["key"] for l in links if l["kind"] == "wifi" and l["included"] and l["online"]]
+        if len(wl) < 2:
+            return None
+        if self._same is None or time.monotonic() - self._same[0] >= self.STATUS_EVERY:
+            ifs = self._ifaces()
+            ssids = {ifs[k].get("ssid") if k in ifs and ifs[k].get("state") == "connected" else None for k in wl}
+            self._same = (time.monotonic(), ssids.pop() if len(ssids) == 1 else None)
+        return self._same[1]
+
+    @_envelope
+    def merge_status(self):
+        """The Merge card: whether merge is on, the proxy's port, whether Windows keeps every adapter connected (wcm), and every
+        link (merge.Merger.status). single: merge is on but fewer than two links take part, so there is nothing to merge yet."""
+        on, links = hw.load_merge(self._settings), self._merger.status()
+        usable = [l for l in links if l["included"] and l["online"]]
+        return {"on": on, "port": self._merger.port, "wcm": sysproxy.keeping_connected(), "can_switch": self._admin, "links": links,
+                "single": on and len(usable) < 2, "same_network": self._same_network(links)}
+
+    def _merge_start(self):
+        """The proxy and Windows' settings, in that order. If Windows refuses, nothing is left running."""
+        port = self._merger.start()
+        try:
+            sysproxy.apply(f"http://127.0.0.1:{port}/proxy.pac", self._settings)
+        except BaseException:
+            self._merge_restore()
+            self._merger.stop()
+            raise
+        return port
+
+    def _merge_restore(self):
+        """Put the proxy and policy values back (a no-op when nothing was saved). Never raises: it runs at start and at quit."""
+        try:
+            sysproxy.restore(self._settings)
+        except Exception:
+            log.exception("couldn't put the proxy settings back")
+
+    def _merge_resume(self):
+        """After a start: merge was left on, so it runs again. Without admin the Windows policy can't be set: it waits."""
+        if not hw.load_merge(self._settings):
+            return
+        if not self._admin:
+            log.warning("merge is on but this start isn't elevated: not resuming it")
+            return
+        try:
+            self._merge_start()
+        except Exception:
+            log.exception("couldn't resume merge")
+
+    def _merge_quit(self):
+        self._merge_restore()
+        self._merger.stop()  # the "merge" setting stays: the next start resumes
+
+    @_envelope
+    def set_merge(self, on):
+        self._need_admin("Merging connections")
+        on = bool(on)
+        hw.set_merge(on, path=self._settings)  # the Wi-Fi radio that takes part comes on (or the other one goes off); saves "merge"
+        if on:
+            try:
+                self._merge_start()
+            except BaseException:
+                hw.save_choice(self._settings, "merge", False)
+                raise
+        else:
+            self._merge_restore()
+            self._merger.stop()
+        self._push("window.onMerge && window.onMerge()")
+        return {"on": on}
+
+    @_envelope
+    def set_merge_link(self, key, on):
+        """Take a link in or out of merge. The watchdog follows for a Wi-Fi radio; Ethernet and tethering need nothing else."""
+        if not isinstance(key, str) or key not in {l["key"] for l in self._merger.status()}:
+            raise hw.HwError("That connection isn't here any more.")
+        hw.save_merge_link(self._settings, key, on)
+        if self._merger.port is not None:
+            self._merger.refresh()
+        self._push("window.onMerge && window.onMerge()")
+        return {"key": key, "on": bool(on)}

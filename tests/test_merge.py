@@ -339,3 +339,120 @@ def test_dial_fails_over_through_three_links(monkeypatch, resolve):
 
 def test_usable_ipv4():
     assert [merge._usable(a) for a in ("192.168.1.5", "0.0.0.0", "127.0.0.1", "169.254.7.7", "10.0.0.1")] == [True, False, False, False, True]
+
+
+# ---- the Merger: pool upkeep, probes, status, the proxy thread ----
+def lk(key, kind="wifi", up=True, ip=None, index=1, name=None):
+    return {"key": key, "kind": kind, "name": name or key, "detail": "", "guid": key, "index": index, "ip": ip or f"10.0.0.{index}" if up else None, "up": up}
+
+
+class Rig:
+    """A Merger on fake scans, rates and probes; choices is the saved merge_links, change it between calls."""
+
+    def __init__(self, monkeypatch, links, rates=None):
+        self.links, self.choices, self.rates, self.verdict, self.now = links, {}, rates or {}, {}, 100.0
+        monkeypatch.setattr(merge, "scan_links", lambda: self.links)
+        monkeypatch.setattr(merge, "probe", lambda link: self.verdict.get(link.key, True))
+        self.m = merge.Merger(rate=lambda k: self.rates.get(k), choices=lambda: self.choices, clock=lambda: self.now)
+
+    def probe_all(self):
+        self.m._probe_due(lambda f, *a: f(*a))  # in this thread
+
+
+def test_merger_status_after_refresh(monkeypatch):
+    r = Rig(monkeypatch, [lk("a", index=1), lk("b", index=2)], rates={"a": (4e6, 1e5), "b": (2e6, 1e5)})
+    r.m.refresh()
+    for l in r.m.pool.links():
+        l.active = 1  # busy links follow the peaks exactly
+    r.m.refresh()
+    assert {l.key: l.weight for l in r.m.pool.links()} == {"a": 1.0, "b": 0.5}
+
+
+def test_refresh_follows_the_choices_and_the_adapters(monkeypatch):
+    r = Rig(monkeypatch, [lk("unigen", index=1), lk("builtin", index=2), lk("ethernet:x", "ethernet", index=3), lk("tether:y", "tether", index=4),
+                          lk("gone", up=False, index=5)])
+    r.m.refresh()
+    assert sorted(l.key for l in r.m.pool.links()) == ["builtin", "ethernet:x", "unigen"]  # tethering is out until included, a down link never in
+    r.choices.update({"tether:y": True, "builtin": False})
+    r.m.refresh()
+    assert sorted(l.key for l in r.m.pool.links()) == ["ethernet:x", "tether:y", "unigen"]
+    r.links = [lk("unigen", index=1)]  # the cable is pulled, the phone unplugged, the card gone
+    r.m.refresh()
+    assert [l.key for l in r.m.pool.links()] == ["unigen"]
+
+
+def test_probes_mark_links_and_come_round_again(monkeypatch):
+    r = Rig(monkeypatch, [lk("a", index=1), lk("b", index=2)])
+    r.verdict["a"] = False
+    r.m.refresh()
+    r.probe_all()
+    assert {l.key: l.state for l in r.m.pool.links()} == {"a": "down", "b": "up"}
+    r.verdict["a"] = True
+    r.now += merge.PROBE_DOWN - 0.5
+    r.probe_all()
+    assert r.m.pool.links()[0].state == "down"  # not due yet
+    r.now += 1.0
+    r.probe_all()
+    assert r.m.pool.links()[0].state == "up"  # a down link is looked at again after 4 s
+    r.verdict["b"] = False
+    r.now += merge.PROBE_UP - 5.0
+    r.probe_all()
+    assert r.m.pool.links()[1].state == "up"  # an up one only after 15 s from its last probe
+    r.now += 5.0
+    r.probe_all()
+    assert r.m.pool.links()[1].state == "down"
+
+
+def test_status_lists_every_link_with_what_the_card_needs(monkeypatch):
+    r = Rig(monkeypatch, [lk("unigen", index=1, name="Unigen dongle"), lk("builtin", index=2, up=False), lk("ethernet:x", "ethernet", index=3),
+                          lk("tether:y", "tether", index=4)], rates={"unigen": (3e6, 2e5), "ethernet:x": (1e6, 1e4)})
+    r.m.refresh()
+    r.probe_all()
+    r.m.pool.links()[0].active = 2
+    got = {s["key"]: s for s in r.m.status()}
+    assert list(got) == ["unigen", "builtin", "ethernet:x", "tether:y"]
+    u = got["unigen"]
+    assert (u["kind"], u["name"], u["ip"], u["online"], u["included"], u["state"], u["active"]) == ("wifi", "Unigen dongle", "10.0.0.1", True, True, "up", 2)
+    assert (u["down"], u["up"]) == (3e6, 2e5) and got["builtin"]["down"] is None
+    assert (got["builtin"]["online"], got["builtin"]["state"]) == (False, "down")  # included, no address
+    assert (got["tether:y"]["included"], got["tether:y"]["state"], got["tether:y"]["online"]) == (False, "off", True)
+    r.choices["ethernet:x"] = False
+    assert {s["key"]: s["state"] for s in r.m.status()}["ethernet:x"] == "off"
+
+
+def test_status_when_stopped_still_lists_the_links(monkeypatch):
+    r = Rig(monkeypatch, [lk("unigen", index=1), lk("tether:y", "tether", index=4)])
+    assert r.m.port is None
+    got = {s["key"]: s["state"] for s in r.m.status()}
+    assert got == {"unigen": "checking", "tether:y": "off"}  # nothing is measured while merge is off
+    r.links = []
+    assert r.m.status() == []
+    monkeypatch.setattr(merge, "scan_links", lambda: (_ for _ in ()).throw(OSError("no")))
+    r.m._links = [lk("unigen")]
+    assert [s["key"] for s in r.m.status()] == ["unigen"]  # a failing look keeps the last list
+
+
+def test_start_serves_a_port_and_stop_is_idempotent(monkeypatch):
+    r = Rig(monkeypatch, [lk("a", index=1)])
+    port = r.m.start()
+    try:
+        assert isinstance(port, int) and port > 0 and r.m.port == port and r.m.start() == port
+        assert [l.key for l in r.m.pool.links()] == ["a"]  # the first look is taken before start returns
+        with socket.create_connection(("127.0.0.1", port), 2) as c:
+            c.sendall(b"GET /proxy.pac HTTP/1.1\r\nHost: x\r\n\r\n")
+            assert f"127.0.0.1:{port}".encode() in c.recv(4096)
+    finally:
+        r.m.stop()
+    r.m.stop()
+    assert r.m.port is None
+    with pytest.raises(OSError):
+        socket.create_connection(("127.0.0.1", port), 1).close()
+    assert isinstance(r.m.start(), int)  # and again
+    r.m.stop()
+
+
+def test_start_survives_a_failing_first_look(monkeypatch):
+    r = Rig(monkeypatch, [])
+    monkeypatch.setattr(merge, "scan_links", lambda: (_ for _ in ()).throw(wifi.WifiError("Couldn't list the Wi-Fi adapters.")))
+    assert isinstance(r.m.start(), int)  # the next refresh tries again
+    r.m.stop()

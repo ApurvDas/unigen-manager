@@ -7,8 +7,8 @@ class FakeSampler:
     """app.main starts and stops the traffic sampler: tests must not read the real counters or write the real traffic.json."""
     made = []
 
-    def __init__(self, path=None):
-        self.events = []
+    def __init__(self, path=None, extra=None):
+        self.events, self.extra = [], extra
         FakeSampler.made.append(self)
 
     def start(self): self.events.append("start")
@@ -23,6 +23,16 @@ def fake_sampler(monkeypatch):
     FakeSampler.made = []
     monkeypatch.setattr(app.traffic, "Sampler", FakeSampler)
     return FakeSampler
+
+
+@pytest.fixture(autouse=True)
+def fake_merge(monkeypatch):
+    """main() puts the proxy settings back at start and quit: never the real registry, and never a real merge proxy."""
+    events = []
+    monkeypatch.setattr(app.Api, "_merge_restore", lambda self: events.append("restore"))
+    monkeypatch.setattr(app.Api, "_merge_resume", lambda self: events.append("resume"))
+    monkeypatch.setattr(app.Api, "_merge_quit", lambda self: events.append("quit"))
+    return events
 
 
 def test_should_relaunch():
@@ -224,3 +234,48 @@ def test_quit_stops_the_sampler_before_the_windows_go(monkeypatch, single, fake_
     fake.after_start()
     got["quit"]()
     assert sampler.events.index("stop", 2) < sampler.events.index("destroy")
+
+
+def test_main_puts_the_proxy_settings_back_before_the_windows_and_after_them(monkeypatch, single, fake_merge):
+    fake = FakeWebview()
+    make = fake.create_window
+    fake.create_window = lambda *a, **k: fake_merge.append("window") or make(*a, **k)
+    monkeypatch.setitem(sys.modules, "webview", fake)
+    monkeypatch.setattr(app, "is_admin", lambda: True)
+    monkeypatch.setattr(app, "setup_logging", lambda *a: None)
+    app.main([])
+    assert fake_merge == ["restore", "window", "window", "quit"]  # a crash's leftovers first; the windows ended some other way than Quit
+
+
+def test_the_sampler_also_reads_ethernet_and_tethering(monkeypatch, single, fake_sampler):
+    monkeypatch.setitem(sys.modules, "webview", FakeWebview())
+    monkeypatch.setattr(app, "is_admin", lambda: True)
+    monkeypatch.setattr(app, "setup_logging", lambda *a: None)
+    app.main([])
+    assert fake_sampler.made[0].extra is app.merge.wired_links
+
+
+def test_merge_resumes_after_the_windows_start_and_is_undone_before_quit_closes_them(monkeypatch, single, fake_merge):
+    fake, got = FakeWebview(), {}
+    monkeypatch.setitem(sys.modules, "webview", fake)
+    monkeypatch.setattr(app, "is_admin", lambda: True)
+    monkeypatch.setattr(app, "setup_logging", lambda *a: None)
+    monkeypatch.setattr(app.tray, "watch_show", lambda *a: None)
+
+    class FakeTray:
+        def __init__(self, **kw):
+            got["quit"] = kw["quit_app"]
+            self.icon = types.SimpleNamespace(notify=lambda *a: None)
+        def start(self): pass
+        def stop(self): pass
+
+    monkeypatch.setattr(app.tray, "Tray", FakeTray)
+    monkeypatch.setattr(app.hw, "Follower", lambda *a, **k: types.SimpleNamespace(step=lambda: None))
+    app.main([])
+    fake_merge.clear()
+    for w in fake.windows:
+        w.destroy = lambda: fake_merge.append("destroy")
+    fake.after_start()
+    assert fake_merge == ["resume"]
+    got["quit"]()
+    assert fake_merge == ["resume", "quit", "destroy", "destroy"]

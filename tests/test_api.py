@@ -733,3 +733,157 @@ def test_tooltip_reuses_the_netsh_part_for_ten_seconds_but_not_the_rate(hw, monk
     a._base = (a._base[0] - api.Api.STATUS_EVERY - 1,) + a._base[1:]
     a._status()
     assert len(n) == 2
+
+
+# ---- merge connections ----
+def mlink(key, kind="wifi", included=True, online=True, state="up", **kw):
+    return {"key": key, "kind": kind, "name": key, "detail": "", "ip": "10.0.0.1" if online else None, "online": online, "included": included,
+            "state": state, "active": 0, "opened": 0, "down": None, "up": None, **kw}
+
+
+class FakeMerger:
+    """What Api needs of merge.Merger; `events` is the order things were called in."""
+
+    def __init__(self, links=(), events=None):
+        self.links, self.events, self.port = list(links), events if events is not None else [], None
+
+    def start(self):
+        self.events.append("start")
+        self.port = 18999
+        return self.port
+
+    def stop(self):
+        self.events.append("stop")
+        self.port = None
+
+    def refresh(self):
+        self.events.append("refresh")
+
+    def status(self):
+        return self.links
+
+
+@pytest.fixture
+def merging(hw, monkeypatch):
+    """An Api with a fake Merger; the registry, the system proxy and the radios are never touched."""
+    ev = []
+    monkeypatch.setattr(hwm, "set_merge", lambda on, *, path: (ev.append(f"hw.set_merge({on})"), hwm.save_choice(path, "merge", on)))
+    monkeypatch.setattr(api.sysproxy, "apply", lambda url, settings: ev.append(f"apply {url}"))
+    monkeypatch.setattr(api.sysproxy, "restore", lambda settings: ev.append("restore") or True)
+    monkeypatch.setattr(api.sysproxy, "keeping_connected", lambda: True)
+    a = api.Api(admin=True, sampler=FakeSampler(), merger=FakeMerger(events=ev))
+    a._window, a._widget = FakeWindow(), FakeWindow()
+    a.events = ev
+    return a
+
+
+def test_merge_status_payload(merging):
+    merging._merger.links = [mlink("unigen"), mlink("builtin"), mlink("ethernet:x", "ethernet"), mlink("tether:y", "tether", included=False, state="off")]
+    hwm.save_choice(merging._settings, "merge", True)
+    merging._merger.port = 18999
+    d = merging.merge_status()["data"]
+    assert (d["on"], d["port"], d["wcm"], d["can_switch"], d["single"], d["same_network"]) == (True, 18999, True, True, False, None)
+    assert [l["key"] for l in d["links"]] == ["unigen", "builtin", "ethernet:x", "tether:y"]
+
+
+def test_merge_status_single_link_still_works_but_says_so(merging):
+    merging._merger.links = [mlink("unigen"), mlink("builtin", included=False, state="off"), mlink("ethernet:x", "ethernet", online=False, state="down")]
+    assert merging.merge_status()["data"]["single"] is False  # merge is off: nothing to say
+    hwm.save_choice(merging._settings, "merge", True)
+    assert merging.merge_status()["data"]["single"] is True
+    merging._merger.links = [mlink("unigen"), mlink("ethernet:x", "ethernet")]
+    assert merging.merge_status()["data"]["single"] is False
+
+
+def test_merge_status_names_the_network_both_wifi_adapters_share(merging, monkeypatch):
+    merging._merger.links = [mlink("unigen"), mlink("builtin"), mlink("ethernet:x", "ethernet")]
+    hwm.save_choice(merging._settings, "merge", True)
+    both = {"unigen": {"state": "connected", "ssid": "Home"}, "builtin": {"state": "connected", "ssid": "Home"}}
+    monkeypatch.setattr(merging, "_ifaces", lambda: both)
+    assert merging.merge_status()["data"]["same_network"] == "Home"
+    both["builtin"] = {"state": "connected", "ssid": "Hotspot"}
+    merging._same = None  # the answer is kept for 10 s
+    assert merging.merge_status()["data"]["same_network"] is None
+    both["builtin"] = {"state": "disconnected"}
+    merging._same = None
+    assert merging.merge_status()["data"]["same_network"] is None
+    merging._merger.links = [mlink("unigen"), mlink("builtin", included=False, state="off")]  # one left out: nothing to compare
+    both["builtin"] = {"state": "connected", "ssid": "Home"}
+    merging._same = None
+    assert merging.merge_status()["data"]["same_network"] is None
+
+
+def test_set_merge_on_applies_proxy_and_off_restores(merging):
+    assert merging.set_merge(True) == {"ok": True, "data": {"on": True}}
+    assert merging.events == ["hw.set_merge(True)", "start", "apply http://127.0.0.1:18999/proxy.pac"]
+    merging.events.clear()
+    assert merging.set_merge(False)["ok"] is True
+    assert merging.events == ["hw.set_merge(False)", "restore", "stop"]
+    for w in (merging._window, merging._widget):
+        assert w.scripts == ["window.onMerge && window.onMerge()"] * 2
+
+
+def test_set_merge_needs_admin(merging):
+    merging._admin = False
+    r = merging.set_merge(True)
+    assert r == {"ok": False, "error": "Merging connections needs administrator rights. Restart the app and choose Yes."} and merging.events == []
+
+
+def test_set_merge_that_cannot_apply_stops_and_leaves_merge_off(merging, monkeypatch):
+    monkeypatch.setattr(api.sysproxy, "apply", raising(PermissionError(5, "Access is denied")))
+    assert merging.set_merge(True)["ok"] is False
+    assert merging.events == ["hw.set_merge(True)", "start", "restore", "stop"] and hwm.load_merge(merging._settings) is False
+
+
+def test_set_merge_failing_in_hw_starts_nothing(merging, monkeypatch):
+    monkeypatch.setattr(hwm, "set_merge", raising(hwm.HwError("Couldn't turn the Built-in MediaTek on.")))
+    assert merging.set_merge(True) == {"ok": False, "error": "Couldn't turn the Built-in MediaTek on."} and merging.events == []
+
+
+def test_set_merge_link_saves_the_choice_and_refreshes_a_running_merge(merging):
+    merging._merger.links = [mlink("unigen"), mlink("tether:y", "tether", included=False, state="off")]
+    assert merging.set_merge_link("tether:y", True) == {"ok": True, "data": {"key": "tether:y", "on": True}}
+    assert hwm.load_merge_links(merging._settings) == {"tether:y": True} and merging.events == []  # not running: nothing to refresh
+    merging._merger.port = 18999
+    merging.set_merge_link("unigen", False)
+    assert hwm.load_merge_links(merging._settings) == {"tether:y": True, "unigen": False} and merging.events == ["refresh"]
+    assert merging._window.scripts[-1] == "window.onMerge && window.onMerge()"
+
+
+def test_set_merge_link_rejects_what_it_does_not_know(merging):
+    merging._merger.links = [mlink("unigen")]
+    assert merging.set_merge_link("ethernet:gone", True) == {"ok": False, "error": "That connection isn't here any more."}
+    assert merging.set_merge_link(7, True)["ok"] is False
+    assert hwm.load_merge_links(merging._settings) == {}
+
+
+def test_merge_status_is_polled_set_merge_is_not(merging, caplog):
+    caplog.set_level("DEBUG", logger="unigen")
+    merging.merge_status()
+    merging.set_merge(True)
+    levels = {r.getMessage().split("(")[0]: r.levelname for r in caplog.records if "ok in" in r.getMessage()}
+    assert levels["merge_status"] == "DEBUG" and levels["set_merge"] == "INFO"
+
+
+def test_merge_resumes_after_a_start_and_is_put_back_on_quit(merging):
+    hwm.save_choice(merging._settings, "merge", True)
+    merging._merge_resume()
+    assert merging.events == ["start", "apply http://127.0.0.1:18999/proxy.pac"]
+    merging.events.clear()
+    merging._merge_restore()
+    merging._merge_quit()
+    assert merging.events == ["restore", "restore", "stop"]
+
+
+def test_merge_does_not_resume_when_it_was_off_or_without_admin(merging):
+    merging._merge_resume()
+    hwm.save_choice(merging._settings, "merge", True)
+    merging._admin = False
+    merging._merge_resume()
+    assert merging.events == []  # the Windows policy can't be set without admin: the saved switch waits for an elevated start
+
+
+def test_merge_restore_never_raises(merging, monkeypatch):
+    monkeypatch.setattr(api.sysproxy, "restore", raising(OSError("registry")))
+    merging._merge_restore()
+    merging._merge_quit()

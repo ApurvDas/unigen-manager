@@ -2,7 +2,7 @@
 import ctypes, logging, logging.handlers, platform, subprocess, sys, threading
 from pathlib import Path
 
-import hw, traffic, tray
+import hw, merge, traffic, tray
 from api import Api, DATA_DIR
 from version import VERSION
 
@@ -79,8 +79,9 @@ def main(argv=None):
         instance = tray.claim_instance()  # declined: carry on without admin
     setup_logging(argv, admin)
     import webview
-    sampler = traffic.Sampler()
+    sampler = traffic.Sampler(extra=merge.wired_links)  # Ethernet and tethering are sampled too
     api = Api(admin=admin, sampler=sampler)
+    api._merge_restore()  # a crash while merging left the proxy settings changed: put them back before anything else
     main_win = webview.create_window("Unigen Manager", url=str(UI), js_api=api, width=1180, height=780,
                                      min_size=(940, 620), background_color="#16202B", hidden="--tray" in argv)
     widget = webview.create_window("Unigen Manager widget", url=str(WIDGET), js_api=api, width=tray.WIDGET_W, height=480,
@@ -109,6 +110,7 @@ def main(argv=None):
 
     def quit_app():
         stop.set()
+        api._merge_quit()  # first: browsers go direct again as soon as possible
         sampler.stop()  # writes today's totals
         if icon:
             icon.stop()
@@ -120,6 +122,7 @@ def main(argv=None):
         icon = tray.Tray(toggle_widget=api._toggle_widget, open_main=api._show_main, quit_app=quit_app,
                          root=ROOT, status=api._status)
         icon.start()
+        api._merge_resume()  # merge was left on
         api._notify = lambda text: icon.icon.notify(text, "Unigen Manager")
         threading.Thread(target=tray.watch_show, args=(api._show_main, stop), daemon=True).start()
         follower = hw.Follower(api._settings, api._follow_notify, admin=api._admin, push=api._push_step)
@@ -136,6 +139,7 @@ def main(argv=None):
         # a kept WebView2 profile starts faster than a fresh temp one each launch
         webview.start(after_start, debug="--debug" in argv, private_mode=False, storage_path=str(DATA_DIR / "webview"))
     finally:
-        sampler.stop()  # also when the windows end some other way than Quit
+        api._merge_quit()  # also when the windows end some other way than Quit
+        sampler.stop()
     tray.release(instance)
     return 0

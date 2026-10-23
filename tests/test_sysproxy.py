@@ -175,3 +175,8 @@ def test_apply_after_partial_restore_resaves_missing_original(tmp_path):
     reg = FakeReg(pac=("http://corp/pac", winreg.REG_SZ), wcm=(0, winreg.REG_DWORD))
     sysproxy.apply(URL, s, reg)
     assert read(s)["merge_saved"] == {"wcm": 1, "pac": "http://corp/pac"}
+
+
+def test_keeping_connected_is_true_only_for_policy_zero():
+    for start, want in (({}, False), ({"wcm": (0, winreg.REG_DWORD)}, True), ({"wcm": (1, winreg.REG_DWORD)}, False)):
+        assert sysproxy.keeping_connected(FakeReg(**start)) is want

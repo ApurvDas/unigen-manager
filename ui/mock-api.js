@@ -12,6 +12,8 @@
 // of driver.py, after which the dongle works; cancel_driver stops the download); MOCK_DRIVER_FAIL = "message" fails the install at step MOCK_FAIL_STEP (default 2);
 // window.mockApi._setUsing(key, kind) changes the adapter Wi-Fi ("wifi") or Bluetooth ("bt") uses, both without a kind;
 // mockApi._setDongle(state) plugs the dongle in ("connected"), out ("unplugged") or hangs it ("not_responding");
+// MOCK_WIRED (adds Ethernet and USB tethering, both up: they show in Merge connections and in the Traffic page; tethering starts out of merge, like the
+// real app) and MOCK_MERGE (merge starts on). mockApi._unplug(key) takes one of those two away, mockApi._plug(key) brings it back.
 // mockApi._setConnected(id, on) connects a paired device behind the app's back (as Windows Settings would);
 // mockApi._setHere(id, on) moves a paired device to / from the other radio behind the app's back;
 // mockApi._setRate(down, up) holds the adapter in use at fixed bytes per second (history included), instead of the bursty synthetic traffic.
@@ -94,7 +96,14 @@ window.mockApi = (() => {
   const plugged = () => ADAPTERS.filter(a => a.key !== window.MOCK_UNPLUG && !(a.key === "unigen" && ["unplugged", "no_driver"].includes(dongle())));
   const pick = key => (plugged().find(a => a.key === key) || plugged()[0]).key; // unplugging the dongle falls back, like the watchdog
   const using = () => pick(WIFI), radio = () => pick(RADIO);
-  const off = a => !window.MOCK_BOTH_ON && a.key !== using();
+  // merge connections: the Wi-Fi adapters and, with MOCK_WIRED, Ethernet and USB tethering; CHOICE is the user's saved choice per link
+  let MERGE = !!window.MOCK_MERGE;
+  const CHOICE = {}, GONE = new Set();
+  const WIRED = [{ key: "ethernet:mock", kind: "ethernet", name: "Ethernet", detail: "Realtek PCIe GbE Family Controller", ip: "192.168.0.20" },
+    { key: "tether:mock", kind: "tether", name: "USB tethering (phone)", detail: "Remote NDIS based Internet Sharing Device", ip: "192.168.42.129" }];
+  const wired = () => window.MOCK_WIRED ? WIRED.filter(w => !GONE.has(w.key)) : [];
+  const inMerge = (key, kind = "wifi") => CHOICE[key] ?? kind !== "tether";
+  const off = a => !window.MOCK_BOTH_ON && !(MERGE && inMerge(a.key)) && a.key !== using();
   const live = () => plugged().filter(a => !off(a)); // adapters with a Wi-Fi interface right now
   const adapter = key => {
     const a = live().find(x => x.key === key);
@@ -154,6 +163,31 @@ window.mockApi = (() => {
   def("bt_radio", 100, () => ({ active: radio(), can_switch: window.MOCK_ADMIN !== false, power: POWER,
     radios: plugged().map(a => ({ key: a.key, name: a.name, ok: a.key === radio(), disabled: a.key !== radio(), version: a.bt })) }));
   def("bt_power", 600, on => { POWER = on ? "on" : "off"; return { power: POWER }; });
+  def("merge_status", 0, () => {
+    trafficTo(Date.now());
+    const rate = key => { const h = TRAFFIC.hist[key], last = h && h[h.length - 1]; return last ? last : [null, null]; };
+    const links = [...plugged().map(a => ({ key: a.key, kind: "wifi", name: a.name, detail: "", ip: off(a) ? null : a.key === "unigen" ? "192.168.1.5" : "192.168.1.7", online: !off(a) })),
+      ...wired().map(w => ({ key: w.key, kind: w.kind, name: w.name, detail: w.detail, ip: w.ip, online: true }))].map(l => {
+      const included = inMerge(l.key, l.kind), [down, up] = l.online ? rate(l.key) : [null, null];
+      return { ...l, included, state: !included ? "off" : !l.online ? "down" : MERGE ? "up" : "checking", active: MERGE && included && l.online ? 2 : 0,
+        opened: MERGE && included && l.online ? 40 : 0, down, up };
+    });
+    const usable = links.filter(l => l.included && l.online), wifi = usable.filter(l => l.kind === "wifi");
+    return { on: MERGE, port: MERGE ? 18780 : null, wcm: MERGE, can_switch: window.MOCK_ADMIN !== false, links, single: MERGE && usable.length < 2,
+      same_network: MERGE && wifi.length === 2 ? "HOME-5G" : null };
+  });
+  def("set_merge", 600, on => {
+    need("Merging connections");
+    MERGE = !!on;
+    window.onMerge && window.onMerge();
+    return { on: MERGE };
+  });
+  def("set_merge_link", 200, (key, on) => {
+    if (![...plugged().map(a => a.key), ...wired().map(w => w.key)].includes(key)) throw new Error("That connection isn't here any more.");
+    CHOICE[key] = !!on;
+    window.onMerge && window.onMerge();
+    return { key, on: !!on };
+  });
   def("bt_paired", 200, () => PAIRED.map(view));
   def("bt_search_start", 100, () => {
     if (POWER === "off") throw new Error("Bluetooth is off. Turn it on first.");
@@ -311,6 +345,10 @@ window.mockApi = (() => {
   // KB/s up; the other one idles. Same shapes as traffic.Sampler: 60 readings of [down, up], today's totals, a tick counter.
   let UNIT = "bytes", fixed = null;
   const TRAFFIC = { sec: null, hist: { unigen: [], builtin: [] }, today: { unigen: { down: 3.84e9, up: 2.1e8 }, builtin: { down: 2.4e8, up: 1.1e7 } } };
+  if (window.MOCK_WIRED) {  // Ethernet moves about as much as the adapter in use, the phone a little
+    TRAFFIC.hist["ethernet:mock"] = []; TRAFFIC.hist["tether:mock"] = [];
+    TRAFFIC.today["ethernet:mock"] = { down: 1.2e9, up: 6e7 }; TRAFFIC.today["tether:mock"] = { down: 3e7, up: 2e6 };
+  }
   const synth = (busy, t) => busy
     ? [Math.max(3e5, 4.2e6 + 2.6e6 * Math.sin(t / 7) + 1.4e6 * Math.sin(t / 2.3 + 1) + 0.6e6 * Math.sin(t * 1.7)), Math.max(2e4, 3e5 + 1.6e5 * Math.sin(t / 5 + 2) + 0.7e5 * Math.sin(t * 1.3))]
     : [1.5e4 * (1.2 + Math.sin(t / 3)), 4e3 * (1.2 + Math.sin(t / 4))];
@@ -318,7 +356,7 @@ window.mockApi = (() => {
     const sec = Math.floor(now / 1000), busyKey = using();
     for (let t = TRAFFIC.sec === null ? sec - 59 : TRAFFIC.sec + 1; t <= sec; t++) {
       for (const k of Object.keys(TRAFFIC.hist)) {
-        const [d, u] = fixed && k === busyKey ? fixed : synth(k === busyKey, t), h = TRAFFIC.hist[k];
+        const [d, u] = fixed && k === busyKey ? fixed : synth(k === busyKey, t).map(v => k === "tether:mock" ? v / 4 : v), h = TRAFFIC.hist[k];
         h.push([Math.round(d), Math.round(u)]);
         if (h.length > 60) h.shift();
         if (TRAFFIC.sec !== null) { TRAFFIC.today[k].down += Math.round(d); TRAFFIC.today[k].up += Math.round(u); }
@@ -329,10 +367,11 @@ window.mockApi = (() => {
   }
   def("traffic", 0, () => {
     const sec = trafficTo(Date.now()), none = window.MOCK_TRAFFIC === "none", first = window.MOCK_TRAFFIC === "measuring";
+    const ads = [...plugged().map(a => ({ key: a.key, kind: "wifi", name: a.name })), ...wired().map(w => ({ key: w.key, kind: w.kind, name: w.name }))];
     return { using: none ? null : using(), unit: UNIT, tick: sec % 1e6,
-      adapters: none ? [] : plugged().map(a => { const h = TRAFFIC.hist[a.key], last = h[h.length - 1];
-        return { key: a.key, name: a.name, down: first ? null : last[0], up: first ? null : last[1], history: first ? [] : h.map(x => [...x]) }; }),
-      today: none ? {} : Object.fromEntries(plugged().map(a => [a.key, { ...TRAFFIC.today[a.key] }])) };
+      adapters: none ? [] : ads.map(a => { const h = TRAFFIC.hist[a.key], last = h[h.length - 1];
+        return { ...a, down: first ? null : last[0], up: first ? null : last[1], history: first ? [] : h.map(x => [...x]) }; }),
+      today: none ? {} : Object.fromEntries(ads.map(a => [a.key, { ...TRAFFIC.today[a.key] }])) };
   });
   def("set_traffic_unit", 0, unit => {
     if (unit !== "bytes" && unit !== "bits") throw new Error("The unit must be bytes or bits.");
@@ -349,6 +388,8 @@ window.mockApi = (() => {
   api._setUsing = (key, kind) => { if (kind !== "bt") WIFI = key; if (kind !== "wifi") RADIO = key; }; // test hook
   api._setConnected = (id, on) => { PAIRED.find(d => d.id === id).connected = on; }; // test hook
   api._setHere = (id, on) => { PAIRED.find(d => d.id === id).here = on; }; // test hook
+  api._unplug = key => { GONE.add(key); }; // test hook: Ethernet or USB tethering goes away
+  api._plug = key => { GONE.delete(key); }; // test hook
   api._setRate = (down, up) => { // test hook
     fixed = [down, up]; trafficTo(Date.now());
     TRAFFIC.hist[using()] = Array.from({ length: 60 }, () => [down, up]);
