@@ -25,7 +25,7 @@ async function call(name, ...args) {
 // constant actions get near-invisible motion, rare ones get the most.
 const ease = anime.cubicBezier(0.23, 1, 0.32, 1); // same curve as CSS --ease-out
 const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches; // reduced motion: fades only
-const COLOR = k => ({ unigen: "var(--uni)", builtin: "var(--bi)" })[k] || "var(--muted)"; // an adapter's identity colour
+const COLOR = k => ({ unigen: "var(--uni)", builtin: "var(--bi)" })[k] || (k.startsWith("ethernet:") ? "var(--eth)" : k.startsWith("tether:") ? "var(--tet)" : "var(--muted)"); // a link's identity colour
 
 // Timings (ms). The brutalist UI is crisp: a press sinks onto the hard shadow and springs back, indicators slide with no
 // overshoot, labels change without blur, and the progress bar only ever shows steps the app really performed.
@@ -66,7 +66,7 @@ function slide(ind, to, instant) {
 }
 
 // The Wi-Fi and Bluetooth switches (Dongle | Built-in) are built the same way in both windows.
-const USE_LABEL = k => ({ unigen: "Dongle", builtin: "Built-in" })[k] || k;
+const USE_LABEL = k => ({ unigen: "Dongle", builtin: "Built-in" })[k] || (k.startsWith("ethernet:") ? "Ethernet" : k.startsWith("tether:") ? "USB phone" : k);
 const SWITCH_KEYS = [{ key: "unigen" }, { key: "builtin" }];
 function buildSeg(seg, adapters) {
   seg.innerHTML = `<span class="ind" data-axis="x" aria-hidden="true"></span>` + adapters.map(a =>
@@ -97,6 +97,14 @@ function enableSeg(seg, admin, busy, dongle) {
     b.disabled = !admin || busy || away;
     b.title = away ? DONGLE_TIP[dongle] : "";
   });
+}
+
+// setSwitch: an on/off switch (.switch) shows on or off; nothing moves when it already does
+function setSwitch(sw, on, instant) {
+  if (sw.getAttribute("aria-checked") === String(on)) return;
+  sw.setAttribute("aria-checked", String(on));
+  sw.classList.toggle("on", on);
+  anime.animate($("i", sw), { x: on ? 19 : 0, duration: reduce || instant ? 0 : 180, ease });
 }
 
 // swap: a label changes at once and settles from a dimmer opacity, so it reads as one control changing

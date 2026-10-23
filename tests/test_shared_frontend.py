@@ -4,7 +4,7 @@ from pathlib import Path
 UI = Path(__file__).resolve().parents[1] / "ui"
 HELPERS = ["function call(", "function slide(", "function swap(", "async function busy(", "function arrive(",
            "function setText(", "function setMsg(", "function scramble(", "function pop(", "function relayout(",
-           "function removeEl(", "function addEl(", "function buildSeg(", "function markSeg(", "function enableSeg(", "function renderDongle(",
+           "function removeEl(", "function addEl(", "function setSwitch(", "function buildSeg(", "function markSeg(", "function enableSeg(", "function renderDongle(",
            "function buildProgress(", "function renderStep(", "function failProgress(", "function clearProgress(", "function noteBar(",
            "const COLOR =", "function rateParts(", "function fmtRate(", "function fmtBytes(", "function buildUnitSeg(", "function markUnit(",
            "async function pickUnit(", "function trafficChart("]

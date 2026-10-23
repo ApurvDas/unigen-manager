@@ -236,6 +236,30 @@
   .live { margin: -8px 0 0; font: 700 var(--t-xs)/1.2 var(--display); letter-spacing: var(--track); text-transform: uppercase; color: var(--muted); font-variant-numeric: tabular-nums; }
   .live[hidden] { display: none; }
 
+  /* merge connections: the card at the top of the Traffic page */
+  .merge .card-head .switch { align-self: center; margin-left: auto; margin-right: 3px; }
+  .merge .help { margin: 0 0 6px; color: var(--muted); font-size: var(--t-sm); }
+  .mrow { display: grid; grid-template-columns: 8px minmax(0, 1fr) 120px 200px 40px; gap: 14px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); }
+  .mrow .pip { width: 8px; height: 8px; background: var(--pip, var(--muted)); }
+  .mrow .pip.off { background: transparent; border: 2px solid var(--muted); }
+  .mwho { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .mtext { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .mkind { display: inline-flex; align-items: center; gap: 6px; min-width: 76px; color: var(--muted); font: 700 var(--t-xs)/1 var(--display); letter-spacing: var(--track); text-transform: uppercase; }
+  .mkind svg { flex: none; }
+  .mname { font-weight: 600; }
+  .mhint { color: var(--muted); font-size: var(--t-sm); }
+  .mstate { font-size: var(--t-sm); }
+  .mrate { color: var(--muted); font-size: var(--t-sm); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .mrow .switch { margin-right: 3px; }
+  .merge .note { margin: 8px 0 0; color: var(--warn); font-size: var(--t-sm); }
+  .merge .note[hidden] { display: none; }
+  .merge .msg { display: block; margin: 8px 0 0; font-size: var(--t-sm); }
+  .merge .msg:empty { display: none; }
+  .merge .empty { padding: 10px 0; }
+  .seg[hidden] { display: none; }
+  .card-head .seg { align-self: center; margin: 0 3px 4px 8px; }
+  #trafPick button { white-space: nowrap; padding: 4px 10px; }
+
   /* charts */
   .charts { display: grid; grid-template-columns: 3fr 2fr; gap: 18px; }
   .card { background: var(--raised); border: var(--edge) solid var(--line); padding: 12px 14px 10px; min-width: 0; }
@@ -296,6 +320,8 @@
     body { grid-template-columns: 1fr; overflow: auto; }
     .rail { border-right: 0; border-bottom: var(--edge) solid var(--line); }
     .map, .readouts, .readouts.two, .charts { grid-template-columns: 1fr; }
+    .mrow { grid-template-columns: 8px minmax(0, 1fr) 40px; }
+    .mrow > :nth-child(n+3):not(.switch) { display: none; }
     #netRows .row { grid-template-columns: 1fr 100px; }
     #netRows .row > :nth-child(n+3) { display: none; }
   }
@@ -461,12 +487,21 @@
       <span class="grow"></span>
       <div class="seg unit" id="trafficUnit" role="radiogroup" aria-label="Units"></div>
     </div>
+    <div class="card merge" id="merge">
+      <div class="card-head"><h2>Merge connections</h2><span class="sub" id="mergeSub"></span>
+        <button class="switch" id="mergeSw" role="switch" aria-checked="false" aria-label="Merge connections" disabled><i></i></button></div>
+      <p class="help" id="mergeHelp">Speeds up apps that open many connections (browsers, Steam, download managers). One download can't go faster than one connection. Games and Windows Update aren't merged.</p>
+      <div id="mergeRows"></div>
+      <p class="note" id="mergeNote" hidden></p>
+      <span class="msg" id="mergeMsg"></span>
+    </div>
     <div class="readouts two">
       <div class="readout"><span class="big" id="trafDown">–</span><span class="unit" id="trafDownU">MB/s</span><div class="what">↓ Download</div></div>
       <div class="readout"><span class="big" id="trafUp">–</span><span class="unit" id="trafUpU">MB/s</span><div class="what">↑ Upload</div></div>
     </div>
     <div class="card">
       <div class="card-head"><h2>Last 60 seconds</h2><span class="sub" id="trafSub"></span>
+        <div class="seg" id="trafPick" role="radiogroup" aria-label="Chart" hidden></div>
         <span class="legend"><span><i class="key" id="trafKey" style="background:var(--uni)"></i>Download</span><span><i class="key" style="background:var(--ink);opacity:.6"></i>Upload</span></span></div>
       <svg id="traf" class="chart" role="img" aria-label="Download and upload over the last 60 seconds" hidden></svg>
       <div class="empty" id="trafEmpty">Measuring…</div>
@@ -1019,10 +1054,8 @@ $("#btRefresh").addEventListener("click", e => busy(e.currentTarget, "Refreshing
 let searching = false, pairingRow = null;
 const fmtPin = p => p && p.length === 6 ? `${p.slice(0, 3)} ${p.slice(3)}` : (p || "");
 function renderPower() {
-  const on = BT.power !== "off", sw = $("#btPower");
-  sw.setAttribute("aria-checked", String(on));
-  sw.classList.toggle("on", on);
-  anime.animate($("i", sw), { x: on ? 19 : 0, duration: reduce ? 0 : 180, ease });
+  const on = BT.power !== "off";
+  setSwitch($("#btPower"), on);
   $("#bt").classList.toggle("off", !on);
   $("#btRunNote").hidden = !on;
   $("#btOnNote").hidden = on;
@@ -1420,7 +1453,9 @@ const trUnit = $("#trafficUnit");
 let TRF = null;      // the latest traffic()
 let trDrawn = null;  // what the chart shows now: { tag: adapter|unit, tick }
 let trMarked = null; // the unit the switch shows
-const trAd = () => TRF && (TRF.adapters.find(a => a.key === TRF.using) || TRF.adapters[0]);
+let trPick = null;   // the link the user picked for the chart (null: the adapter in use)
+const trUsing = () => TRF && (TRF.adapters.find(a => a.key === TRF.using) || TRF.adapters[0]);
+const trAd = () => TRF && (TRF.adapters.find(a => a.key === trPick) || trUsing());
 const put = (el, text) => { if (el.textContent !== text) el.textContent = text; };
 const trafficShown = () => !$("#traffic").hidden;
 buildUnitSeg(trUnit);
@@ -1457,17 +1492,32 @@ function drawToday() {
     put($(".dn", row), fmtBytes(t.down)); put($(".up", row), fmtBytes(t.up));
   });
 }
+function drawPick(force) {  // [Dongle | Built-in | Ethernet | USB phone]: only when there is more than the two Wi-Fi adapters
+  const seg = $("#trafPick"), ads = TRF.adapters, show = ads.some(a => a.kind && a.kind !== "wifi"), keys = ads.map(a => a.key).join();
+  seg.hidden = !show;
+  if (!show) { seg.dataset.keys = seg.dataset.on = ""; return; }
+  const rebuilt = seg.dataset.keys !== keys;
+  if (rebuilt) { seg.dataset.keys = keys; buildSeg(seg, ads); }
+  if (rebuilt || force || seg.dataset.on !== trAd().key) { seg.dataset.on = trAd().key; markSeg(seg, trAd().key, rebuilt || force); }
+}
+$("#trafPick").addEventListener("click", e => {
+  const b = e.target.closest("button");
+  if (!b || b.getAttribute("aria-checked") === "true") return;
+  trPick = b.dataset.k;
+  renderTraffic();
+});
 function renderTraffic(force) {
   if (!TRF) return;
-  const a = trAd(), unit = TRF.unit, measured = !!a && a.down != null;
-  $("#wifiLive").hidden = !a;  // the Wi-Fi page's live line
-  if (a) put($("#wifiLive"), measured ? `↓ ${fmtRate(a.down, unit)} · ↑ ${fmtRate(a.up, unit)}` : "Measuring…");
+  const a = trAd(), u = trUsing(), unit = TRF.unit, measured = !!a && a.down != null;
+  $("#wifiLive").hidden = !u;  // the Wi-Fi page's live line: always the adapter in use
+  if (u) put($("#wifiLive"), u.down != null ? `↓ ${fmtRate(u.down, unit)} · ↑ ${fmtRate(u.up, unit)}` : "Measuring…");
   if (!trafficShown()) { trDrawn = null; return; }
   put($("#trafficTitle"), a ? `Traffic on ${a.name}` : "Traffic");
   if (trMarked !== unit) { markUnit(trUnit, unit, trMarked === null || force); trMarked = unit; }
   const [dn, dnU] = measured ? rateParts(a.down, unit) : ["–", UNIT_LABEL[unit]], [up, upU] = measured ? rateParts(a.up, unit) : ["–", UNIT_LABEL[unit]];
   put($("#trafDown"), dn); put($("#trafDownU"), dnU); put($("#trafUp"), up); put($("#trafUpU"), upU);
-  drawTraffic(force); drawToday();
+  drawPick(force); drawTraffic(force); drawToday();
+  renderMerge();
 }
 trUnit.addEventListener("click", e => {
   const b = e.target.closest("button");
@@ -1475,6 +1525,78 @@ trUnit.addEventListener("click", e => {
   pickUnit(b.dataset.k).catch(err => setMsg($("#trafficMsg"), err.message, true));
 });
 window.onTrafficUnit = unit => { if (TRF) { TRF.unit = unit; renderTraffic(); } };  // pushed by Python (api.py set_traffic_unit) to both windows
+
+// ================= merge connections =================
+// The Merge card at the top of the Traffic page: the switch, and a row per link (a Wi-Fi adapter, Ethernet, USB tethering) with its
+// state, its live rate and whether it takes part. merge_status() is polled every MERGE_MS while the page shows; Python pushes onMerge
+// after any change (here or in the widget).
+const MERGE_MS = 2000;
+let MRG = null, mergeErr = null;
+const mergeSw = $("#mergeSw"), mergeRows = $("#mergeRows"), mergeMsg = $("#mergeMsg");
+const KIND = { wifi: "Wi-Fi", ethernet: "Ethernet", tether: "USB" };
+const ICON = (d, extra = "") => `<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="${d}" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>${extra}</svg>`;
+const KIND_ICON = {
+  wifi: ICON("M1.8 6.2a9 9 0 0 1 12.4 0M4.3 8.9a5.4 5.4 0 0 1 7.4 0", `<circle cx="8" cy="12" r="1.4" fill="currentColor"/>`),
+  ethernet: ICON("M2.5 3.5h11v6.5h-2.5v2.5h-6V10H2.5zM5.5 6v2M8 6v2M10.5 6v2"),
+  tether: ICON("M8 14V3M8 3 6.5 4.7M8 3l1.5 1.7M8 9 4.5 7.2V6M8 11l3.5-2V7", `<circle cx="8" cy="14" r="1.2" fill="currentColor"/><rect x="3.5" y="4.2" width="2" height="2" fill="currentColor"/><circle cx="11.5" cy="6.4" r="1.1" fill="currentColor"/>`),
+};
+// what a row says: Working (green), Checking (grey), Not working (red), Not merged (hollow); with merge off, only whether it is connected
+const rowState = l => !MRG.on ? (l.online ? ["Connected", "var(--ok)"] : ["Not connected", "var(--muted)"])
+  : { up: ["Working", "var(--ok)"], checking: ["Checking…", "var(--muted)"], down: ["Not working", "var(--err)"], off: ["Not merged", null] }[l.state];
+function renderMerge() {
+  if (!MRG) return;
+  const keys = MRG.links.map(l => l.key).join(), unit = TRF ? TRF.unit : "bytes", usable = MRG.links.filter(l => l.included && l.online).length;
+  if (mergeRows.dataset.keys !== keys) {  // links come and go (a cable, a phone): rebuild; otherwise update in place
+    mergeRows.dataset.keys = keys;
+    mergeRows.innerHTML = MRG.links.length ? MRG.links.map(l => `<div class="mrow" data-k="${esc(l.key)}"${l.detail ? ` title="${esc(l.detail)}"` : ""}>
+        <i class="pip" aria-hidden="true"></i>
+        <span class="mwho"><span class="mkind">${KIND_ICON[l.kind] || ""}${esc(KIND[l.kind] || l.kind)}</span><span class="mtext"><span class="mname"></span>${l.kind === "tether" ? `<span class="mhint">uses your phone's mobile data</span>` : ""}</span></span>
+        <span class="mstate"></span><span class="mrate"></span>
+        <button class="switch" role="switch" aria-checked="false"><i></i></button></div>`).join("") : `<div class="empty">No connections found</div>`;
+  }
+  for (const l of MRG.links) {
+    const row = $(`.mrow[data-k="${l.key}"]`, mergeRows), [text, color] = rowState(l), pip = $(".pip", row), sw = $(".switch", row);
+    put($(".mname", row), l.name); put($(".mstate", row), text);
+    put($(".mrate", row), l.down == null || !l.online ? "" : `↓ ${fmtRate(l.down, unit)} · ↑ ${fmtRate(l.up, unit)}`);
+    pip.classList.toggle("off", !color);
+    pip.style.setProperty("--pip", color || "var(--muted)");
+    sw.setAttribute("aria-label", `Include ${l.name}`);
+    if (!sw.disabled) setSwitch(sw, l.included);
+  }
+  if (!mergeSw.dataset.busy) { setSwitch(mergeSw, MRG.on); mergeSw.disabled = !MRG.can_switch; }
+  mergeSw.title = MRG.can_switch ? "" : "Merging connections needs administrator rights.";
+  put($("#mergeSub"), MRG.on ? `${usable} in use` : "");
+  const note = MRG.on && MRG.single ? "Only one connection takes part, so there is nothing to merge yet. Include another one, or plug one in."
+    : MRG.on && MRG.same_network ? `Both adapters are on ${MRG.same_network}: little speed gain. Connect one to another network (a phone hotspot) to add speed.` : "";
+  $("#mergeNote").hidden = !note; put($("#mergeNote"), note);
+  const hint = "Merging needs administrator rights. Restart the app and choose Yes.";
+  if (!MRG.can_switch && !mergeMsg.textContent) setMsg(mergeMsg, hint);
+  else if (MRG.can_switch && mergeMsg.textContent === hint) setMsg(mergeMsg, "");
+}
+async function loadMerge() {
+  try { MRG = await call("merge_status"); }
+  catch (e) { if (mergeMsg.textContent !== e.message) { setMsg(mergeMsg, e.message, true); mergeErr = e.message; } return; }
+  if (mergeErr && mergeMsg.textContent === mergeErr) { setMsg(mergeMsg, ""); mergeErr = null; }
+  renderMerge();
+}
+mergeSw.addEventListener("click", async () => {
+  if (mergeSw.disabled || !MRG) return;
+  const on = !MRG.on;
+  mergeSw.disabled = true; mergeSw.dataset.busy = "1";
+  try { await call("set_merge", on); setMsg(mergeMsg, on ? "Merge is on." : "Merge is off."); }
+  catch (e) { setMsg(mergeMsg, e.message, true); }
+  finally { delete mergeSw.dataset.busy; await loadMerge(); }
+});
+mergeRows.addEventListener("click", async e => {
+  const sw = e.target.closest(".switch");
+  if (!sw || sw.disabled) return;
+  const key = sw.closest(".mrow").dataset.k, on = sw.getAttribute("aria-checked") !== "true";
+  setSwitch(sw, on); sw.disabled = true;
+  try { await call("set_merge_link", key, on); if (mergeMsg.textContent && !mergeMsg.classList.contains("err")) setMsg(mergeMsg, ""); }
+  catch (err) { setSwitch(sw, !on); setMsg(mergeMsg, err.message, true); }
+  finally { sw.disabled = false; loadMerge(); }
+});
+window.onMerge = () => { if (!mergeSw.dataset.busy) loadMerge(); };  // pushed by Python (api.py set_merge, set_merge_link) to both windows
 
 // ================= navigation =================
 // Wi-Fi tab: Nearby | Saved. Content swaps instantly; only the highlight slides.
@@ -1501,7 +1623,7 @@ function go(id, instant) {
   }
   if (id === "bt" && INFO) loadBt();
   if (id === "speed") drawSpeed();
-  if (id === "traffic") { trMarked = null; renderTraffic(true); loadTraffic(); }  // hidden elements measure 0: draw now that it shows
+  if (id === "traffic") { trMarked = null; renderTraffic(true); loadTraffic(); loadMerge(); }  // hidden elements measure 0: draw now that it shows
   hideTip();
 }
 $$("nav button").forEach(b => b.addEventListener("click", () => go(b.dataset.go)));
@@ -1544,6 +1666,8 @@ setTimeout(() => { if (!INFO && !MOCK && !window.pywebview) setMsg($("#wifiMsg")
   setInterval(tickAge, 1000);
   loadTraffic();
   setInterval(async () => { if ((!$("#wifi").hidden || trafficShown()) && await visible()) loadTraffic(); }, TRAFFIC_MS);
+  loadMerge();
+  setInterval(async () => { if (trafficShown() && !mergeSw.dataset.busy && await visible()) loadMerge(); }, MERGE_MS);
   setInterval(async () => { if (!$("#bt").hidden && !pairingRow && await visible()) refreshPaired().catch(() => {}); }, 5000);  // a check takes ~50 ms
   // the watchdog announces an unplug, not a dongle coming back or still starting: while it isn't connected, look again
   setInterval(async () => {
@@ -1553,7 +1677,7 @@ setTimeout(() => { if (!INFO && !MOCK && !window.pywebview) setMsg($("#wifiMsg")
   }, 5000);
   // opened from the tray or the shortcut: fresh data now, not at the next tick
   window.onMainShown = () => {
-    poll(); loadTraffic();
+    poll(); loadTraffic(); loadMerge();
     if (nearbyShown()) loadNetworks(false).then(() => loadNetworks(true)).catch(e => setMsg($("#wifiMsg"), e.message, true));
     if (!$("#bt").hidden && !pairingRow) refreshPaired().catch(() => {});
   };

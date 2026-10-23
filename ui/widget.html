@@ -29,6 +29,11 @@
   .uses { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; padding-right: var(--off); }  /* room for the switch's hard shadow */
   .uses .lbl { font: 700 var(--t-xs)/1 var(--display); letter-spacing: var(--track); text-transform: uppercase; color: var(--muted); }
   .uses + .steps { margin: -2px 0 10px; }
+  .uses.merge { margin: 8px 0 0; padding-top: 8px; border-top: 1px solid var(--line); }
+  .uses.merge .lbl { display: inline-flex; align-items: center; gap: 8px; }
+  .merged { padding: 2px 6px; background: var(--uni); color: var(--panel); font: 700 var(--t-xs)/1 var(--display); letter-spacing: var(--track); text-transform: uppercase; }
+  .merged[hidden] { display: none; }
+  .uses.merge + .msg:empty { display: none; }
 
   .ad { display: grid; grid-template-columns: 8px 1fr auto; column-gap: 10px; row-gap: 2px; align-items: center; padding: 6px 0; }
   .ad + .ad { border-top: 1px solid var(--line); }
@@ -118,6 +123,9 @@
     <div class="uses"><span class="lbl" id="wifiUseLbl">Wi-Fi</span><div class="seg" id="wifiUse" role="radiogroup" aria-labelledby="wifiUseLbl"></div></div>
     <div id="wifiSteps" hidden></div>
     <div id="ads"></div>
+    <div class="uses merge"><span class="lbl">Merge connections<span class="merged" id="mergeBadge" hidden>Merged</span></span>
+      <button class="switch" id="mergeSw" role="switch" aria-checked="false" aria-label="Merge connections" disabled><i></i></button></div>
+    <p class="msg" id="mergeMsg"></p>
     <p class="msg" id="wifiMsg"></p>
   </div>
   <div class="sec">
@@ -309,6 +317,26 @@ const onSegClick = (seg, msg, move) => seg.addEventListener("click", e => {
 onSegClick(wifiSeg, "#wifiMsg", moveWifi);
 onSegClick(btSeg, "#btMsg", moveBt);
 
+// ================= merge connections: use every connection at once (the Traffic page of the app lists them) =================
+let MRG = null;
+async function loadMerge() {
+  MRG = await call("merge_status");
+  const sw = $("#mergeSw");
+  setSwitch(sw, MRG.on);
+  $("#mergeBadge").hidden = !MRG.on;
+  if (!sw.dataset.busy) sw.disabled = !MRG.can_switch;
+  sw.title = MRG.can_switch ? "" : "Merging connections needs administrator rights.";
+}
+$("#mergeSw").addEventListener("click", async function () {
+  if (this.disabled || !MRG) return;
+  const on = !MRG.on;
+  this.disabled = true; this.dataset.busy = "1";
+  try { await call("set_merge", on); note($("#mergeMsg"), on ? "Merge is on." : "Merge is off."); }
+  catch (e) { note($("#mergeMsg"), e.message, true); }
+  finally { delete this.dataset.busy; await loadMerge().catch(() => {}); }
+});
+window.onMerge = () => { if (!$("#mergeSw").dataset.busy) loadMerge().catch(() => {}); };  // pushed by Python (api.py set_merge, set_merge_link) to both windows
+
 // ================= saved networks in range (on the adapter Wi-Fi uses) =================
 async function loadNets() {
   if (!uses) return;
@@ -433,7 +461,7 @@ $("#closeWidget").addEventListener("click", hideWidget);  // same as clicking aw
 const W = $("#w");
 async function refresh(draw) {
   await poll();
-  await Promise.all([loadNets(), loadBt(), loadSpeed(draw), loadTraffic(true).catch(() => {})]);
+  await Promise.all([loadNets(), loadBt(), loadSpeed(draw), loadTraffic(true).catch(() => {}), loadMerge().catch(() => {})]);
 }
 function animateOpen() {
   anime.animate(W, reduce ? { opacity: [0, 1], duration: 150, ease } : { opacity: [0, 1], y: [8, 0], duration: 180, ease });
@@ -457,7 +485,7 @@ if (!MOCK) {
   // opened at its 480 px default and cut off everything below, Traffic included, until the content changed size)
   new ResizeObserver(() => { const h = Math.ceil(W.getBoundingClientRect().height); if (h > 0) call("widget_fit", h).catch(() => {}); }).observe(W);
 }
-setInterval(async () => { if (shown && await call("is_visible", "widget").catch(() => true)) { poll().catch(fail($("#wifiMsg"))); loadNets().catch(fail($("#netMsg"))); } }, 3000);
+setInterval(async () => { if (shown && await call("is_visible", "widget").catch(() => true)) { poll().catch(fail($("#wifiMsg"))); loadNets().catch(fail($("#netMsg"))); if (!$("#mergeSw").dataset.busy) loadMerge().catch(() => {}); } }, 3000);
 setInterval(async () => { if (shown && await call("is_visible", "widget").catch(() => true)) loadBt().catch(() => {}); }, 10000);  // connected state and battery
 setInterval(async () => { if (shown && await call("is_visible", "widget").catch(() => true)) loadTraffic().catch(() => {}); }, TRAFFIC_MS);
 // the watchdog announces an unplug, not a dongle coming back or still starting: while it isn't connected, look again

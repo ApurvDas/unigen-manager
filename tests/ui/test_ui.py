@@ -1052,15 +1052,15 @@ def test_rate_text_in_the_page_matches_the_one_in_the_tray_tooltip(open_page):
     assert [pg.evaluate("n => fmtBytes(n)", n) for n in (0, 400_000, 1_234_567, 3_860_000_000)] == ["0 KB", "400 KB", "1.2 MB", "3.86 GB"]
 
 
-def test_traffic_page_is_square_uses_five_sizes_and_its_only_shadow_is_the_unit_switch(open_page):
+def test_traffic_page_is_square_uses_five_sizes_and_only_its_switches_have_a_shadow(open_page):
     pg = traffic_page(open_page)
     expect(pg.locator("#traf .line")).to_have_count(2, timeout=4000)
     assert pg.evaluate(ROUND) == []
     assert set(pg.evaluate(TEXT_SIZES)) <= SIZES, pg.evaluate(TEXT_SIZES)
     assert re.match(r"^rgb\(\d+, \d+, \d+\) 4px 4px 0px 0px$", shadow(pg, "#trafficUnit"))
     shadows = pg.evaluate("""() => [...document.querySelectorAll('#traffic *')].filter(e => !e.closest('svg') && getComputedStyle(e).boxShadow !== 'none')
-        .map(e => e.id || e.className)""")
-    assert shadows == ["trafficUnit"], shadows  # readouts, cards and rows are flat: depth means pressable
+        .map(e => e.matches('.seg, .switch') ? 'pressable' : e.id || e.className)""")
+    assert set(shadows) == {"pressable"}, shadows  # readouts, cards and rows are flat: depth means pressable (the unit and chart switches, the merge switches)
     assert pg.evaluate("document.querySelector('#trafficUnit').classList.contains('seg')")
     box = pg.locator('#trafficUnit button[data-k="bits"]').bounding_box()  # the one press: it sinks onto its shadow
     pg.mouse.move(box["x"] + 8, box["y"] + 8)
@@ -1162,3 +1162,155 @@ def test_driver_panel_is_square_and_uses_the_shared_bar(open_page):
       return [c.borderTopWidth, c.borderRadius, c.boxShadow, c.borderTopColor] }""")
     assert css[0] == "2px" and css[1] == "0px" and css[2] == "none"  # depth means pressable: the panel has no shadow, the button has
     assert pg.evaluate("getComputedStyle(document.querySelector('#driverGo')).boxShadow") != "none"
+
+
+# ---- merge connections (the card at the top of the Traffic page) ----
+SPY = """window.__calls = [];
+for (const m of ["set_merge", "set_merge_link"]) { const f = mockApi[m]; mockApi[m] = (...a) => { window.__calls.push([m, ...a]); return f(...a); }; }
+null;  // not a function: evaluate() would call it"""
+
+
+def spy(pg):
+    pg.evaluate(SPY)
+
+
+def calls(pg):
+    return pg.evaluate("window.__calls")
+
+
+def mrow(pg, key):
+    return pg.locator(f'#mergeRows .mrow[data-k="{key}"]')
+
+
+def test_merge_card_lists_both_wifi_links_and_starts_off(open_page):
+    pg = traffic_page(open_page)
+    expect(pg.locator("#mergeRows .mrow")).to_have_count(2)
+    assert pg.evaluate("[...document.querySelectorAll('#mergeRows .mrow')].map(r => r.dataset.k)") == ["unigen", "builtin"]
+    expect(mrow(pg, "unigen").locator(".mkind")).to_have_text("Wi-Fi")
+    expect(mrow(pg, "unigen").locator(".mname")).to_have_text("Unigen dongle")
+    expect(mrow(pg, "builtin").locator(".mname")).to_have_text("Built-in MediaTek")
+    expect(pg.locator("#mergeSw")).to_have_attribute("aria-checked", "false")
+    expect(pg.locator("#mergeSw")).to_have_attribute("aria-label", "Merge connections")
+    expect(mrow(pg, "unigen").locator(".switch")).to_have_attribute("aria-checked", "true")
+    expect(mrow(pg, "unigen").locator(".mstate")).to_have_text("Connected")  # merge is off: only whether it has a connection
+    expect(pg.locator("#mergeNote")).to_be_hidden()
+    expect(pg.locator("#mergeHelp")).to_contain_text("One download can't go faster than one connection")
+
+
+def test_merge_switch_turns_merge_on_and_off(open_page):
+    pg = traffic_page(open_page)
+    spy(pg)
+    pg.locator("#mergeSw").click()
+    expect(pg.locator("#mergeSw")).to_have_attribute("aria-checked", "true")
+    assert calls(pg) == [["set_merge", True]]
+    expect(mrow(pg, "unigen").locator(".mstate")).to_have_text("Working")
+    expect(pg.locator("#mergeNote")).to_have_text("Both adapters are on HOME-5G: little speed gain. Connect one to another network (a phone hotspot) to add speed.")
+    pg.locator("#mergeSw").click()
+    expect(pg.locator("#mergeSw")).to_have_attribute("aria-checked", "false")
+    assert calls(pg)[-1] == ["set_merge", False]
+    expect(pg.locator("#mergeNote")).to_be_hidden()
+
+
+def test_merge_that_failed_goes_back_and_says_why(open_page):
+    pg = traffic_page(open_page, 'window.MOCK_FAIL = { set_merge: "Couldn\'t turn the Built-in MediaTek on." };')
+    pg.locator("#mergeSw").click()
+    expect(pg.locator("#mergeMsg")).to_have_text("Couldn't turn the Built-in MediaTek on.")
+    expect(pg.locator("#mergeSw")).to_have_attribute("aria-checked", "false")
+    expect(pg.locator("#mergeSw")).to_be_enabled()
+
+
+def test_merge_without_admin_is_disabled_with_a_hint(open_page):
+    pg = traffic_page(open_page, "window.MOCK_ADMIN = false;")
+    expect(pg.locator("#mergeSw")).to_be_disabled()
+    expect(pg.locator("#mergeMsg")).to_have_text("Merging needs administrator rights. Restart the app and choose Yes.")
+
+
+def test_merge_card_with_ethernet_and_tethering(open_page):
+    pg = traffic_page(open_page, "window.MOCK_WIRED = true;")
+    expect(pg.locator("#mergeRows .mrow")).to_have_count(4)
+    assert pg.evaluate("[...document.querySelectorAll('#mergeRows .mrow')].map(r => r.dataset.k)") == ["unigen", "builtin", "ethernet:mock", "tether:mock"]
+    assert pg.evaluate("[...document.querySelectorAll('#mergeRows .mkind')].map(k => k.textContent)") == ["Wi-Fi", "Wi-Fi", "Ethernet", "USB"]
+    expect(mrow(pg, "ethernet:mock").locator(".mname")).to_have_text("Ethernet")
+    expect(mrow(pg, "ethernet:mock").locator(".switch")).to_have_attribute("aria-checked", "true")
+    expect(mrow(pg, "tether:mock").locator(".mname")).to_have_text("USB tethering (phone)")
+    expect(mrow(pg, "tether:mock").locator(".switch")).to_have_attribute("aria-checked", "false")  # tethering uses the phone's data: opt in
+    expect(mrow(pg, "tether:mock").locator(".mhint")).to_have_text("uses your phone's mobile data")
+    expect(mrow(pg, "ethernet:mock").locator(".mhint")).to_have_count(0)
+    expect(mrow(pg, "tether:mock").locator(".mstate")).to_have_text("Connected")
+
+
+def test_merge_include_switch_takes_a_link_in_and_out(open_page):
+    pg = traffic_page(open_page, "window.MOCK_WIRED = true; window.MOCK_MERGE = true;")
+    spy(pg)
+    expect(pg.locator("#mergeSw")).to_have_attribute("aria-checked", "true")
+    expect(mrow(pg, "ethernet:mock").locator(".mstate")).to_have_text("Working")
+    expect(mrow(pg, "tether:mock").locator(".mstate")).to_have_text("Not merged")
+    mrow(pg, "tether:mock").locator(".switch").click()
+    expect(mrow(pg, "tether:mock").locator(".switch")).to_have_attribute("aria-checked", "true")
+    assert calls(pg) == [["set_merge_link", "tether:mock", True]]
+    expect(mrow(pg, "tether:mock").locator(".mstate")).to_have_text("Working")
+    mrow(pg, "ethernet:mock").locator(".switch").click()
+    expect(mrow(pg, "ethernet:mock").locator(".switch")).to_have_attribute("aria-checked", "false")
+    expect(mrow(pg, "ethernet:mock").locator(".mstate")).to_have_text("Not merged")
+    assert calls(pg)[-1] == ["set_merge_link", "ethernet:mock", False]
+    expect(pg.locator("#mergeSw")).to_have_attribute("aria-checked", "true")  # still merging the rest
+
+
+def test_merge_include_switch_that_failed_goes_back(open_page):
+    pg = traffic_page(open_page, 'window.MOCK_WIRED = true; window.MOCK_FAIL = { set_merge_link: "That connection isn\'t here any more." };')
+    mrow(pg, "tether:mock").locator(".switch").click()
+    expect(pg.locator("#mergeMsg")).to_have_text("That connection isn't here any more.")
+    expect(mrow(pg, "tether:mock").locator(".switch")).to_have_attribute("aria-checked", "false")
+
+
+def test_merge_with_one_link_left_still_runs_and_says_so(open_page):
+    pg = traffic_page(open_page, "window.MOCK_MERGE = true;")
+    expect(pg.locator("#mergeNote")).to_contain_text("Both adapters are on HOME-5G")
+    mrow(pg, "builtin").locator(".switch").click()
+    expect(pg.locator("#mergeNote")).to_have_text("Only one connection takes part, so there is nothing to merge yet. Include another one, or plug one in.")
+    expect(pg.locator("#mergeSw")).to_have_attribute("aria-checked", "true")  # merge still works
+    expect(mrow(pg, "unigen").locator(".mstate")).to_have_text("Working")
+    expect(mrow(pg, "builtin").locator(".mstate")).to_have_text("Not merged")
+
+
+def test_merge_follows_a_link_that_is_unplugged_and_comes_back(open_page):
+    pg = traffic_page(open_page, "window.MOCK_WIRED = true;")
+    expect(pg.locator("#mergeRows .mrow")).to_have_count(4)
+    pg.evaluate('mockApi._unplug("tether:mock")')
+    expect(pg.locator("#mergeRows .mrow")).to_have_count(3, timeout=6000)
+    expect(mrow(pg, "tether:mock")).to_have_count(0)
+    pg.evaluate('mockApi._plug("tether:mock")')
+    expect(pg.locator("#mergeRows .mrow")).to_have_count(4, timeout=6000)
+
+
+def test_merge_rows_show_the_live_rate_in_place(open_page):
+    pg = traffic_page(open_page, "window.MOCK_WIRED = true;")
+    pg.evaluate("mockApi._setRate(4200000, 300000)")
+    expect(mrow(pg, "unigen").locator(".mrate")).to_have_text("↓ 4.2 MB/s · ↑ 300 KB/s", timeout=6000)
+    pg.locator("#mergeRows .mrow").first.evaluate("r => r.dataset.same = '1'")
+    pg.evaluate("mockApi._setRate(8000000, 1000000)")
+    expect(mrow(pg, "unigen").locator(".mrate")).to_have_text("↓ 8.0 MB/s · ↑ 1.0 MB/s", timeout=6000)
+    assert pg.evaluate("document.querySelector('#mergeRows .mrow').dataset.same") == "1"  # rows are updated in place
+
+
+def test_traffic_page_charts_ethernet_and_tethering_too(open_page):
+    pg = traffic_page(open_page, "window.MOCK_WIRED = true;")
+    expect(pg.locator("#trafPick")).to_be_visible()
+    assert pg.evaluate("[...document.querySelectorAll('#trafPick button')].map(b => b.dataset.k)") == ["unigen", "builtin", "ethernet:mock", "tether:mock"]
+    assert pg.evaluate("[...document.querySelectorAll('#trafPick button')].map(b => b.textContent)") == ["Dongle", "Built-in", "Ethernet", "USB phone"]
+    expect(pg.locator('#trafPick button[aria-checked="true"]')).to_have_attribute("data-k", "unigen")  # the adapter in use, until one is picked
+    expect(pg.locator("#todayRows .row")).to_have_count(4)
+    pg.locator('#trafPick button[data-k="ethernet:mock"]').click()
+    expect(pg.locator("#trafficTitle")).to_have_text("Traffic on Ethernet")
+    expect(pg.locator("#traf .line")).to_have_count(2, timeout=4000)
+    assert pg.evaluate("[...document.querySelectorAll('#traf .line')].map(l => l.getAttribute('stroke'))")[0] == "var(--eth)"
+    pg.locator('#trafPick button[data-k="tether:mock"]').click()
+    expect(pg.locator("#trafficTitle")).to_have_text("Traffic on USB tethering (phone)")
+    pg.evaluate('mockApi._unplug("tether:mock")')
+    expect(pg.locator("#trafficTitle")).to_have_text("Traffic on Unigen dongle", timeout=4000)  # the picked one is gone: back to the one in use
+
+
+def test_traffic_page_has_no_picker_with_only_wifi(open_page):
+    pg = traffic_page(open_page)
+    expect(pg.locator("#trafPick")).to_be_hidden()
+    expect(pg.locator("#todayRows .row")).to_have_count(2)

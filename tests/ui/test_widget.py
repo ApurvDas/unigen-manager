@@ -426,3 +426,43 @@ def test_widget_dongle_without_driver_says_so_and_shows_the_install_line(widget)
     expect(pg.locator("#wifiMsg")).to_have_text("Driver installed. The dongle's Wi-Fi is ready.", timeout=6000)
     expect(pg.locator("#dongle")).to_have_text("Dongle connected")
     expect(pg.locator(".ad")).to_have_count(2)
+
+
+# ---- merge connections ----
+def test_widget_merge_switch_turns_merge_on_and_off_and_shows_a_badge(widget):
+    pg = widget()
+    pg.evaluate("""window.__calls = []; const f = mockApi.set_merge; mockApi.set_merge = (...a) => { window.__calls.push(a); return f(...a); }; null;""")
+    expect(pg.locator("#mergeSw")).to_have_attribute("aria-checked", "false")
+    expect(pg.locator("#mergeSw")).to_have_attribute("aria-label", "Merge connections")
+    expect(pg.locator("#mergeBadge")).to_be_hidden()
+    pg.locator("#mergeSw").click()
+    expect(pg.locator("#mergeSw")).to_have_attribute("aria-checked", "true")
+    expect(pg.locator("#mergeBadge")).to_have_text("Merged")
+    assert pg.evaluate("window.__calls") == [[True]]
+    pg.locator("#mergeSw").click()
+    expect(pg.locator("#mergeSw")).to_have_attribute("aria-checked", "false")
+    expect(pg.locator("#mergeBadge")).to_be_hidden()
+    assert pg.evaluate("window.__calls") == [[True], [False]]
+
+
+def test_widget_shows_merge_that_is_already_on_and_follows_a_push_from_the_other_window(widget):
+    pg = widget("window.MOCK_MERGE = true;")
+    expect(pg.locator("#mergeSw")).to_have_attribute("aria-checked", "true")
+    expect(pg.locator("#mergeBadge")).to_have_text("Merged")
+    pg.evaluate("mockApi.set_merge(false)")  # switched in the main window: Python then pushes onMerge to both
+    expect(pg.locator("#mergeSw")).to_have_attribute("aria-checked", "false")
+    expect(pg.locator("#mergeBadge")).to_be_hidden()
+
+
+def test_widget_merge_switch_failure_goes_back_with_the_reason(widget):
+    pg = widget('window.MOCK_FAIL = { set_merge: "Couldn\'t turn the Built-in MediaTek on." };')
+    pg.locator("#mergeSw").click()
+    expect(pg.locator("#mergeMsg")).to_have_text("Couldn't turn the Built-in MediaTek on.")
+    expect(pg.locator("#mergeSw")).to_have_attribute("aria-checked", "false")
+    expect(pg.locator("#mergeSw")).to_be_enabled()
+
+
+def test_widget_merge_switch_needs_admin(widget):
+    pg = widget("window.MOCK_ADMIN = false;")
+    expect(pg.locator("#mergeSw")).to_be_disabled()
+    expect(pg.locator("#mergeSw")).to_have_attribute("title", "Merging connections needs administrator rights.")
