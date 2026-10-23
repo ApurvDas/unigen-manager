@@ -1,9 +1,13 @@
 # Merge Connections Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Use the dongle and the built-in Wi-Fi at the same time. A local proxy spreads new connections across both
-adapters (net-merge's approach), with a Merge switch in the app.
+adapters (net-merge's approach), with a Merge switch in the app. Added 2026-10-23: Ethernet and USB tethering are links too, each
+with an include switch (see "Addition" below).
+
+**Status (2026-10-23):** Tasks 1 to 7 are done and committed, with the addition. Task 8 needs the user: see the manual test checklist at
+the bottom.
 
 **Architecture:** A new `merge.py` keeps a pool of links (adapter key, interface index, IPv4 address). A
 least-active-per-weight scheduler picks a link for each new connection. The socket is bound to that adapter
@@ -49,6 +53,32 @@ for restoring. In `hw.py`, the watchdog leaves both radios on while merge is on.
 5. **The host resolves only to IPv6.** The proxy replies with an error and keeps running (Task 2 test
    `test_dial_ipv6_only_host_errors`).
 
+## Addition: Ethernet and USB tethering (requested 2026-10-23)
+
+"Also include ethernet and usb tethering in unigen and also give options to merge those." Built after Task 5, before Tasks 6 and 7, so
+those two were written for N links. Design: `docs/superpowers/specs/2026-10-20-merge-connections-design.md`, section "Ethernet and USB
+tethering". What it changed, per task:
+- **Links (a new part of Task 2):** `merge.adapters()` reads every adapter with `GetAdaptersAddresses`. `merge.classify()` calls one
+  `ethernet`, `tether` or nothing (virtual adapters, VPNs, loopback, Bluetooth PAN are nothing). `merge.scan_links()` lists every link
+  (`key`, `kind`, `name`, `detail`, `guid`, `index`, `ip`, `up`); `merge.find_links(choices)` gives `{key: (index, ip)}` for those that are
+  up and included. Keys: `unigen`, `builtin`, `ethernet:<guid>`, `tether:<guid>`. The Pool, scheduler, probe, dial and Proxy are unchanged
+  and tested with 3 and 4 links.
+- **Choices (a new part of Task 5):** settings.json `merge_links: {key: bool}` (`hw.load_merge_links`, `hw.save_merge_link`).
+  Defaults: Wi-Fi in, Ethernet in, USB tethering out (mobile data). The watchdog, `set_merge` and `_use` only keep a Wi-Fi radio on when
+  it is included (`hw.merge_includes`).
+- **Traffic sampler:** `Sampler(extra=merge.wired_links)` also counts Ethernet and tethering (`snapshot()` adapters carry `kind`).
+- **Task 6:** `Merger.status()` lists every link (works while stopped, for the card); `Api.merge_status()` adds `single` (merge on, fewer
+  than two links take part); `Api.set_merge_link(key, on)` is new; `Api.set_merge` takes the radio change first, the proxy settings off
+  before merge stops. `sysproxy.keeping_connected()` answers `wcm`.
+- **Task 7:** one row per link on the Merge card, an include switch on each, the tethering note, a chart selector on the Traffic page.
+  The mock has `MOCK_WIRED` and `MOCK_MERGE` and `mockApi._unplug(key)` / `_plug(key)`.
+
+Added to the Review Focus above:
+6. **A virtual adapter must never be merged** (`test_classify`), and USB tethering is out of merge until the user includes it.
+7. **A link disappears** (cable pulled, phone unplugged): the pool drops it on the next refresh (3 s); open connections on it end like any
+   connection on a dead link, new ones use the others (`test_refresh_follows_the_choices_and_the_adapters`).
+8. **Excluding a Wi-Fi radio** must not make the watchdog fight the user (`test_watchdog_does_not_force_an_excluded_radio_on`).
+
 ---
 
 ### Task 1: The link pool and scheduler
@@ -74,7 +104,7 @@ for restoring. In `hw.py`, the watchdog leaves both radios on while merge is on.
     - `observe(key: str, bytes_per_s: float) -> None`
     - `links() -> list[Link]`
 
-- [ ] **Step 1: Write the failing tests** in `tests/test_merge.py`:
+- [x] **Step 1: Write the failing tests** in `tests/test_merge.py`:
   - `test_pick_least_active`: links a and b, both `up`. `pick()` returns a, then b, then a again (equal weights, with
     `rand` fixed so the tie-break starts at a). Each pick adds 1 to `active`, and `release` takes 1 off (never below 0).
   - `test_weight_scales_share`: a has weight 2 and b weight 1. Over six picks with none released, a gets 4 and b gets 2.
@@ -86,16 +116,16 @@ for restoring. In `hw.py`, the watchdog leaves both radios on while merge is on.
     active stays 2. A key missing from `found` is dropped, and `pick` with no links returns None.
   - `test_observe_sets_weight_from_peak`: `observe("a", 10e6)` and `observe("b", 5e6)` give weights 1.0 and 0.5. With
     no traffic, each tick multiplies the peak by 0.97, and the weight never falls below 0.05.
-- [ ] **Step 2:** Run `py -3.10 -m pytest tests/test_merge.py -v`. Expected: FAIL (no module `merge`).
-- [ ] **Step 3: Implement** `Link` and `Pool` in `merge.py`, with the constants from Global Constraints.
+- [x] **Step 2:** Run `py -3.10 -m pytest tests/test_merge.py -v`. Expected: FAIL (no module `merge`).
+- [x] **Step 3: Implement** `Link` and `Pool` in `merge.py`, with the constants from Global Constraints.
   - `pick` score: `(active + 1) / max(weight, WEIGHT_FLOOR)`. Lowest wins, with ties broken from a start offset set by
     `rand()`. Tiers: `up` < `unknown` < `down`, and sidelined links (`until > clock()`) are left out unless every link
     is sidelined.
   - `observe`: `peak = max(rate, peak * PEAK_DECAY)`, `weight = max(WEIGHT_FLOOR, peak / max(all peaks))`, all 1.0
     while every peak is 0.
   - Guard everything with one `threading.Lock`: the asyncio thread and the probe thread both call in.
-- [ ] **Step 4:** Run `py -3.10 -m pytest tests/test_merge.py -v`. Expected: PASS.
-- [ ] **Step 5: Commit** `Merge: a pool of links with a least-active, weighted scheduler`.
+- [x] **Step 4:** Run `py -3.10 -m pytest tests/test_merge.py -v`. Expected: PASS.
+- [x] **Step 5: Commit** `Merge: a pool of links with a least-active, weighted scheduler`.
 
 ### Task 2: Finding the links, binding sockets, probing, failover dial
 
@@ -117,7 +147,7 @@ for restoring. In `hw.py`, the watchdog leaves both radios on while merge is on.
   - `async merge.dial(pool: Pool, host: str, port: int) -> tuple[socket.socket, Link]`. Raises `merge.DialError(code)`,
     where code is a SOCKS reply code: 3 = network unreachable, 4 = host unreachable, 5 = refused.
 
-- [ ] **Step 1: Write the failing tests:**
+- [x] **Step 1: Write the failing tests:**
   - `test_find_links_skips_off_and_unaddressed`: `wifi.radios`, `traffic.if_index` and `merge.ipv4_by_index` are
     replaced. An adapter whose radio is off, or that has no IPv4 address, is left out.
   - `test_dial_fails_over_on_unreachable`: `open_on` raises `OSError(10051, ...)` for link a and returns a fake socket
@@ -127,15 +157,15 @@ for restoring. In `hw.py`, the watchdog leaves both radios on while merge is on.
   - `test_dial_ipv6_only_host_errors`: `getaddrinfo` (`AF_INET`) raises `socket.gaierror`, giving `DialError(4)`.
   - In `tests/test_traffic.py`: `test_if_index_reads_row` replaces `_row` and checks `if_index` returns
     `InterfaceIndex`.
-- [ ] **Step 2:** Run them. Expected: FAIL.
-- [ ] **Step 3: Implement.**
+- [x] **Step 2:** Run them. Expected: FAIL.
+- [x] **Step 3: Implement.**
   - `dial` resolves with `loop.getaddrinfo(host, port, family=AF_INET, type=SOCK_STREAM)`. It then tries
     `pool.pick(exclude=tried)` on up to `len(pool.links())` links, running `open_on` through
     `loop.run_in_executor`. A failover error (from Global Constraints) leads to `pool.sideline`,
     `pool.release(link)` and the next link. Any other `OSError` leads to `release` and `DialError(5)`.
   - On success it sets `link.opened += 1` and returns the socket set non-blocking.
-- [ ] **Step 4:** Run `py -3.10 -m pytest tests/test_merge.py tests/test_traffic.py -v`. Expected: PASS.
-- [ ] **Step 5: Commit** `Merge: find both Wi-Fi links and dial out of one, failing over to the other`.
+- [x] **Step 4:** Run `py -3.10 -m pytest tests/test_merge.py tests/test_traffic.py -v`. Expected: PASS.
+- [x] **Step 5: Commit** `Merge: find both Wi-Fi links and dial out of one, failing over to the other`.
 
 ### Task 3: The proxy server (SOCKS5, HTTP CONNECT, plain HTTP, PAC)
 
@@ -151,7 +181,7 @@ for restoring. In `hw.py`, the watchdog leaves both radios on while merge is on.
   - `pac() -> str`
   - `bytes: dict[str, list[int]]`: per link key, `[down, up]`, cumulative.
 
-- [ ] **Step 1: Write the failing tests.** They use a real asyncio echo server on 127.0.0.1, with `merge.open_on`
+- [x] **Step 1: Write the failing tests.** They use a real asyncio echo server on 127.0.0.1, with `merge.open_on`
   replaced by a plain `socket.create_connection` and a pool with one link ip `127.0.0.1`.
   - `test_socks5_connect_echo`: greeting `05 01 00` gets `05 00`. CONNECT to an IPv4 address and to a domain name both
     reply `05 00 …`, then the bytes echo back.
@@ -166,15 +196,15 @@ for restoring. In `hw.py`, the watchdog leaves both radios on while merge is on.
     A half-close (client `write_eof`) still lets the server's reply through before `active` drops to 0.
   - `test_counts_bytes_per_link`: after echoing 1000 bytes, `proxy.bytes["a"] == [1000, 1000]`.
   - `test_port_busy_falls_back`: with 18780 held by another socket, `start()` returns a different port.
-- [ ] **Step 2:** Run `py -3.10 -m pytest tests/test_merge_proxy.py -v`. Expected: FAIL.
-- [ ] **Step 3: Implement** the handler with `asyncio.start_server` on 127.0.0.1.
+- [x] **Step 2:** Run `py -3.10 -m pytest tests/test_merge_proxy.py -v`. Expected: FAIL.
+- [x] **Step 3: Implement** the handler with `asyncio.start_server` on 127.0.0.1.
   - Peek the first byte: `0x05` means SOCKS5 (CONNECT only, no auth, other commands get reply `07`). Anything else is
     HTTP: read headers up to 64 KiB.
   - HTTP: `CONNECT` tunnels. `GET /proxy.pac` with a relative path returns the PAC. An absolute URI is forwarded with
     the request line rewritten to origin form, `Proxy-Connection` dropped and `Connection: close` forced.
   - Relay: two pumps with `write_eof` passed on. `pool.release(link)` runs in one `finally`.
-- [ ] **Step 4:** Run `py -3.10 -m pytest tests/test_merge_proxy.py -v`. Expected: PASS.
-- [ ] **Step 5: Commit** `Merge: a local SOCKS5 and HTTP proxy that spreads connections over the links`.
+- [x] **Step 4:** Run `py -3.10 -m pytest tests/test_merge_proxy.py -v`. Expected: PASS.
+- [x] **Step 5: Commit** `Merge: a local SOCKS5 and HTTP proxy that spreads connections over the links`.
 
 ### Task 4: System proxy and the keep-both-connected policy, restorable
 
@@ -198,7 +228,7 @@ for restoring. In `hw.py`, the watchdog leaves both radios on while merge is on.
     - HKCU `Software\Microsoft\Windows\CurrentVersion\Internet Settings`, value `AutoConfigURL`
     - HKLM `SOFTWARE\Policies\Microsoft\Windows\WcmSvc\GroupPolicy`, value `fMinimizeConnections`
 
-- [ ] **Step 1: Write the failing tests** with a dict-backed fake `reg`:
+- [x] **Step 1: Write the failing tests** with a dict-backed fake `reg`:
   - `test_apply_then_restore_absent_values`: nothing set → after `apply`, both values are set. After `restore`, both
     are deleted and `"merge_saved"` is gone.
   - `test_restore_puts_back_old_pac`: an existing `AutoConfigURL` `"http://corp/pac"` is back after `restore`.
@@ -208,10 +238,10 @@ for restoring. In `hw.py`, the watchdog leaves both radios on while merge is on.
     changes nothing.
   - `test_other_settings_kept`: `"wifi"` and `"traffic_unit"` survive both `apply` and `restore` (use
     `hw.save_choice`-style merge writes).
-- [ ] **Step 2:** Run them. Expected: FAIL.
-- [ ] **Step 3: Implement** `sysproxy.py`.
-- [ ] **Step 4:** Run `py -3.10 -m pytest tests/test_sysproxy.py -v`. Expected: PASS.
-- [ ] **Step 5: Commit** `Merge: point Windows at the proxy and keep both adapters connected, restorably`.
+- [x] **Step 2:** Run them. Expected: FAIL.
+- [x] **Step 3: Implement** `sysproxy.py`.
+- [x] **Step 4:** Run `py -3.10 -m pytest tests/test_sysproxy.py -v`. Expected: PASS.
+- [x] **Step 5: Commit** `Merge: point Windows at the proxy and keep both adapters connected, restorably`.
 
 ### Task 5: The watchdog keeps both radios on while merging
 
@@ -228,7 +258,7 @@ for restoring. In `hw.py`, the watchdog leaves both radios on while merge is on.
     - Off: it calls `wifi_off(other, dev)`.
     - Both run through `_bounded(..., BT_STUCK)`. A failure raises `HwError("Couldn't turn the {name} on/off.")`.
 
-- [ ] **Step 1: Write the failing tests:**
+- [x] **Step 1: Write the failing tests:**
   - `test_watchdog_leaves_both_on_when_merging`: choice `unigen`, merge true, both Wi-Fi `ok`. `step()` doesn't call
     `wifi_off` and doesn't switch.
   - `test_watchdog_turns_other_on_when_merging`: merge true, built-in Wi-Fi radio off → `wifi_on("builtin", …)`
@@ -237,13 +267,13 @@ for restoring. In `hw.py`, the watchdog leaves both radios on while merge is on.
   - `test_unplug_while_merging_falls_back`: merge true, dongle absent → the existing built-in fallback runs and the
     user is notified once.
   - `test_set_merge_busy`: with `_lock` held, `set_merge(True, path=…)` raises `Busy`.
-- [ ] **Step 2:** Run `py -3.10 -m pytest tests/test_hw.py -v`. Expected: the new tests FAIL and the existing ones pass.
-- [ ] **Step 3: Implement.** In `Follower._step`, read `merge = load_merge(self._path)`.
+- [x] **Step 2:** Run `py -3.10 -m pytest tests/test_hw.py -v`. Expected: the new tests FAIL and the existing ones pass.
+- [x] **Step 3: Implement.** In `Follower._step`, read `merge = load_merge(self._path)`.
   - The first-start switch and the both-on `wifi_off` branch only run when `not merge`.
   - When `merge` is on, the dongle is present and the other adapter's Wi-Fi is `disabled` (radio off), call
     `wifi_on(key, other["wifi"])`.
-- [ ] **Step 4:** Run `py -3.10 -m pytest -q`. Expected: everything passes.
-- [ ] **Step 5: Commit** `Merge: the watchdog keeps both Wi-Fi radios on while merging`.
+- [x] **Step 4:** Run `py -3.10 -m pytest -q`. Expected: everything passes.
+- [x] **Step 5: Commit** `Merge: the watchdog keeps both Wi-Fi radios on while merging`.
 
 ### Task 6: Wiring: the Merger runner, api and app
 
@@ -274,17 +304,17 @@ for restoring. In `hw.py`, the watchdog leaves both radios on while merge is on.
     - In `after_start`: if `hw.load_merge` → `merger.start()` + `sysproxy.apply`.
     - In `quit_app`: `sysproxy.restore` + `merger.stop()`. The `"merge"` setting stays, so the next start resumes.
 
-- [ ] **Step 1: Write the failing tests:**
+- [x] **Step 1: Write the failing tests:**
   - `test_merger_status_after_refresh`: `find_links` gives two links and `rate` gives a 4e6 / 2e6 down rate. After one
     refresh, both links appear and their weights are 1.0 and 0.5.
   - `test_set_merge_on_applies_proxy_and_off_restores`: `hw.set_merge`, `sysproxy.apply/restore` and `Merger` are
     replaced. The call order is right and the PAC URL carries the merger's port.
   - `test_set_merge_needs_admin`: without admin, it fails with the admin message and nothing is called.
   - `test_merge_status_same_network`: both adapters are connected to "Home" → `same_network == "Home"`.
-- [ ] **Step 2:** Run them. Expected: FAIL.
-- [ ] **Step 3: Implement** as above. `Api.__init__` takes `merger=None` (default `merge.Merger(rate=sampler.rate)`).
-- [ ] **Step 4:** Run `py -3.10 -m pytest -q`. Expected: everything passes.
-- [ ] **Step 5: Commit** `Merge: the Merge switch turns the proxy and system settings on and off`.
+- [x] **Step 2:** Run them. Expected: FAIL.
+- [x] **Step 3: Implement** as above. `Api.__init__` takes `merger=None` (default `merge.Merger(rate=sampler.rate)`).
+- [x] **Step 4:** Run `py -3.10 -m pytest -q`. Expected: everything passes.
+- [x] **Step 5: Commit** `Merge: the Merge switch turns the proxy and system settings on and off`.
 
 ### Task 7: The Merge card and the widget toggle
 
@@ -297,9 +327,9 @@ for restoring. In `hw.py`, the watchdog leaves both radios on while merge is on.
 **Interfaces:**
 - Consumes: `merge_status()`, `set_merge(on)`, and the `window.onMerge` push (Task 6).
 
-- [ ] **Step 1:** Add the mock calls, plus a frontend test that the card renders two link rows from the mock and that
+- [x] **Step 1:** Add the mock calls, plus a frontend test that the card renders two link rows from the mock and that
   the toggle calls `set_merge(true)`. Run it: FAIL.
-- [ ] **Step 2: Build the card** in the app's existing brutalist style (same switch component as Bluetooth power).
+- [x] **Step 2: Build the card** in the app's existing brutalist style (same switch component as Bluetooth power).
   - The switch is labelled **Merge connections**.
   - One row per adapter: a state dot (up green, checking grey, down red), its share of open connections, and its live
     down/up rate (reuse `fmtRate`).
@@ -309,9 +339,9 @@ for restoring. In `hw.py`, the watchdog leaves both radios on while merge is on.
     go faster than one adapter. Games and Windows Update aren't merged."
   - Without admin, the switch is disabled with the existing admin hint.
   - The widget gets the same switch, plus a "Merged" badge when on.
-- [ ] **Step 3:** Run `py -3.10 -m pytest -q`. Expected: everything passes. Check the mock in a browser (Playwright
+- [x] **Step 3:** Run `py -3.10 -m pytest -q`. Expected: everything passes. Check the mock in a browser (Playwright
   screenshot) at the widget's width.
-- [ ] **Step 4: Commit** `Merge: a Merge card on the Traffic page and a switch in the widget`.
+- [x] **Step 4: Commit** `Merge: a Merge card on the Traffic page and a switch in the widget`.
 
 ### Task 8: Hardware check, README, release (needs the user's go-ahead)
 
@@ -331,3 +361,45 @@ for restoring. In `hw.py`, the watchdog leaves both radios on while merge is on.
 - [ ] **Release:** `py -3.10 build_exe.py`, then an annotated tag, then `gh release create` with
   `dist\UnigenManager.exe`, then bump `version.py`. Install to `Desktop\Temp` with the elevated script, as in earlier
   releases.
+
+---
+
+## Manual test checklist (for the user, before Task 8's release)
+
+Nothing below has been run on hardware. Run it from the source (`py -3.10 UnigenManager.pyw`, accept the admin prompt), not an installed
+build. Keep Task Manager's Performance tab or the Traffic page open to see each link's rate.
+
+**1. Merge with both Wi-Fi radios**
+- [ ] Dongle on home Wi-Fi, the built-in card on a phone hotspot (two different networks). Traffic page, Merge connections: both Wi-Fi rows
+  show Connected. Turn the switch on: both go "Checking…" then "Working" within about 15 s.
+- [ ] Same network on both: the note "Both adapters are on <name>: little speed gain" shows.
+- [ ] Open a browser, load a few sites. Run a parallel download (Steam, or `aria2c -x8`): both rows show a live rate on the Traffic page.
+- [ ] After 2 minutes idle both rows are still Working (the "keep connected" policy). `reg query "HKLM\SOFTWARE\Policies\Microsoft\Windows\WcmSvc\GroupPolicy" /v fMinimizeConnections` says 0 while merging.
+- [ ] Widget (tray icon): the Merge connections switch matches the app's, and shows "Merged" when on. Turn it off there: the app follows.
+
+**2. Add Ethernet**
+- [ ] Plug in a cable. A third row "Ethernet" appears within a few seconds, with its rate, included by default. Downloads now use it too.
+- [ ] Pull the cable: the row disappears within a few seconds and pages still load (through the Wi-Fi links).
+- [ ] Check no virtual adapter shows up (Hyper-V, WSL, VirtualBox, VMware, a VPN or the Bluetooth PAN), if this PC has any.
+
+**3. Add USB tethering from a phone**
+- [ ] Android: phone Settings, Hotspot and tethering, USB tethering on, cable to the PC. A row "USB tethering (phone)" appears, **not included**,
+  with "uses your phone's mobile data". Windows' adapter name should contain "Remote NDIS" (or "NCM"). If it shows up as "Ethernet"
+  instead, note the adapter's description (Device Manager, Network adapters) so the detection list can learn it.
+- [ ] iPhone (if you have one): Personal Hotspot on, cable, "Trust this computer". Same check; the adapter is "Apple Mobile Device Ethernet".
+- [ ] Switch the tethering row on while merging: it goes "Working" and the phone's data counter starts to move. Switch it off: it goes to "Not merged".
+- [ ] Unplug the phone: the row disappears and nothing else breaks.
+
+**4. Exclude a link**
+- [ ] Switch a link off while merging: "Not merged"; its rate falls to nothing and the others carry on. The choice is still there after
+  restarting the app.
+- [ ] Switch the built-in Wi-Fi row off (merge on): within about 5 s its radio goes off, as with merge off. Switch it on: the radio comes back.
+- [ ] With only one link left included, the card says "Only one connection takes part, so there is nothing to merge yet", and the browser still works.
+
+**5. Crash and restore of the system proxy**
+- [ ] Before turning merge on, note the proxy settings (Settings, Network, Proxy: "Use setup script" and its address) and the policy value above.
+- [ ] Merge on: Settings, Network, Proxy shows "Use setup script" with `http://127.0.0.1:<port>/proxy.pac`.
+- [ ] Kill the app from Task Manager while merging. The browser still loads pages (the script can't be fetched, so it goes direct).
+- [ ] Start the app again: the proxy script setting is back to what it was before (or merge resumes, as merge was left on); turn merge off and quit:
+  both the script setting and the policy are back to what you noted.
+- [ ] Quit from the tray menu while merging: the same, at once.

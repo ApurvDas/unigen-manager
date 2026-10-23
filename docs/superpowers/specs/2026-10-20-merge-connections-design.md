@@ -1,4 +1,4 @@
-# Merge connections: use both Wi-Fi adapters at once
+# Merge connections: use both Wi-Fi adapters at once (and Ethernet, and USB tethering)
 
 **Source:** the user wants net-merge's capabilities (github.com/rohit267/net-merge, MIT, Go, v0.3.3 on 2026-10-20) in Unigen
 Manager. The user asked to plan straight from the research, without the design Q&A, so every choice below that isn't
@@ -43,7 +43,52 @@ Manager. The user asked to plan straight from the research, without the design Q
 6. **Radio changes keep the one shared lock** (`hw._lock`). Turning merge on or off waits like a switch does.
 7. **Same network on both:** the Merge card says "Both adapters are on <SSID>: little speed gain."
 
+## Ethernet and USB tethering (added 2026-10-23)
+The user asked: "also include ethernet and usb tethering in unigen and also give options to merge those". The pool, scheduler, probing
+and failover never knew they were dealing with Wi-Fi, so a link is now **any usable internet link**, not only a Wi-Fi radio. These
+are the coordinator's calls; the user reviews them with the rest.
+
+**Which links exist** (`merge.scan_links()`, `merge.find_links()`):
+- **Wi-Fi:** the dongle and the built-in radio, keys `unigen` and `builtin`, as before. Both are always listed (a radio that is off shows
+  as not connected, so the user can include it again), and used when on and addressed.
+- **Ethernet:** an adapter of IfType 6 that is up and has an IPv4 address (not link-local), and is not virtual. A USB network card is
+  Ethernet.
+- **USB tethering:** the same kind of adapter, told apart by its description: Remote NDIS / RNDIS (Android), NCM, Apple Mobile Device
+  Ethernet, iPhone USB. It is listed only while it is up with an address.
+- **Never listed:** Hyper-V `vEthernet`, VirtualBox, VMware, WSL, TAP/TUN/VPN (WireGuard, OpenVPN, Wintun), loopback, Bluetooth PAN,
+  PPP/WAN miniports, debug adapters. Anything of another IfType is ignored too.
+- **Reading them:** `GetAdaptersAddresses` through ctypes (read only), next to the existing iphlpapi calls. A struct-layout test pins the
+  field offsets, as `MIB_IF_ROW2` has.
+- **Keys:** `ethernet:<guid>` and `tether:<guid>`, so a choice survives a replug. Each link has a name ("Ethernet", "USB tethering
+  (phone)"; with two of a kind the adapter's own name is added), a kind (`wifi`, `ethernet`, `tether`) and a detail (the description).
+
+**Which links take part** (settings.json `merge_links: {key: bool}`):
+- Defaults when there is no saved choice: Wi-Fi **in**, Ethernet **in**, USB tethering **out** (it uses the phone's mobile data).
+- The proxy only dials out of links that are included, up, and have an address. With fewer than two such links merge still runs through
+  the one it has and the Merge card says so (`single`); it never fails over that.
+- The watchdog only manages Wi-Fi radios. Ethernet and tethering need no radio handling. A Wi-Fi radio that is left out is not forced on
+  (merge on) and is turned off like with merge off; `set_merge` and the switch-adapter move (`_use`) follow the same rule. Taking a Wi-Fi
+  radio in or out is a saved choice only: the watchdog's next pass (5 s) does the radio.
+
+**Surfaces:**
+- `Api.merge_status()` lists every link: kind, name, up/down, IPv4, live rate, included, state (`up`, `checking`, `down`, `off`).
+  `Api.set_merge_link(key, on)` saves one choice (admin is not needed: it is a setting; the radio part is the watchdog's).
+- The Merge card (Traffic page) has a row for every link with its kind icon and label, state, live rate and an include switch (the same
+  switch as Bluetooth power). The tethering row says "uses your phone's mobile data".
+- The Traffic page samples Ethernet and tethering too (`Sampler(extra=merge.wired_links)`): they are in Today, and a chart selector
+  (Dongle | Built-in | Ethernet | USB phone) appears when there is more than the two Wi-Fi adapters.
+- The widget has only the on/off switch and a "Merged" badge. The per-link choices live in the app.
+
+**Limits the user should know:**
+- Tethering shares the phone's mobile data plan: merging it can use a lot of data, which is why it starts out of merge.
+- Ethernet plus Wi-Fi on the same router share one internet line: little gain, like two Wi-Fi adapters on one network. The "same network"
+  note only compares the two Wi-Fi adapters; it does not know that an Ethernet cable goes to the same router.
+- Detection of a tethered phone goes by the adapter's description. A phone whose driver names its adapter differently shows up as plain
+  Ethernet (still mergeable, just not marked as tethering and not defaulted out).
+
 ## Must not break
 - With merge **off**, everything behaves exactly as today: the watchdog still turns the second radio off.
 - Unplugging the dongle with merge on falls back to the built-in adapter, and the proxy keeps working on one link.
 - Quitting or crashing never leaves the PC without internet.
+- A link going away (a cable pulled, a phone unplugged) never breaks a connection that is open on another link, and new connections use
+  whatever links are left.
