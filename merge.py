@@ -1,11 +1,14 @@
-"""Merge connections: new connections are spread across the Wi-Fi adapters that have an address. This is the pool of links
-and the scheduler that picks one for each new connection (the dialer and the proxy build on it)."""
-import asyncio, ctypes, random, socket, struct, threading, time
+"""Merge connections: new connections are spread across the links that have an address (the Wi-Fi adapters, Ethernet and
+a phone tethered over USB). This is the pool of links and the scheduler that picks one for each new connection (the dialer
+and the proxy build on it)."""
+import asyncio, ctypes, logging, random, re, socket, struct, threading, time
 from urllib.parse import urlsplit
 from ctypes import wintypes
 from dataclasses import dataclass
 
-import traffic, wifi
+import hw, traffic, wifi
+
+log = logging.getLogger("unigen")
 
 COOLDOWN = 15.0     # seconds a link that just failed to connect is left out
 PEAK_DECAY = 0.97   # a link's remembered peak rate shrinks by this each tick without traffic
@@ -130,19 +133,120 @@ def ipv4_by_index():
     return out
 
 
-def find_links():
-    """{key: (interface index, IPv4)} for each Wi-Fi radio that is on and has an address. Raises wifi.WifiError / OSError."""
-    addrs, found = ipv4_by_index(), {}
+class _ADDRESS(ctypes.Structure):  # IP_ADAPTER_UNICAST_ADDRESS_LH, up to the socket address
+    _fields_ = [("Length", wintypes.ULONG), ("Flags", wintypes.DWORD), ("Next", ctypes.c_void_p), ("Sockaddr", ctypes.c_void_p), ("SockaddrLength", ctypes.c_int)]
+
+
+class _ADAPTER(ctypes.Structure):  # IP_ADAPTER_ADDRESSES_LH, up to Luid (the rest of the struct is never read)
+    _fields_ = [("Length", wintypes.ULONG), ("IfIndex", wintypes.DWORD), ("Next", ctypes.c_void_p), ("AdapterName", ctypes.c_char_p),
+                ("FirstUnicastAddress", ctypes.c_void_p), ("FirstAnycastAddress", ctypes.c_void_p), ("FirstMulticastAddress", ctypes.c_void_p),
+                ("FirstDnsServerAddress", ctypes.c_void_p), ("DnsSuffix", ctypes.c_wchar_p), ("Description", ctypes.c_wchar_p),
+                ("FriendlyName", ctypes.c_wchar_p), ("PhysicalAddress", ctypes.c_ubyte * 8), ("PhysicalAddressLength", wintypes.ULONG),
+                ("Flags", wintypes.ULONG), ("Mtu", wintypes.ULONG), ("IfType", wintypes.DWORD), ("OperStatus", ctypes.c_int),
+                ("Ipv6IfIndex", wintypes.DWORD), ("ZoneIndices", wintypes.ULONG * 16), ("FirstPrefix", ctypes.c_void_p),
+                ("TransmitLinkSpeed", ctypes.c_uint64), ("ReceiveLinkSpeed", ctypes.c_uint64), ("FirstWinsServerAddress", ctypes.c_void_p),
+                ("FirstGatewayAddress", ctypes.c_void_p), ("Ipv4Metric", wintypes.ULONG), ("Ipv6Metric", wintypes.ULONG), ("Luid", ctypes.c_uint64)]
+
+
+def _usable(ip):
+    return ip != "0.0.0.0" and not ip.startswith(("127.", "169.254."))
+
+
+def adapters():
+    """[{guid, index, type, up, desc, name, ip}] for every network adapter Windows lists (GetAdaptersAddresses, read only).
+    ip is its first usable IPv4 address or None; up is Windows' operational status. Raises OSError."""
+    ip = ctypes.WinDLL("iphlpapi")
+    ip.GetAdaptersAddresses.argtypes = [wintypes.ULONG, wintypes.ULONG, ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(wintypes.ULONG)]
+    flags = 0x2 | 0x4 | 0x8  # skip anycast, multicast and DNS servers: only the unicast addresses are read
+    size = wintypes.ULONG(16384)
+    for _ in range(4):  # the table can grow between the size call and the real one
+        buf = ctypes.create_string_buffer(size.value)
+        rc = ip.GetAdaptersAddresses(0, flags, None, buf, ctypes.byref(size))
+        if rc != 111:  # ERROR_BUFFER_OVERFLOW: size now says how much it needs
+            break
+    if rc:
+        raise OSError(f"GetAdaptersAddresses failed (error {rc})")
+    out, p = [], ctypes.addressof(buf)
+    while p:
+        a = _ADAPTER.from_address(p)
+        addr, found = a.FirstUnicastAddress, None
+        while addr and not found:
+            u = _ADDRESS.from_address(addr)
+            if u.Sockaddr and u.SockaddrLength >= 8 and struct.unpack("<H", ctypes.string_at(u.Sockaddr, 2))[0] == socket.AF_INET:
+                cand = socket.inet_ntoa(ctypes.string_at(u.Sockaddr + 4, 4))
+                found = cand if _usable(cand) else None
+            addr = u.Next
+        out.append({"guid": (a.AdapterName or b"").decode("ascii", "replace").strip("{}").lower(), "index": a.IfIndex, "type": a.IfType,
+                    "up": a.OperStatus == 1, "desc": a.Description or "", "name": a.FriendlyName or "", "ip": found})
+        p = a.Next
+    return out
+
+
+# Adapters that are not a way onto the internet by themselves: virtual switches, VPNs, loopback, Bluetooth PAN, debug adapters
+_VIRTUAL = re.compile(r"hyper-v|vethernet|virtualbox|vmware|vmnet|wsl|virtual|loopback|pseudo|\btap\b|tap-windows|\btun\b|wintun|wireguard|"
+                      r"openvpn|\bvpn\b|tailscale|zerotier|nordlynx|bluetooth|npcap|wan miniport|kernel debug", re.I)
+# A phone shared over USB: Android shows up as Remote NDIS (RNDIS) or NCM, an iPhone as Apple Mobile Device Ethernet
+_TETHER = re.compile(r"remote ndis|rndis|\bncm\b|apple mobile device|iphone", re.I)
+
+
+def classify(a):
+    """"ethernet", "tether" or None for an adapter as adapters() lists it. Only IfType 6 (Ethernet) counts: Wi-Fi comes from
+    the WLAN API, and tunnels, PPP, loopback and the like have other types."""
+    if a["type"] != 6:
+        return None
+    text = f"{a['desc']} {a['name']}"
+    if _VIRTUAL.search(text):
+        return None
+    return "tether" if _TETHER.search(text) else "ethernet"
+
+
+_KIND_NAME = {"ethernet": "Ethernet", "tether": "USB tethering (phone)"}
+
+
+def wired():
+    """The Ethernet and USB-tethering links that are up with an IPv4 address: [{key, kind, name, detail, guid, index, ip, up}],
+    keyed per adapter (ethernet:<guid>, tether:<guid>) so a choice survives a replug. Raises OSError."""
+    rows = [(classify(a), a) for a in adapters()]
+    rows = [(k, a) for k, a in rows if k and a["up"] and a["ip"]]
+    out = []
+    for kind, a in rows:
+        many = sum(k == kind for k, _ in rows) > 1  # two of a kind: tell them apart by Windows' name for the adapter
+        out.append({"key": f"{kind}:{a['guid'].lower()}", "kind": kind, "name": f"{_KIND_NAME[kind]} · {a['name']}" if many else _KIND_NAME[kind],
+                    "detail": a["desc"], "guid": a["guid"], "index": a["index"], "ip": a["ip"], "up": True})
+    return out
+
+
+def wired_links():
+    """The same links for the traffic sampler, in the shape of wifi.radios(): {key: {"guid", "on", "name", "kind"}}."""
+    return {l["key"]: {"guid": l["guid"], "on": True, "name": l["name"], "kind": l["kind"]} for l in wired()}
+
+
+def scan_links():
+    """Every link merge could use, in the order the page lists them: [{key, kind, name, detail, guid, index, ip, up}].
+    Both Wi-Fi radios are always listed (up when on and addressed, so one that is off can be included again), Ethernet and
+    USB tethering only while they are up. Raises wifi.WifiError / OSError."""
+    addrs, links = ipv4_by_index(), []
     for key, r in wifi.radios().items():
-        if not r["on"]:
-            continue
         try:
             i = traffic.if_index(r["guid"])
         except OSError:
-            continue
-        if i in addrs:
-            found[key] = (i, addrs[i])
-    return found
+            i = None
+        ip = addrs.get(i)
+        links.append({"key": key, "kind": "wifi", "name": wifi.ADAPTER_NAMES.get(key, key), "detail": "", "guid": r["guid"], "index": i,
+                      "ip": ip, "up": bool(r["on"] and ip)})
+    return links + wired()
+
+
+def included(link, choices):
+    """Whether the user has this link in merge: their saved choice, else the default for its kind (tethering is off)."""
+    return choices.get(link["key"], hw.MERGE_DEFAULT[link["kind"]])
+
+
+def find_links(choices=None):
+    """{key: (interface index, IPv4)} for each link that is up and taking part. choices is hw.load_merge_links().
+    Raises wifi.WifiError / OSError."""
+    choices = choices or {}
+    return {l["key"]: (l["index"], l["ip"]) for l in scan_links() if l["up"] and included(l, choices)}
 
 
 def open_on(link, addr, timeout=10.0):

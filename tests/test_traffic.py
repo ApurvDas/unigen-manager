@@ -222,3 +222,47 @@ def test_if_index_reads_row(monkeypatch):
     row.InterfaceIndex = 17
     monkeypatch.setattr(traffic, "_row", lambda guid: row)
     assert traffic.if_index("{x}") == 17
+
+
+# ---- Ethernet and USB tethering are sampled too ----
+ETH = {"guid": "33333333-3333-3333-3333-333333333333", "on": True, "name": "Ethernet", "kind": "ethernet"}
+
+
+def test_extra_links_are_sampled_and_named(monkeypatch, tmp_path):
+    rig = Rig(monkeypatch, tmp_path)
+    counts, extra, plain = {ETH["guid"]: (0, 0)}, {"ethernet:3333": ETH}, traffic.counters
+    monkeypatch.setattr(traffic, "counters", lambda g: counts[g] if g in counts else plain(g))
+    s = traffic.Sampler(rig.path, extra=lambda: extra)
+    rig.t += 1
+    s.tick()
+    counts[ETH["guid"]] = (4000, 1000)
+    rig.t += 2
+    s.tick()
+    snap = {a["key"]: a for a in s.snapshot()["adapters"]}
+    assert list(snap) == ["unigen", "builtin", "ethernet:3333"]  # Wi-Fi first, then the rest
+    assert (snap["ethernet:3333"]["name"], snap["ethernet:3333"]["kind"], snap["ethernet:3333"]["down"], snap["ethernet:3333"]["up"]) == ("Ethernet", "ethernet", 2000, 500)
+    assert snap["unigen"]["kind"] == "wifi" and snap["unigen"]["name"] == "Unigen dongle"
+    assert s.rate("ethernet:3333") == (2000, 500) and s.radios()["ethernet:3333"] is True
+    assert s.snapshot()["today"]["ethernet:3333"] == {"down": 4000, "up": 1000}
+    extra.clear()  # the cable is pulled; the map is read again after MAP_EVERY
+    rig.t += 11
+    s.tick()
+    assert [a["key"] for a in s.snapshot()["adapters"]] == ["unigen", "builtin"]
+
+
+def test_a_failing_extra_list_keeps_the_last_extra_links(monkeypatch, tmp_path):
+    rig = Rig(monkeypatch, tmp_path)
+    counts, plain = {ETH["guid"]: (0, 0)}, traffic.counters
+    monkeypatch.setattr(traffic, "counters", lambda g: counts[g] if g in counts else plain(g))
+    fail = []
+    def extra():
+        if fail:
+            raise OSError("GetAdaptersAddresses failed")
+        return {"ethernet:3333": ETH}
+    s = traffic.Sampler(rig.path, extra=extra)
+    rig.t += 1
+    s.tick()
+    fail.append(1)
+    rig.t += 11
+    s.tick()
+    assert "ethernet:3333" in s.radios() and "unigen" in s.radios()

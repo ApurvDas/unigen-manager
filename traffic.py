@@ -1,4 +1,4 @@
-"""Live Wi-Fi traffic: Windows' own byte counters per adapter (iphlpapi, milliseconds, no netsh), sampled once a second.
+"""Live traffic of the Wi-Fi adapters, Ethernet and a phone tethered over USB: Windows' own byte counters per adapter (iphlpapi, milliseconds, no netsh), sampled once a second.
 The sampler keeps each adapter's rate, the last minute and today's totals (saved per day in traffic.json, 30 days)."""
 import ctypes, datetime, json, logging, os, threading, time, uuid
 from collections import deque
@@ -13,7 +13,7 @@ TICK = 1.0         # seconds between samples
 HISTORY = 60       # samples kept per adapter: the chart's last minute
 KEEP_DAYS = 30     # days of totals kept in traffic.json
 SAVE_EVERY = 30.0  # seconds between writes of traffic.json (and one on exit)
-MAP_EVERY = 10.0   # seconds between re-reads of the Wi-Fi adapter GUIDs, so a dongle plugged or pulled is followed
+MAP_EVERY = 10.0   # seconds between re-reads of the adapter GUIDs, so a dongle or a cable plugged or pulled is followed
 UNITS = ("bytes", "bits")
 _ORDER = ["unigen", "builtin"]
 
@@ -139,10 +139,11 @@ class Sampler:
     """One daemon thread, one tick a second while the app runs (windows open or not), because the tray tooltip and the totals
     need it. Never raises into the app and never calls netsh: wifi.radios() is the WLAN API."""
 
-    def __init__(self, path=None):
-        self._path = Path(path or DATA_DIR / "traffic.json")
+    def __init__(self, path=None, extra=None):
+        """extra: a callable like merge.wired_links, {key: {"guid", "on", "name", "kind"}} for the links beyond Wi-Fi."""
+        self._path, self._extra = Path(path or DATA_DIR / "traffic.json"), extra or (lambda: {})
         self._lock, self._stop, self._thread = threading.Lock(), threading.Event(), None
-        self._map, self._map_at = {}, None   # key -> {"guid", "on"}, and when it was read
+        self._map, self._map_at = {}, None   # key -> {"guid", "on"} (and "name", "kind" beyond Wi-Fi), and when it was read
         self._ad = {}                        # key -> {"prev": (in, out, t) | None, "rate": (down, up) | None, "hist": deque}
         self._days, self._day = _load(self._path), _today()
         self._saved_at, self._dirty, self._failing, self._ticks = _now(), False, False, 0
@@ -152,10 +153,18 @@ class Sampler:
         if self._map_at is not None and now - self._map_at < MAP_EVERY:
             return
         self._map_at = now
+        old = self._map
         try:
-            self._map = {k: {"guid": r["guid"], "on": r["on"]} for k, r in wifi.radios().items()}
+            new = {k: {"guid": r["guid"], "on": r["on"]} for k, r in wifi.radios().items()}
         except (wifi.WifiError, OSError) as e:
             log.debug("traffic: couldn't list the Wi-Fi adapters (%s); keeping the last list", e)
+            new = {k: v for k, v in old.items() if "kind" not in v}
+        try:
+            new.update(self._extra())
+        except (wifi.WifiError, OSError) as e:
+            log.debug("traffic: couldn't list Ethernet and tethering (%s); keeping the last list", e)
+            new.update({k: v for k, v in old.items() if "kind" in v})
+        self._map = new
 
     def tick(self):
         now, day = _now(), _today()
@@ -204,14 +213,14 @@ class Sampler:
             return a["rate"] if a else None
 
     def radios(self):
-        """{key: Wi-Fi radio is on} for every Wi-Fi adapter Windows lists."""
+        """{key: radio is on} for every adapter in the map (a wired link is on while it is up)."""
         with self._lock:
             return {k: v["on"] for k, v in self._map.items()}
 
     def snapshot(self):
         with self._lock:
-            keys = sorted(self._map, key=lambda k: _ORDER.index(k) if k in _ORDER else len(_ORDER))
-            adapters = [{"key": k, "name": wifi.ADAPTER_NAMES.get(k, k),
+            keys = sorted(self._map, key=lambda k: (_ORDER.index(k) if k in _ORDER else len(_ORDER), k))
+            adapters = [{"key": k, "name": self._map[k].get("name") or wifi.ADAPTER_NAMES.get(k, k), "kind": self._map[k].get("kind", "wifi"),
                          "down": None if not self._ad.get(k, {}).get("rate") else round(self._ad[k]["rate"][0]),
                          "up": None if not self._ad.get(k, {}).get("rate") else round(self._ad[k]["rate"][1]),
                          "history": [list(h) for h in self._ad[k]["hist"]] if k in self._ad else []} for k in keys]
