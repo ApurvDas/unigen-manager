@@ -271,6 +271,11 @@ def adapter(guid, desc, name="Ethernet", ip="192.168.0.10", up=True, type_=6, in
     ("VMware Virtual Ethernet Adapter for VMnet8", "VMware Network Adapter VMnet8", 6, None),
     ("TAP-Windows Adapter V9", "Ethernet 11", 6, None),
     ("Wintun Userspace Tunnel", "Wintun", 6, None),
+    ("Cloudflare WARP Interface Tunnel", "CloudflareWARP", 6, None),
+    ("Meta Tunnel", "Meta", 6, None),  # Clash Verge's TUN adapters
+    ("Clash Tunnel", "Clash", 6, None),
+    ("sing-box", "Ethernet 13", 6, None),
+    ("Mihomo", "Mihomo", 6, None),
     ("WireGuard Tunnel", "wg0", 6, None),
     ("OpenVPN Data Channel Offload", "OpenVPN", 6, None),
     ("Bluetooth Device (Personal Area Network)", "Bluetooth Network Connection", 6, None),
@@ -372,7 +377,13 @@ def test_dial_fails_over_through_three_links(monkeypatch, resolve):
 
 
 def test_usable_ipv4():
-    assert [merge._usable(a) for a in ("192.168.1.5", "0.0.0.0", "127.0.0.1", "169.254.7.7", "10.0.0.1")] == [True, False, False, False, True]
+    assert [merge._usable(a) for a in ("192.168.1.5", "0.0.0.0", "127.0.0.1", "169.254.7.7", "10.0.0.1", "198.18.0.1", "198.19.255.1", "198.20.0.1")] == [
+        True, False, False, False, True, False, False, True]  # 198.18.0.0/15 is where TUN VPNs put their fake addresses
+
+
+def test_scan_links_skips_a_wired_adapter_with_a_fake_ip(monkeypatch):
+    wifi_world(monkeypatch, [adapter("tun", "Realtek PCIe GbE", ip="198.18.0.1"), adapter("real", "Realtek PCIe GbE", "Ethernet 2", ip="192.168.0.10", index=21)], radios={})
+    assert [l["key"] for l in merge.scan_links()] == ["ethernet:real"]
 
 
 # ---- the Merger: pool upkeep, probes, status, the proxy thread ----

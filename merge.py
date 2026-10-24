@@ -149,7 +149,7 @@ class _ADAPTER(ctypes.Structure):  # IP_ADAPTER_ADDRESSES_LH, up to Luid (the re
 
 
 def _usable(ip):
-    return ip != "0.0.0.0" and not ip.startswith(("127.", "169.254."))
+    return ip != "0.0.0.0" and not ip.startswith(("127.", "169.254.", "198.18.", "198.19."))  # 198.18.0.0/15: a TUN VPN's fake addresses
 
 
 def adapters():
@@ -184,7 +184,8 @@ def adapters():
 
 # Adapters that are not a way onto the internet by themselves: virtual switches, VPNs, loopback, Bluetooth PAN, debug adapters
 _VIRTUAL = re.compile(r"hyper-v|vethernet|virtualbox|vmware|vmnet|wsl|virtual|loopback|pseudo|\btap\b|tap-windows|\btun\b|wintun|wireguard|"
-                      r"openvpn|\bvpn\b|tailscale|zerotier|nordlynx|bluetooth|npcap|wan miniport|kernel debug", re.I)
+                      r"openvpn|\bvpn\b|tailscale|zerotier|nordlynx|bluetooth|npcap|wan miniport|kernel debug|"
+                      r"tunnel|warp|clash|mihomo|sing-?box", re.I)
 # A phone shared over USB: Android shows up as Remote NDIS (RNDIS) or NCM, an iPhone as Apple Mobile Device Ethernet
 _TETHER = re.compile(r"remote ndis|rndis|\bncm\b|apple mobile device|iphone", re.I)
 
@@ -207,7 +208,7 @@ def wired():
     """The Ethernet and USB-tethering links that are up with an IPv4 address: [{key, kind, name, detail, guid, index, ip, up}],
     keyed per adapter (ethernet:<guid>, tether:<guid>) so a choice survives a replug. Raises OSError."""
     rows = [(classify(a), a) for a in adapters()]
-    rows = [(k, a) for k, a in rows if k and a["up"] and a["ip"]]
+    rows = [(k, a) for k, a in rows if k and a["up"] and a["ip"] and _usable(a["ip"])]
     out = []
     for kind, a in rows:
         many = sum(k == kind for k, _ in rows) > 1  # two of a kind: tell them apart by Windows' name for the adapter
