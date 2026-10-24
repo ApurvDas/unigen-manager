@@ -1,4 +1,4 @@
-import asyncio, socket
+import asyncio, concurrent.futures, socket, threading, time
 
 import pytest
 
@@ -490,3 +490,61 @@ def test_start_survives_a_failing_first_look(monkeypatch):
     monkeypatch.setattr(merge, "scan_links", lambda: (_ for _ in ()).throw(wifi.WifiError("Couldn't list the Wi-Fi adapters.")))
     assert isinstance(r.m.start(), int)  # the next refresh tries again
     r.m.stop()
+
+
+def test_loop_uses_a_64_thread_pool_and_stop_shuts_it_down(monkeypatch):
+    """Each connection's connect and DNS lookup holds a thread while it waits: the default pool is too small for a browser."""
+    r = Rig(monkeypatch, [lk("a", index=1)])
+    r.m.start()
+    ex = r.m._loop._default_executor
+    try:
+        assert isinstance(ex, concurrent.futures.ThreadPoolExecutor) and ex._max_workers == 64 and ex._thread_name_prefix == "merge"
+    finally:
+        r.m.stop()
+    assert ex._shutdown
+
+
+def test_second_start_while_running_makes_no_second_loop(monkeypatch):
+    r = Rig(monkeypatch, [lk("a", index=1)])
+    real = merge.scan_links
+    monkeypatch.setattr(merge, "scan_links", lambda: time.sleep(0.2) or real())  # so the starts overlap
+    threads = lambda: [t for t in threading.enumerate() if t.name == "merge"]
+    results = []
+    ts = [threading.Thread(target=lambda: results.append(r.m.start())) for _ in range(4)]
+    try:
+        [t.start() for t in ts]
+        [t.join(10) for t in ts]
+        assert len(results) == 4 and len(set(results)) == 1 and results[0] == r.m.port
+        assert len(threads()) == 1
+    finally:
+        r.m.stop()
+
+
+def test_stop_during_start_leaves_it_stopped(monkeypatch):
+    r = Rig(monkeypatch, [lk("a", index=1)])
+    inside, go = threading.Event(), threading.Event()
+    real = merge.scan_links
+
+    def slow():
+        inside.set()
+        go.wait(5)
+        return real()
+    monkeypatch.setattr(merge, "scan_links", slow)
+    errs = []
+
+    def starter():
+        try:
+            r.m.start()
+        except OSError as e:
+            errs.append(e)
+    a = threading.Thread(target=starter)
+    a.start()
+    assert inside.wait(5)
+    b = threading.Thread(target=r.m.stop)
+    b.start()
+    while not r.m._stopping:  # stop() has been asked for; start() is still looking at the adapters
+        time.sleep(0.01)
+    go.set()
+    a.join(10), b.join(10)
+    assert r.m.port is None and r.m._thread is None and errs
+    assert not [t for t in threading.enumerate() if t.name == "merge"]

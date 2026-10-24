@@ -1,7 +1,7 @@
 """Merge connections: new connections are spread across the links that have an address (the Wi-Fi adapters, Ethernet and
 a phone tethered over USB). This is the pool of links and the scheduler that picks one for each new connection (the dialer
 and the proxy build on it)."""
-import asyncio, ctypes, ipaddress, logging, random, re, socket, struct, threading, time
+import asyncio, concurrent.futures, ctypes, ipaddress, logging, random, re, socket, struct, threading, time
 from urllib.parse import urlsplit
 from ctypes import wintypes
 from dataclasses import dataclass
@@ -484,6 +484,7 @@ class Merger:
         self._rate, self._choices, self._clock = rate, choices, clock
         self.pool, self.port, self._links = Pool(), None, []
         self._thread = self._loop = self._error = None
+        self._lock, self._stopping = threading.RLock(), False  # start/stop in turn; stop() flags itself first so a start in progress gives up
         self._due, self._busy, self._failing = {}, set(), False  # next probe time per link, links being probed, last refresh failed
 
     def refresh(self):
@@ -532,40 +533,52 @@ class Merger:
 
     def start(self):
         """Starts the proxy (and the upkeep) if it is not running. Returns the port. Raises OSError when it can't listen."""
-        if self._thread:
+        with self._lock:
+            if self._thread:
+                return self.port
+            self._stopping = False
+            self.pool, self._due, self._busy, self._error = Pool(), {}, set(), None
+            try:
+                self.refresh()  # the first look now, so the first connection already has its links
+            except (wifi.WifiError, OSError) as e:
+                log.warning("merge: couldn't list the links at start (%s); trying again in %.0f s", e, REFRESH)
+            if self._stopping:
+                raise OSError("The merge proxy was stopped while it started.")
+            ready, self._loop = threading.Event(), asyncio.new_event_loop()
+            self._thread = threading.Thread(target=self._run, args=(self._loop, ready), daemon=True, name="merge")
+            self._thread.start()
+            ready.wait(10)
+            if self.port is None or self._stopping:
+                self.stop()
+                raise self._error or OSError("The merge proxy didn't start.")
             return self.port
-        self.pool, self._due, self._busy, self._error = Pool(), {}, set(), None
-        try:
-            self.refresh()  # the first look now, so the first connection already has its links
-        except (wifi.WifiError, OSError) as e:
-            log.warning("merge: couldn't list the links at start (%s); trying again in %.0f s", e, REFRESH)
-        ready, self._loop = threading.Event(), asyncio.new_event_loop()
-        self._thread = threading.Thread(target=self._run, args=(self._loop, ready), daemon=True, name="merge")
-        self._thread.start()
-        ready.wait(10)
-        if self.port is None:
-            self.stop()
-            raise self._error or OSError("The merge proxy didn't start.")
-        return self.port
 
     def _run(self, loop, ready):
         asyncio.set_event_loop(loop)
+        # every connection holds a thread while it looks up and connects: the default pool (a few threads) would queue a browser's burst
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=64, thread_name_prefix="merge")
+        loop.set_default_executor(pool)
         proxy = Proxy(self.pool)
         try:
-            self.port = loop.run_until_complete(proxy.start())
+            port = loop.run_until_complete(proxy.start())
         except Exception as e:  # not even a free port
             self._error = e
+            pool.shutdown(wait=False, cancel_futures=True)
             loop.close()
             ready.set()
             return
-        ready.set()
         task = loop.create_task(self._keep(loop))
         try:
-            loop.run_forever()
+            if not self._stopping:  # stop() came while the port was being opened: it must not end up running
+                self.port = port
+                ready.set()
+                loop.run_forever()
         finally:
+            ready.set()
             task.cancel()
             loop.run_until_complete(asyncio.gather(task, return_exceptions=True))
             loop.run_until_complete(proxy.stop())
+            pool.shutdown(wait=False, cancel_futures=True)
             loop.close()
 
     async def _keep(self, loop):
@@ -582,8 +595,10 @@ class Merger:
 
     def stop(self):
         """Stops the proxy. Safe to call again."""
-        t, loop = self._thread, self._loop
-        self._thread = self._loop = self.port = None
-        if t and t.is_alive():
-            loop.call_soon_threadsafe(loop.stop)
-            t.join(5)
+        self._stopping = True
+        with self._lock:
+            t, loop = self._thread, self._loop
+            self._thread = self._loop = self.port = None
+            if t and t.is_alive():
+                loop.call_soon_threadsafe(loop.stop)
+                t.join(5)
