@@ -138,6 +138,28 @@ Older versions and checksums are on the [releases page](https://github.com/Apurv
 <tr>
 <td colspan="2" valign="top">
 
+### 🔗 Merge connections: use the dongle, the built-in card, Ethernet and a phone at once
+- **One switch, Merge connections**, on the Traffic page and in the tray widget. While it is on, every new connection your apps open goes out of one of your connections, the least busy and fastest first, so several downloads or a busy browser use all of them together. It works like [net-merge](https://github.com/rohit267/net-merge), rewritten inside the app: no driver, no extra program.
+- **Which connections take part:** the dongle's Wi-Fi, the built-in Wi-Fi, an **Ethernet** cable (or USB network card) and **USB tethering** from a phone. The Merge card has one row per connection with its state (*Working*, *Checking…*, *Not working*, *Not merged*), its live speed and an include switch. Wi-Fi and Ethernet are in by default. **USB tethering starts out**, because it uses your phone's mobile data. Your choices are remembered.
+- **Both Wi-Fi radios stay on** while merging: the app keeps each included radio on, and an excluded one is turned off as before. Each Wi-Fi adapter can be on a different network (for example home Wi-Fi on the dongle and a phone hotspot on the built-in card); pick the network on each adapter as usual.
+- **It checks each connection** every 15 seconds (every 4 while it is down) by opening a connection to 1.1.1.1 or 8.8.8.8 through it, and stops using one that has no internet. A connection that fails to connect is left out for 15 seconds and the next one is tried, so a dropped hotspot doesn't stall the browser.
+- **Your own network stays direct:** the router's page, a printer, a NAS, `localhost` and other local addresses are never spread over the connections; Windows reaches them the usual way.
+- **Notes on the card:** *both Wi-Fi adapters are on the same network* (little speed gain: they share one internet line), *only one connection takes part* (nothing to merge yet) and *no connection is available*.
+
+**How it works:** the app runs a small proxy on `127.0.0.1` (port 18780) and points Windows' proxy setting at a setup script it serves (`http://127.0.0.1:18780/proxy.pac`). Browsers and most apps follow that setting. Each new connection is then opened from one adapter's own address. If the app is closed or crashes, the script can't be fetched and Windows goes direct, so you are never left without internet; the next start puts the old setting back.
+
+**What it can't do:**
+- **One download is never faster than one connection.** The gain is for apps that open many connections at once: browsers, Steam, download managers (IDM, aria2).
+- **Two connections to the same router share one internet line**, so they add little speed. Real gains need two different internet sources, such as home Wi-Fi plus a phone hotspot or tethering.
+- **Only apps that follow Windows' proxy setting are merged.** Games, most UDP traffic and Windows Update (which uses its own proxy setting) go direct as before.
+- **Some sites log you out** when your address changes between connections (banks, some logins).
+- **A VPN is bypassed:** merged connections leave from the physical adapters, not through a VPN. Turn Merge off while you need the VPN.
+
+</td>
+</tr>
+<tr>
+<td colspan="2" valign="top">
+
 ### 💾 Dongle driver: installed from inside the app
 If the dongle is plugged in but Windows has no Wi-Fi driver for it, the **Wi-Fi** page shows **Unigen dongle driver not installed** with one **Download & install** button, so nobody has to install a driver before running the app. The same state shows in the side menu and the tray widget.
 <div align="center"><img src="docs/screenshots/driver.png" alt="The Wi-Fi page offering the dongle driver, three steps into the install" width="620"></div>
@@ -345,6 +367,7 @@ flowchart LR
 - **Untrusted names:** anyone nearby can name a network or device, so names are always shown as text and handed to Windows tools as separate arguments, never as command text.
 - **Passwords** are never logged. They only touch the disk inside temporary folders that are deleted straight away.
 - **The driver download is pinned and checked:** a commit-pinned address, a SHA-256 the file must match, valid Microsoft-signed catalogs and the dongle's hardware id in the INF, all before `pnputil` runs. The vendor's installer is never executed; only its signed driver files are unpacked. The app downloads nothing at startup and installs only on your click.
+- **Merge connections changes two Windows settings while it is on**, and puts both back when you turn it off, quit, or start the app after a crash: your proxy setting (*Use setup script*, pointed at the app's own `127.0.0.1` address) and one policy, `fMinimizeConnections` = 0 under `HKLM\SOFTWARE\Policies\Microsoft\Windows\WcmSvc\GroupPolicy`, which stops Windows disconnecting the second adapter. The old values are kept in `%LOCALAPPDATA%\UnigenManager\settings.json` until they are restored. The proxy only listens on `127.0.0.1`, so other computers can't use it.
 - **Start with Windows** runs the app with administrator rights at sign-in, without a prompt. The app's files live in your user folder, so anything that can change those files could gain administrator rights at your next sign-in. Leave the option off if that trade-off isn't right for you.
 
 ## Known limitations
@@ -361,7 +384,8 @@ flowchart LR
 - Battery levels of Bluetooth LE-only devices (most mice and keyboards) aren't shown yet.
 - An adapter plugged in after the app starts appears after the app restarts.
 - **Dongle driver:** the install is built and tested against Windows mocks and the real unpacker, but has not been run on a PC that lacked the driver (the author's dongle already has it). An outdated driver is not detected or replaced. Windows 10 and 11, 64-bit Intel or AMD only.
-- **Traffic** counts Wi-Fi adapters only, and today's totals only while Unigen Manager is running (a day the app was closed shows less than Windows' own usage figures). The adapter in use is the one chosen with the Adapter switch; before the first switch, the first Wi-Fi adapter that is on.
+- **Merge connections** hasn't been run on real hardware yet: the proxy, the link checks and the settings restore are tested against mocks and loopback only. A tethered phone is recognised by its adapter's name (Remote NDIS, NCM, Apple Mobile Device Ethernet); one named differently shows up as plain Ethernet, still mergeable but included by default.
+- **Traffic** counts the Wi-Fi adapters, Ethernet and USB tethering, and today's totals only while Unigen Manager is running (a day the app was closed shows less than Windows' own usage figures). The adapter in use is the one chosen with the Adapter switch; before the first switch, the first Wi-Fi adapter that is on.
 
 ## Built with
 

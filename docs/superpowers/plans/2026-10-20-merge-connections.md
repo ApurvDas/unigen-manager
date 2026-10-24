@@ -8,6 +8,9 @@ with an include switch (see "Addition" below).
 
 **Status (2026-10-23):** Tasks 1 to 7 are done and committed, with the addition. Task 8 needs the user: see the manual test checklist at
 the bottom.
+**Status (2026-10-25):** final whole-branch review done; its fixes are in (local, LAN and fake-IP destinations go out unbound; TUN VPN
+adapters are never links; a 64-thread pool for dials; merge off never waits on the radio; start/stop can't race). README has the Merge
+section. Left: the manual checklist, then merge to main, release and install (Task 8), on the user's go-ahead.
 
 **Architecture:** A new `merge.py` keeps a pool of links (adapter key, interface index, IPv4 address). A
 least-active-per-weight scheduler picks a link for each new connection. The socket is bound to that adapter
@@ -403,3 +406,12 @@ build. Keep Task Manager's Performance tab or the Traffic page open to see each 
 - [ ] Start the app again: the proxy script setting is back to what it was before (or merge resumes, as merge was left on); turn merge off and quit:
   both the script setting and the policy are back to what you noted.
 - [ ] Quit from the tray menu while merging: the same, at once.
+
+**6. Your own network and localhost stay direct (added 2026-10-25, final review C1)**
+- [ ] While merging with two different networks, open the router's page (for example `http://192.168.1.1`) a few times: it loads at once every
+  time, never after a 10-second stall.
+- [ ] A local dev server (`http://localhost:<port>`) and, if you have one, a printer or NAS page work while merging.
+
+**7. A VPN (added 2026-10-25, final review I2)**
+- [ ] With a VPN or a TUN tool running (Cloudflare WARP, Clash, a WireGuard app), its adapter never shows as a row on the Merge card.
+- [ ] Merging bypasses a full-tunnel VPN (the README says so): check that turning Merge off brings your traffic back through the VPN.
