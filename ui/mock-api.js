@@ -173,7 +173,7 @@ window.mockApi = (() => {
         opened: MERGE && included && l.online ? 40 : 0, down, up };
     });
     const usable = links.filter(l => l.included && l.online), wifi = usable.filter(l => l.kind === "wifi");
-    return { on: MERGE, port: MERGE ? 18780 : null, wcm: MERGE, can_switch: window.MOCK_ADMIN !== false, links, single: MERGE && usable.length < 2,
+    return { on: MERGE, port: MERGE ? 18780 : null, wcm: MERGE, can_switch: window.MOCK_ADMIN !== false, links, single: MERGE && usable.length === 1, none: MERGE && !usable.length,
       same_network: MERGE && wifi.length === 2 ? "HOME-5G" : null };
   });
   def("set_merge", 600, on => {

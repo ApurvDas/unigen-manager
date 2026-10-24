@@ -1273,6 +1273,15 @@ def test_merge_with_one_link_left_still_runs_and_says_so(open_page):
     expect(mrow(pg, "builtin").locator(".mstate")).to_have_text("Not merged")
 
 
+def test_merge_with_no_link_left_says_there_is_none(open_page):
+    pg = traffic_page(open_page, "window.MOCK_MERGE = true;")
+    mrow(pg, "builtin").locator(".switch").click()
+    expect(pg.locator("#mergeNote")).to_contain_text("Only one connection takes part")
+    mrow(pg, "unigen").locator(".switch").click()
+    expect(pg.locator("#mergeNote")).to_have_text("No connection is available to merge right now.")
+    expect(pg.locator("#mergeSw")).to_have_attribute("aria-checked", "true")
+
+
 def test_merge_follows_a_link_that_is_unplugged_and_comes_back(open_page):
     pg = traffic_page(open_page, "window.MOCK_WIRED = true;")
     expect(pg.locator("#mergeRows .mrow")).to_have_count(4)

@@ -1566,7 +1566,8 @@ function renderMerge() {
   if (!mergeSw.dataset.busy) { setSwitch(mergeSw, MRG.on); mergeSw.disabled = !MRG.can_switch; }
   mergeSw.title = MRG.can_switch ? "" : "Merging connections needs administrator rights.";
   put($("#mergeSub"), MRG.on ? `${usable} in use` : "");
-  const note = MRG.on && MRG.single ? "Only one connection takes part, so there is nothing to merge yet. Include another one, or plug one in."
+  const note = MRG.on && MRG.none ? "No connection is available to merge right now."
+    : MRG.on && MRG.single ? "Only one connection takes part, so there is nothing to merge yet. Include another one, or plug one in."
     : MRG.on && MRG.same_network ? `Both adapters are on ${MRG.same_network}: little speed gain. Connect one to another network (a phone hotspot) to add speed.` : "";
   $("#mergeNote").hidden = !note; put($("#mergeNote"), note);
   const hint = "Merging needs administrator rights. Restart the app and choose Yes.";
