@@ -790,9 +790,35 @@ def test_merge_status_single_link_still_works_but_says_so(merging):
     merging._merger.links = [mlink("unigen"), mlink("builtin", included=False, state="off"), mlink("ethernet:x", "ethernet", online=False, state="down")]
     assert merging.merge_status()["data"]["single"] is False  # merge is off: nothing to say
     hwm.save_choice(merging._settings, "merge", True)
-    assert merging.merge_status()["data"]["single"] is True
+    merging._merger.port = 18999
+    d = merging.merge_status()["data"]
+    assert (d["single"], d["none"]) == (True, False)
     merging._merger.links = [mlink("unigen"), mlink("ethernet:x", "ethernet")]
-    assert merging.merge_status()["data"]["single"] is False
+    d = merging.merge_status()["data"]
+    assert (d["single"], d["none"]) == (False, False)
+
+
+def test_merge_status_none_when_no_link_takes_part(merging):
+    merging._merger.links = [mlink("unigen", online=False, state="down"), mlink("builtin", included=False, state="off")]
+    hwm.save_choice(merging._settings, "merge", True)
+    merging._merger.port = 18999
+    d = merging.merge_status()["data"]
+    assert (d["single"], d["none"]) == (False, True)  # not "only one connection": there is none
+    merging._merger.port = None
+    d = merging.merge_status()["data"]
+    assert (d["on"], d["single"], d["none"]) == (False, False, False)
+
+
+def test_merge_status_is_on_only_while_the_proxy_runs(merging):
+    """Saved on but not running (a start without admin, a proxy that failed): the card must not claim it merges."""
+    merging._merger.links = [mlink("unigen"), mlink("builtin")]
+    hwm.save_choice(merging._settings, "merge", True)
+    d = merging.merge_status()["data"]
+    assert d["on"] is False and d["port"] is None
+    merging._merger.port = 18999
+    assert merging.merge_status()["data"]["on"] is True
+    hwm.save_choice(merging._settings, "merge", False)
+    assert merging.merge_status()["data"]["on"] is False
 
 
 def test_merge_status_names_the_network_both_wifi_adapters_share(merging, monkeypatch):
@@ -818,7 +844,7 @@ def test_set_merge_on_applies_proxy_and_off_restores(merging):
     assert merging.events == ["hw.set_merge(True)", "start", "apply http://127.0.0.1:18999/proxy.pac"]
     merging.events.clear()
     assert merging.set_merge(False)["ok"] is True
-    assert merging.events == ["hw.set_merge(False)", "restore", "stop"]
+    assert merging.events == ["restore", "stop", "hw.set_merge(False)"]  # the radio last: it can be slow or busy
     for w in (merging._window, merging._widget):
         assert w.scripts == ["window.onMerge && window.onMerge()"] * 2
 
@@ -835,6 +861,58 @@ def test_set_merge_that_cannot_apply_stops_and_leaves_merge_off(merging, monkeyp
     assert merging.events == ["hw.set_merge(True)", "start", "restore", "stop"] and hwm.load_merge(merging._settings) is False
 
 
+def test_set_merge_off_is_done_even_when_the_radio_is_busy(merging, monkeypatch):
+    assert merging.set_merge(True)["ok"] is True
+    merging.events.clear()
+    monkeypatch.setattr(hwm, "set_merge", lambda on, *, path: (merging.events.append("hw.set_merge"), raising(hwm.Busy("A switch is still finishing."))(on, path=path)))
+    r = merging.set_merge(False)
+    assert r["ok"] is True and r["data"]["on"] is False and r["data"]["note"]  # the watchdog turns the radio off on its next pass
+    assert merging.events == ["restore", "stop", "hw.set_merge"] and hwm.load_merge(merging._settings) is False
+    assert merging._window.scripts[-1] == "window.onMerge && window.onMerge()"
+
+
+def test_set_merge_off_saves_before_it_touches_the_radio(merging, monkeypatch):
+    assert merging.set_merge(True)["ok"] is True
+    seen = []
+    monkeypatch.setattr(hwm, "set_merge", lambda on, *, path: seen.append(hwm.load_merge(path)))
+    merging.set_merge(False)
+    assert seen == [False]
+
+
+def test_set_merge_off_survives_a_radio_error_too(merging, monkeypatch):
+    monkeypatch.setattr(hwm, "set_merge", raising(hwm.HwError("Couldn't turn the Built-in MediaTek off.")))
+    hwm.save_choice(merging._settings, "merge", True)
+    assert merging.set_merge(False)["ok"] is True and merging.events == ["restore", "stop"] and hwm.load_merge(merging._settings) is False
+
+
+def test_set_merge_on_that_cannot_start_leaves_nothing_applied(merging, monkeypatch):
+    monkeypatch.setattr(merging._merger, "start", raising(OSError("The merge proxy didn't start.")))
+    assert merging.set_merge(True)["ok"] is False
+    assert hwm.load_merge(merging._settings) is False and not [e for e in merging.events if e.startswith("apply")]
+
+
+def test_merge_changes_one_at_a_time(merging):
+    merging._merge_lock.acquire()  # a change is running
+    assert merging.set_merge(True) == {"ok": False, "error": "Merge is already changing. Try again in a moment."}
+    assert merging.events == []
+
+
+def test_merge_quit_waits_a_moment_then_goes_ahead(merging, monkeypatch):
+    monkeypatch.setattr(api, "MERGE_QUIT_WAIT", 0.05)
+    merging._merge_lock.acquire()  # a change stuck on the radio
+    merging._merge_quit()
+    assert merging.events == ["restore", "stop"] and merging._merge_lock.locked()  # and it isn't the one to release it
+    merging._merge_lock.release()
+    merging._merge_quit()
+    assert not merging._merge_lock.locked()
+
+
+def test_merge_resume_takes_its_turn(merging):
+    hwm.save_choice(merging._settings, "merge", True)
+    merging._merge_resume()
+    assert not merging._merge_lock.locked()
+
+
 def test_set_merge_failing_in_hw_starts_nothing(merging, monkeypatch):
     monkeypatch.setattr(hwm, "set_merge", raising(hwm.HwError("Couldn't turn the Built-in MediaTek on.")))
     assert merging.set_merge(True) == {"ok": False, "error": "Couldn't turn the Built-in MediaTek on."} and merging.events == []
@@ -848,6 +926,16 @@ def test_set_merge_link_saves_the_choice_and_refreshes_a_running_merge(merging):
     merging.set_merge_link("unigen", False)
     assert hwm.load_merge_links(merging._settings) == {"tether:y": True, "unigen": False} and merging.events == ["refresh"]
     assert merging._window.scripts[-1] == "window.onMerge && window.onMerge()"
+
+
+def test_set_merge_link_still_succeeds_when_the_refresh_fails(merging, monkeypatch, caplog):
+    merging._merger.links = [mlink("unigen")]
+    merging._merger.port = 18999
+    monkeypatch.setattr(merging._merger, "refresh", raising(api.wifi.WifiError("Couldn't list the Wi-Fi adapters.")))
+    assert merging.set_merge_link("unigen", False) == {"ok": True, "data": {"key": "unigen", "on": False}}
+    assert hwm.load_merge_links(merging._settings) == {"unigen": False}  # saved; the 3 s upkeep applies it
+    assert merging._window.scripts[-1] == "window.onMerge && window.onMerge()"
+    assert "Couldn't list the Wi-Fi adapters." in caplog.text
 
 
 def test_set_merge_link_rejects_what_it_does_not_know(merging):

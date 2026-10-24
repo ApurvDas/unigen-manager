@@ -18,6 +18,7 @@ _SEC = {"WPA2-Personal": "WPA2", "WPA3-Personal": "WPA3", "Open": "Open", "WPA-P
 _POLLED = {"app_info", "adapters", "networks", "saved", "bt_radio", "bt_paired", "is_visible", "widget_fit", "speed_results", "traffic", "merge_status"}
 _SECRET = {"connect": 2, "bt_pair_answer": 1}  # argument index never written to app.log (return values never are)
 SLOW = 3.0  # seconds; a polled call taking longer is logged as a warning
+MERGE_QUIT_WAIT = 3.0  # seconds quitting waits for a merge change in progress before putting the settings back anyway
 
 
 def _args(name, args):
@@ -65,6 +66,7 @@ class Api:
         self._pair_evt, self._pair_answer = threading.Event(), (False, None)
         self._main_visible = True  # app.py sets False for a --tray start and on close
         self._merger = merger or merge.Merger(rate=self._sampler.rate, choices=lambda: hw.load_merge_links(self._settings))
+        self._merge_lock = threading.Lock()  # one merge change at a time: the switch, the resume at start, the restore at quit
         self._same = None  # (when, SSID or None): whether both Wi-Fi adapters are on one network, cached by merge_status
         self._drivers = None  # (interface names, wifi.drivers()) cached by app_info
         self._driver_cancel = threading.Event()  # set by cancel_driver, for the install running
@@ -541,11 +543,13 @@ class Api:
     @_envelope
     def merge_status(self):
         """The Merge card: whether merge is on, the proxy's port, whether Windows keeps every adapter connected (wcm), and every
-        link (merge.Merger.status). single: merge is on but fewer than two links take part, so there is nothing to merge yet."""
-        on, links = hw.load_merge(self._settings), self._merger.status()
+        link (merge.Merger.status). on: the switch is saved on AND the proxy runs (a start without admin leaves it saved but not running).
+        single: merge is on but one link takes part, none: merge is on but no link does, so there is nothing to merge yet."""
+        links = self._merger.status()
+        on = hw.load_merge(self._settings) and self._merger.port is not None
         usable = [l for l in links if l["included"] and l["online"]]
         return {"on": on, "port": self._merger.port, "wcm": sysproxy.keeping_connected(), "can_switch": self._admin, "links": links,
-                "single": on and len(usable) < 2, "same_network": self._same_network(links)}
+                "single": on and len(usable) == 1, "none": on and not usable, "same_network": self._same_network(links)}
 
     def _merge_start(self):
         """The proxy and Windows' settings, in that order. If Windows refuses, nothing is left running."""
@@ -572,31 +576,48 @@ class Api:
         if not self._admin:
             log.warning("merge is on but this start isn't elevated: not resuming it")
             return
-        try:
-            self._merge_start()
-        except Exception:
-            log.exception("couldn't resume merge")
+        with self._merge_lock:
+            try:
+                self._merge_start()
+            except Exception:
+                log.exception("couldn't resume merge")
 
     def _merge_quit(self):
-        self._merge_restore()
-        self._merger.stop()  # the "merge" setting stays: the next start resumes
+        got = self._merge_lock.acquire(timeout=MERGE_QUIT_WAIT)  # a change stuck on the radio must not keep the settings from being put back
+        try:
+            self._merge_restore()
+            self._merger.stop()  # the "merge" setting stays: the next start resumes
+        finally:
+            if got:
+                self._merge_lock.release()
 
     @_envelope
     def set_merge(self, on):
         self._need_admin("Merging connections")
-        on = bool(on)
-        hw.set_merge(on, path=self._settings)  # the Wi-Fi radio that takes part comes on (or the other one goes off); saves "merge"
-        if on:
-            try:
-                self._merge_start()
-            except BaseException:
+        on, note = bool(on), None
+        if not self._merge_lock.acquire(blocking=False):
+            raise hw.Busy("Merge is already changing. Try again in a moment.")
+        try:
+            if on:
+                hw.set_merge(True, path=self._settings)  # the Wi-Fi radio that takes part comes on; saves "merge"
+                try:
+                    self._merge_start()
+                except BaseException:
+                    hw.save_choice(self._settings, "merge", False)
+                    raise
+            else:  # off always works: the proxy and Windows' settings first, the radio (which can be busy for a minute) last
+                self._merge_restore()
+                self._merger.stop()
                 hw.save_choice(self._settings, "merge", False)
-                raise
-        else:
-            self._merge_restore()
-            self._merger.stop()
+                try:
+                    hw.set_merge(False, path=self._settings)
+                except hw.HwError as e:  # the watchdog turns the extra radio off on its next pass
+                    log.warning("merge is off, but the extra radio couldn't be turned off now: %s", e)
+                    note = "Merge is off. The extra Wi-Fi radio will turn off in a moment."
+        finally:
+            self._merge_lock.release()
         self._push("window.onMerge && window.onMerge()")
-        return {"on": on}
+        return {"on": on, **({"note": note} if note else {})}
 
     @_envelope
     def set_merge_link(self, key, on):
@@ -605,6 +626,9 @@ class Api:
             raise hw.HwError("That connection isn't here any more.")
         hw.save_merge_link(self._settings, key, on)
         if self._merger.port is not None:
-            self._merger.refresh()
+            try:
+                self._merger.refresh()
+            except (wifi.WifiError, OSError) as e:  # the choice is saved; the 3 s upkeep applies it
+                log.warning("merge: couldn't refresh after a choice (%s)", e)
         self._push("window.onMerge && window.onMerge()")
         return {"key": key, "on": bool(on)}
