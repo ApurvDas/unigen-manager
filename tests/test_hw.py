@@ -1117,6 +1117,53 @@ def test_replug_while_merging_turns_dongle_radio_on(monkeypatch, tmp_path):
     assert pc.used == [("bt", "unigen")]  # Bluetooth restores as before
 
 
+def test_replug_while_merging_does_not_cheer_when_the_radio_would_not_come_on(monkeypatch, tmp_path):
+    pc = merging_pc(monkeypatch, tmp_path)
+    pc.state = {"unigen": True, "builtin": True}
+    f = pc.follower()
+    f.step()
+    pc.plugged = False
+    f.step()
+    pc.plugged, pc.state["unigen"] = True, False
+    monkeypatch.setattr(hw, "wifi_on", lambda key, d, **k: pc.on_calls.append(key) and False)  # the adapter never showed up
+    f.step()
+    assert pc.on_calls == ["unigen"] and not [n for n in pc.notes if "Using the dongle" in n[0]]
+
+
+def test_replug_while_merging_waits_for_the_dongles_wifi_device(monkeypatch, tmp_path):
+    pc = merging_pc(monkeypatch, tmp_path)
+    pc.state = {"unigen": True, "builtin": True}
+    f = pc.follower()
+    f.step()
+    pc.plugged = False
+    f.step()
+    pc.plugged, pc.state["unigen"] = True, False
+    real = pc.devices
+    gap = [True]
+
+    def devices():  # just after the replug Windows lists the dongle, but not its Wi-Fi device yet
+        d = real()
+        if gap[0]:
+            d["unigen"]["wifi"] = None
+        return d
+    monkeypatch.setattr(hw, "devices", devices)
+    f.step()  # no TypeError, nothing turned on, the item stays queued
+    assert pc.on_calls == [] and f._queue == ["wifi", "bt"]
+    gap[0] = False
+    f.step()
+    assert pc.on_calls == ["unigen"] and ("wifi", "unigen") not in pc.used
+    assert ("Dongle plugged in. Using the dongle.", True) in pc.notes
+
+
+def test_set_merge_off_keeps_the_only_working_radio_when_the_dongle_is_crashed(monkeypatch, tmp_path):
+    pc = Pc(monkeypatch, tmp_path)  # Wi-Fi choice: unigen
+    hw.save_choice(pc.path, "merge", True)
+    pc.lost = True  # listed, but Windows has no WLAN interface for it: the built-in radio is all the PC has
+    monkeypatch.setattr(hw, "wifi_off", lambda *a: pytest.fail("the built-in radio is the only way online"))
+    hw.set_merge(False, path=pc.path)
+    assert not hw.load_merge(pc.path)
+
+
 def test_switch_while_merging_keeps_old_adapter_on(world):
     world.state["unigen"]["wifi"] = True
     hw.save_choice(world.path, "wifi", "unigen")

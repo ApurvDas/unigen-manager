@@ -340,7 +340,8 @@ def set_merge(on, *, path):
         main = load_choice(path, "wifi") or next((k for k in ("unigen", "builtin") if ((devs.get(k) or {}).get("wifi") or {}).get("ok")), None)
         other = next((k for k in devs if k != main), None) if main else None
         d = (devs.get(other) or {}).get("wifi")
-        if d and (not on or merge_includes(path, other)) and (on or main in devs):  # an excluded radio isn't forced on  # off with the main adapter gone: the other one is all the PC has
+        up = main in devs and not ((devs[main].get("wifi") or {}).get("lost"))  # a crashed dongle (listed, no WLAN interface) is as good as gone
+        if d and (not on or merge_includes(path, other)) and (on or up):  # an excluded radio isn't forced on; off with the main adapter gone: the other one is all the PC has
             ok = []
             finished, err = _bounded(lambda: ok.append(wifi_on(other, d) if on else wifi_off(other, d) or True), BT_STUCK)
             if err:
@@ -553,7 +554,12 @@ class Follower:
             kind = self._queue.pop(0)  # a failed one isn't retried until the next unplug
             choice = wifi_choice if kind == "wifi" else bt_choice
             if choice and kind == "wifi" and choice == "unigen" and keep:  # a switch's tail would turn the built-in off again
-                wifi_on("unigen", devs["unigen"]["wifi"])
-                self._notify("Dongle plugged in. Using the dongle.", True)
+                d = devs["unigen"]["wifi"]
+                if d is None:  # just after the replug Windows hasn't listed its Wi-Fi device: next pass
+                    self._queue.insert(0, kind)
+                elif wifi_on("unigen", d):
+                    self._notify("Dongle plugged in. Using the dongle.", True)
+                else:
+                    log.warning("watchdog: the dongle's Wi-Fi didn't come on")
             elif choice:
                 self._switch(kind, choice, "Dongle plugged in. Using the dongle." if kind == "wifi" else "")
