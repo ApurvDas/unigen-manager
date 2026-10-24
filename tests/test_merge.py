@@ -192,6 +192,40 @@ def test_dial_all_links_failing_over_is_network_unreachable(monkeypatch, resolve
     assert e.value.code == 3 and all(l.active == 0 and l.until > 0 for l in p.links())
 
 
+@pytest.mark.parametrize("ip", ["127.0.0.1", "192.168.1.1", "10.0.0.5", "172.16.3.4", "169.254.1.1", "198.18.0.7"])
+def test_dial_local_destinations_go_out_unbound(monkeypatch, ip):
+    """Loopback, LAN and fake-IP answers aren't reached through a pooled link: a bound socket fails on them and would sideline it."""
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, 80))])
+    monkeypatch.setattr(merge, "open_on", lambda *a, **k: pytest.fail("a pooled link was used"))
+    s, seen = FakeSock(), []
+    monkeypatch.setattr(socket, "create_connection", lambda addr, timeout=None: seen.append((addr, timeout)) or s)
+    p = pool("a", "b")
+    sock, link = asyncio.run(merge.dial(p, "nas.local", 80))
+    assert sock is s and not s.blocking and seen == [((ip, 80), 10.0)]
+    assert link.key == "direct" and link not in p.links()
+    assert all(l.active == 0 and l.until == 0 and l.opened == 0 for l in p.links())
+    p.release(link)  # what _tunnel does at the end: harmless for a link that isn't pooled
+    assert link.active == 0
+
+
+@pytest.mark.parametrize("err, code", [(OSError(10061, "refused"), 5), (OSError(10065, "no route"), 4), (socket.timeout(), 4)])
+def test_dial_local_failure_never_sidelines(monkeypatch, err, code):
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.168.1.1", 80))])
+    monkeypatch.setattr(socket, "create_connection", lambda addr, timeout=None: (_ for _ in ()).throw(err))
+    p = pool("a", "b")
+    with pytest.raises(merge.DialError) as e:
+        asyncio.run(merge.dial(p, "router", 80))
+    assert e.value.code == code and all(l.until == 0 and l.active == 0 for l in p.links())
+
+
+def test_dial_global_destination_still_uses_a_link(monkeypatch, resolve):
+    used = []
+    monkeypatch.setattr(merge, "open_on", lambda link, addr, timeout=10.0: used.append(link.key) or FakeSock())
+    monkeypatch.setattr(socket, "create_connection", lambda *a, **k: pytest.fail("a global address went out unbound"))
+    sock, link = asyncio.run(merge.dial(pool("a"), "example.com", 443))
+    assert used == ["a"] and link.key == "a"
+
+
 def test_dial_no_links(resolve):
     with pytest.raises(merge.DialError) as e:
         asyncio.run(merge.dial(merge.Pool(), "example.com", 443))

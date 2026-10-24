@@ -13,6 +13,7 @@ def run(coro, t=5):
 @pytest.fixture
 def pool(monkeypatch):
     monkeypatch.setattr(merge, "open_on", lambda link, addr, timeout=10.0: socket.create_connection(addr, timeout))
+    monkeypatch.setattr(merge, "_local", lambda ip: False)  # the echo servers are on loopback; these tests are about the link path
     p = merge.Pool()
     p.update({"a": (1, "127.0.0.1")})
     p.mark("a", True)
@@ -194,6 +195,23 @@ def test_counts_bytes_per_link(pool):
             assert await r.readexactly(1000) == b"x" * 1000
             assert p.bytes["a"] == [1000, 1000]
             w.close()
+    run(body())
+
+
+def test_local_destination_is_tunnelled_unbound_and_counted_as_direct(monkeypatch):
+    monkeypatch.setattr(merge, "open_on", lambda *a, **k: pytest.fail("a link was used for loopback"))
+    p = merge.Pool()
+    p.update({"a": (1, "127.0.0.1")})
+
+    async def body():
+        async with serving(echo) as eport, proxied(p) as (px, port):
+            r, w, head = await http(port, f"CONNECT 127.0.0.1:{eport} HTTP/1.1\r\n\r\n".encode())
+            assert head.startswith(b"HTTP/1.1 200")
+            w.write(b"x" * 10)
+            assert await r.readexactly(10) == b"x" * 10
+            assert px.bytes == {"direct": [10, 10]}
+            w.close()
+        assert p.links()[0].active == 0 and p.links()[0].until == 0
     run(body())
 
 

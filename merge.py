@@ -1,7 +1,7 @@
 """Merge connections: new connections are spread across the links that have an address (the Wi-Fi adapters, Ethernet and
 a phone tethered over USB). This is the pool of links and the scheduler that picks one for each new connection (the dialer
 and the proxy build on it)."""
-import asyncio, ctypes, logging, random, re, socket, struct, threading, time
+import asyncio, ctypes, ipaddress, logging, random, re, socket, struct, threading, time
 from urllib.parse import urlsplit
 from ctypes import wintypes
 from dataclasses import dataclass
@@ -279,9 +279,15 @@ def _failover(e):
     return isinstance(e, (TimeoutError, socket.timeout)) or (getattr(e, "winerror", None) or e.errno) in FAILOVER
 
 
+def _local(ip):
+    """Loopback, LAN, link-local and fake-IP (TUN) addresses: no link is right for them, so they leave unbound."""
+    return not ipaddress.ip_address(ip).is_global
+
+
 async def dial(pool, host, port):
     """(connected non-blocking socket, its link), with the link's `active` still counted: the caller releases it when the
-    connection ends. Tries links best first; one that fails to connect is sidelined and the next is tried."""
+    connection ends. Tries links best first; one that fails to connect is sidelined and the next is tried. A local
+    destination goes out unbound, with a throwaway link that isn't in the pool."""
     if not pool.links():  # before any DNS: with the network down a lookup can hang, and "no links" is code 3 anyway
         raise DialError(3)
     loop = asyncio.get_running_loop()
@@ -289,6 +295,13 @@ async def dial(pool, host, port):
         addr = (await loop.getaddrinfo(host, port, family=socket.AF_INET, type=socket.SOCK_STREAM))[0][4]
     except (socket.gaierror, IndexError):
         raise DialError(4) from None
+    if _local(addr[0]):  # a bound socket fails on these (10049 would sideline every link), or leaves by the wrong network
+        try:
+            sock = await loop.run_in_executor(None, socket.create_connection, addr, 10.0)
+        except OSError as e:
+            raise DialError(4 if _failover(e) else 5) from None  # no link is to blame, so none is sidelined
+        sock.setblocking(False)
+        return sock, Link("direct", 0, "")
     tried = set()
     for _ in pool.links():
         link = pool.pick(exclude=tried)
